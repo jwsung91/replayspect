@@ -108,9 +108,15 @@ class ChannelProfile:
         return self.c2s if direction == "c2s" else self.s2c
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class MsgKey:
-    """Identifies one send: the ``k``-th ``(msg, req_id)`` on ``dir`` (0-based)."""
+    """Identifies one send: the ``k``-th ``(msg, req_id)`` on ``dir`` (0-based).
+
+    Messages without a ``req_id`` share one counter per ``(dir, msg)``, so
+    adding or removing such a message shifts the ``k`` of later ones with the
+    same name. Give messages a ``req_id`` whenever a plan needs to target
+    them. Keys are not orderable; sort with :meth:`sort_key`.
+    """
 
     dir: str
     msg: str
@@ -264,6 +270,40 @@ class FaultPlan:
         return cls(tuple(delays), tuple(faults), tuple(disconnects))
 
 
+def _snapshot_fields(msg: Message) -> dict[str, Any]:
+    """Deep-copy message fields through JSON, rejecting anything that would change.
+
+    A tuple would arrive as a list and an integer key as a string, which can
+    silently change endpoint logic, so such fields are refused at send time
+    instead. The reserved ``link`` key is checked here too, because
+    ``Message.fields`` is a mutable dict that may have changed since
+    construction.
+    """
+    original = dict(msg.fields)
+    try:
+        snapshot = json.loads(json.dumps(original, sort_keys=True, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+        raise LinkError(f"{msg.name}: message fields must be JSON-serialisable: {exc}") from exc
+    if snapshot != original or not _same_types(snapshot, original):
+        raise LinkError(
+            f"{msg.name}: message fields must survive a JSON round trip unchanged "
+            "(use lists not tuples, string keys only)"
+        )
+    if "link" in snapshot:
+        raise LinkError("message field name 'link' is reserved")
+    return snapshot
+
+
+def _same_types(a: Any, b: Any) -> bool:
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_same_types(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_same_types(x, y) for x, y in zip(a, b))
+    return True
+
+
 MessageHandler = Callable[[Message], None]
 ConnectionHandler = Callable[[bool], None]
 
@@ -332,33 +372,29 @@ class Channel:
         if sender not in ENDPOINTS:
             raise LinkError(f"sender must be one of {ENDPOINTS}, got {sender!r}")
         direction = _DIR_OF_SENDER[sender]
-        # Snapshot the fields now: later mutation by the sender must not
-        # change what is in flight or what the receiver gets.
-        try:
-            fields = json.loads(json.dumps(dict(msg.fields), sort_keys=True))
-        except (TypeError, ValueError) as exc:
-            raise LinkError(f"message fields must be JSON-serialisable: {exc}") from exc
+        fields = _snapshot_fields(msg)
         n = self._n[direction]
         self._n[direction] += 1
         kk = (direction, msg.name, msg.req_id)
         k = self._k.get(kk, 0)
         self._k[kk] = k + 1
         key = MsgKey(direction, msg.name, msg.req_id, k)
-        link: dict[str, Any] = {"dir": direction, "n": n, "k": k}
+
+        # Decide for every send, even one that will be lost, so the trace
+        # always records the delay the message would have had. Removing a
+        # drop or a disconnect from a plan then restores that original delay
+        # instead of falling back to the profile minimum.
+        drop, delay_us, dup_extra_us = self._decide(key)
+        link: dict[str, Any] = {"dir": direction, "n": n, "k": k, "delay_us": delay_us}
+        self._trace.record(sender, "send", msg.name, msg.req_id, {**fields, "link": link})
 
         if not self.up:
-            self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **fields)
             self._record_drop(key, n, DROP_DISCONNECTED)
             return
-
-        drop, delay_us, dup_extra_us = self._decide(key)
         if drop:
-            self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **fields)
             self._record_drop(key, n, DROP_INJECTED)
             return
 
-        link["delay_us"] = delay_us
-        self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **fields)
         epoch = self.epoch
         self._sched.after_us(
             delay_us, lambda: self._arrive(key, n, 0, epoch, fields), f"{direction}:{msg.name}"
@@ -366,7 +402,7 @@ class Channel:
         if dup_extra_us is not None:
             self._trace.record(
                 "link", "fault", "duplicate", msg.req_id,
-                dir=direction, n=n, msg=msg.name, k=k, extra_us=dup_extra_us,
+                {"dir": direction, "n": n, "msg": msg.name, "k": k, "extra_us": dup_extra_us},
             )
             self._sched.after_us(
                 delay_us + dup_extra_us,
@@ -375,26 +411,30 @@ class Channel:
             )
 
     def _decide(self, key: MsgKey) -> tuple[bool, int, int | None]:
-        """Return ``(drop, delay_us, dup_extra_us)`` for one message."""
+        """Return ``(drop, delay_us, dup_extra_us)`` for one message.
+
+        ``delay_us`` is always meaningful, even when the message is dropped.
+        ``dup_extra_us`` is ``None`` for a dropped message.
+        """
         prof = self.profile.link(key.dir)
         if self.plan is not None:
             fault = self.plan.fault(key)
-            if fault is not None and fault.drop:
-                return True, 0, None
             delay = self.plan.delay(key)
             if delay is None:
                 delay = prof.delay_us[0]
+            if fault is not None and fault.drop:
+                return True, delay, None
             return False, delay, (fault.dup_extra_us if fault is not None else None)
         rng = self._rng[key.dir]
-        # Fixed draw order: drop, delay, duplicate, duplicate extra delay.
+        # Fixed draw order for every message, dropped or not: drop?, delay,
+        # duplicate?, and the duplicate's extra delay only if duplicated.
         # tests/test_link.py pins the resulting values; changing the order
         # changes what every existing seed produces.
-        if rng.random() < prof.drop_p:
-            return True, 0, None
+        drop = rng.random() < prof.drop_p
         delay = rng.randint(*prof.delay_us)
         dup = rng.random() < prof.dup_p
         extra = rng.randint(*prof.dup_extra_us) if dup else None
-        return False, delay, extra
+        return drop, delay, (None if drop else extra)
 
     def _arrive(self, key: MsgKey, n: int, copy: int, epoch: int, fields: Mapping[str, Any]) -> None:
         if not self.up or epoch != self.epoch:
@@ -403,7 +443,7 @@ class Channel:
         receiver = _RECEIVER_OF_DIR[key.dir]
         self._trace.record(
             receiver, "recv", key.msg, key.req_id,
-            link={"dir": key.dir, "n": n, "k": key.k, "copy": copy}, **fields,
+            {**fields, "link": {"dir": key.dir, "n": n, "k": key.k, "copy": copy}},
         )
         # Each delivery gets its own copy, so a receiver that mutates the
         # message cannot affect a duplicate still in flight.
@@ -413,7 +453,7 @@ class Channel:
         data: dict[str, Any] = {"dir": key.dir, "n": n, "msg": key.msg, "k": key.k, "reason": reason}
         if copy is not None:
             data["copy"] = copy
-        self._trace.record("link", "fault", "drop", key.req_id, **data)
+        self._trace.record("link", "fault", "drop", key.req_id, data)
 
     # -- connection --------------------------------------------------------------
 
@@ -422,7 +462,7 @@ class Channel:
             return
         self.up = False
         self.epoch += 1
-        self._trace.record("link", "fault", "disconnect", duration_us=duration_us)
+        self._trace.record("link", "fault", "disconnect", None, {"duration_us": duration_us})
         self._notify(False)
         self._sched.after_us(duration_us, self._reconnect, "link:reconnect")
 

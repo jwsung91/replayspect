@@ -83,18 +83,19 @@ class Trace:
         kind: str,
         name: str,
         req_id: str | None = None,
-        /,
-        **data: Any,
+        data: Mapping[str, Any] | None = None,
     ) -> Event:
         """Append an event stamped with the current virtual time.
 
-        The first four parameters are positional-only, so ``data`` may itself
-        contain keys such as ``name`` or ``kind`` (common in message fields).
+        ``data`` is a single mapping rather than keyword arguments, so its
+        keys can never collide with the parameters (``name``, ``req_id``...),
+        and ``req_id=...`` passed by keyword always lands in ``req_id``.
 
         ``data`` is stored as a snapshot of its JSON form: a deep copy in
         which tuples become lists. Mutating the caller's objects afterwards
         cannot change a recorded event.
         """
+        data = {} if data is None else data
         if kind not in EVENT_KINDS:
             raise TraceError(f"unknown event kind {kind!r}; expected one of {sorted(EVENT_KINDS)}")
         try:

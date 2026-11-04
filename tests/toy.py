@@ -21,7 +21,7 @@ def run(seed: int, n_requests: int = 20, until_s: float = 30.0) -> Trace:
 
     def deliver(direction: str, name: str, req_id: str, on_arrive) -> None:
         if rng.random() < 0.15:
-            trace.record("link", "fault", "drop", req_id, dir=direction, msg=name)
+            trace.record("link", "fault", "drop", req_id, {"dir": direction, "msg": name})
             return
         delay_us = rng.randint(50_000, 700_000)
         sched.after_us(delay_us, on_arrive, f"{direction}:{name}:{req_id}")
@@ -43,7 +43,7 @@ def run(seed: int, n_requests: int = 20, until_s: float = 30.0) -> Trace:
         trace.record("client", "handle", "PONG", req_id)
 
     def client_send(req_id: str, attempt: int) -> None:
-        trace.record("client", "send", "PING", req_id, attempt=attempt)
+        trace.record("client", "send", "PING", req_id, {"attempt": attempt})
         deliver("c2s", "PING", req_id, lambda: server_recv(req_id))
         timers[req_id] = sched.after(TIMEOUT_S, lambda: client_timeout(req_id, attempt), f"timeout:{req_id}")
 
@@ -53,7 +53,7 @@ def run(seed: int, n_requests: int = 20, until_s: float = 30.0) -> Trace:
         else:
             timers.pop(req_id, None)
             done.add(req_id)
-            trace.record("client", "handle", "ERROR", req_id, reason="timeout")
+            trace.record("client", "handle", "ERROR", req_id, {"reason": "timeout"})
 
     for i in range(n_requests):
         req_id = f"r-{i:04d}"

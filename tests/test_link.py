@@ -159,13 +159,14 @@ def test_explicit_plan_applies_only_listed_faults():
     prof = ChannelProfile(c2s=LinkProfile(delay_us=(1_000, 900_000), drop_p=0.9))
     trace, _ = echo.run(0, prof, plan, n_msgs=4, spacing_us=100_000)
     sends = {e.req_id: e.data["link"].get("delay_us") for e in trace if e.kind == "send" and e.actor == "client"}
-    assert sends == {"r-0000": 1_000, "r-0001": None, "r-0002": 50_000, "r-0003": 1_000}
+    # A dropped send still records the delay it would have had.
+    assert sends == {"r-0000": 1_000, "r-0001": 1_000, "r-0002": 50_000, "r-0003": 1_000}
     recv = [(e.req_id, e.data["link"]["copy"], e.t_us) for e in trace if e.kind == "recv" and e.actor == "device"]
     assert recv == [("r-0000", 0, 1_000), ("r-0002", 0, 250_000), ("r-0002", 1, 260_000), ("r-0003", 0, 301_000)]
 
 
 def test_random_draw_order_is_pinned():
-    # Draw order per message: drop, delay, duplicate?, duplicate extra delay.
+    # Draw order per message, dropped or not: drop?, delay, duplicate?, extra delay.
     # Changing it changes what every existing seed produces.
     prof = ChannelProfile(c2s=LinkProfile(delay_us=(0, 999), drop_p=0.3, dup_p=0.3, dup_extra_us=(0, 99)))
     sched, trace, ch, _, _ = world(prof, seed=0)
@@ -184,8 +185,8 @@ def test_random_draw_order_is_pinned():
 
 
 PINNED_DECISIONS = [
-    ["r-0", None, "drop"], ["r-1", 0, 86], ["r-2", None, "drop"], ["r-3", 74],
-    ["r-4", 520], ["r-5", 414], ["r-6", 547], ["r-7", 191],
+    ["r-0", 460, "drop"], ["r-1", 692, "drop"], ["r-2", 673, "drop"], ["r-3", 677, 5],
+    ["r-4", 18], ["r-5", 652], ["r-6", 707, "drop"], ["r-7", 11, "drop"],
 ]
 
 
@@ -296,3 +297,91 @@ def test_plan_dict_uses_message_keys():
 def test_plan_validation(make):
     with pytest.raises(LinkError):
         make()
+
+
+# -- removing faults restores original timing --------------------------------------
+
+
+def _first(trace, pred):
+    return next(e for e in trace if pred(e))
+
+
+def test_removing_an_injected_drop_restores_the_drawn_delay():
+    for seed in range(50):
+        trace, _ = echo.run(seed, echo.STORMY)
+        plan = FaultPlan.from_trace(trace)
+        drops = [f for f in plan.faults if f.drop and f.key.dir == "c2s"]
+        if drops:
+            break
+    key = drops[0].key
+    drawn = _first(trace, lambda e: e.kind == "send" and e.req_id == key.req_id
+                   and e.name == key.msg and e.data["link"]["k"] == key.k).data["link"]["delay_us"]
+    replay, _ = echo.run(seed, echo.STORMY, plan.without_fault(key))
+    send = _first(replay, lambda e: e.kind == "send" and e.req_id == key.req_id
+                  and e.name == key.msg and e.data["link"]["k"] == key.k)
+    assert send.data["link"]["delay_us"] == drawn
+    assert drawn != echo.STORMY.c2s.delay_us[0]
+    # the message is no longer dropped by injection
+    assert not [e for e in replay if e.name == "drop" and e.req_id == key.req_id
+                and e.data["k"] == key.k and e.data["reason"] == "injected"]
+
+
+def test_removing_a_disconnect_restores_drawn_delays():
+    trace, _ = echo.run(1, echo.STORMY)
+    plan = FaultPlan.from_trace(trace)
+    lost = [e for e in trace if e.name == "drop" and e.data["reason"] == "disconnected"]
+    assert lost
+    first = plan.disconnects[0]
+    victims = [e for e in lost if first.t_us <= e.t_us < first.t_us + first.duration_us]
+    assert victims
+    calmer = FaultPlan(plan.delays, plan.faults, plan.disconnects[1:])
+    replay, _ = echo.run(1, echo.STORMY, calmer)
+    for v in victims:
+        key = MsgKey(v.data["dir"], v.data["msg"], v.req_id, v.data["k"])
+        assert plan.delay(key) is not None
+        sent = _first(replay, lambda e: e.kind == "send" and e.req_id == key.req_id
+                      and e.name == key.msg and e.data["link"]["k"] == key.k)
+        assert sent.data["link"]["delay_us"] == plan.delay(key)
+
+
+# -- message field validation ------------------------------------------------------
+
+
+@pytest.mark.parametrize("fields", [
+    {"pos": (1, 2)},
+    {"map": {1: "a"}},
+    {"x": float("nan")},
+    {"obj": object()},
+    {"nested": [{"t": (1,)}]},
+])
+def test_fields_that_would_change_in_transit_are_rejected(fields):
+    sched, trace, ch, inbox, _ = world()
+    with pytest.raises(LinkError):
+        ch.send("client", Message("M", "r-1", fields))
+    assert len(trace) == 0
+
+
+def test_link_key_added_after_construction_is_rejected_at_send():
+    sched, trace, ch, inbox, _ = world()
+    msg = Message("M", "r-1", {"a": 1})
+    msg.fields["link"] = "sneaky"
+    with pytest.raises(LinkError, match="reserved"):
+        ch.send("client", msg)
+
+
+def test_plain_json_values_pass_unchanged():
+    sched, trace, ch, inbox, _ = world()
+    fields = {"a": [1, 2.5, "x", None, True], "b": {"c": {"d": []}}}
+    sched.at(0, lambda: ch.send("client", Message("M", "r-1", fields)))
+    sched.run_until(1)
+    assert inbox["device"][0].fields == fields
+
+
+# -- keys --------------------------------------------------------------------------
+
+
+def test_msg_keys_sort_only_via_sort_key():
+    keys = [MsgKey("c2s", "HB", None, 1), MsgKey("c2s", "HB", "r-1", 0), MsgKey("s2c", "ACK", None, 0)]
+    with pytest.raises(TypeError):
+        sorted(keys)
+    assert sorted(keys, key=MsgKey.sort_key)[0] == MsgKey("c2s", "HB", None, 1)
