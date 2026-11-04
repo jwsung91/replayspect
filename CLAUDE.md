@@ -21,29 +21,26 @@
 ## 개발
 ```bash
 pip install -e ".[dev]"
-pytest
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 ```
+- ROS 2 환경이 켜진 셸에서는 ROS의 pytest 플러그인이 자동 로드되어 수집 단계에서 실패할 수 있다.
+  replayspect는 pytest 플러그인을 쓰지 않으므로 항상 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`로 실행한다.
 - Python 3.11+, 런타임 의존성은 PyYAML뿐. 새 의존성은 먼저 물어볼 것.
 - 작업 단위마다 테스트를 먼저 쓰고, 작은 커밋으로 나눈다.
 - 작업 단위를 끝내면 README의 Status 체크리스트를 갱신한다.
 
 ## 현재 상태
-- [x] 가상 시간 스케줄러 (`src/replayspect/sim/scheduler.py`)
+- [x] 가상 시간 스케줄러 (`src/replayspect/sim/scheduler.py`), 이름 붙은 RNG 스트림 `fork_rng`
 - [x] 트레이스 이벤트 모델과 다이제스트 (`src/replayspect/trace.py`)
-- [ ] **다음 작업: 링크 모델** (`src/replayspect/sim/link.py`)
+- [x] 링크 모델 (`src/replayspect/sim/link.py`)
+- [ ] **다음 작업: 가상 리프트 장치와 클라이언트, 뮤턴트 M1~M8** (별도 작업지시서)
 
-## 다음 작업: 링크 모델 명세
-장치↔클라이언트 사이 단방향 링크 두 개(`c2s`, `s2c`). 방향별로 독립 설정.
-- 지연: 고정 또는 균등 분포(us). 순서 뒤바뀜은 지연 지터로 자연 발생시킨다.
-- 유실: 확률.
-- 중복: 확률 + 중복본 추가 지연.
-- 연결 끊김: 시각과 지속 시간. 끊긴 동안 보낸 메시지는 유실, 재연결 시 양쪽에 콜백.
-- 두 가지 모드
-  - 무작위 모드: `Scheduler.rng`로 장애를 뽑는다.
-  - 명시 모드: 시나리오에 적힌 장애만 적용한다 (예: t=2.1s에 ACK 하나 1.5초 지연).
-- 실제로 적용된 장애는 모두 `kind="fault"` 이벤트로 트레이스에 남긴다. 무작위 모드에서
-  뽑힌 장애를 명시 모드 형식으로 재구성할 수 있어야 한다 (축소기가 이걸 쓴다).
-- 파라미터 체계는 이후 wirestead(C++)의 장애 주입 Transport 래퍼와 맞출 예정이니,
-  이름과 단위를 단순하고 언어 중립적으로 유지한다.
-- 테스트: 같은 시드 같은 장애 목록, 명시 모드 재생 시 무작위 실행과 같은 다이제스트,
-  끊김 중 송신 유실, 같은 시각 도착 메시지의 FIFO.
+## 링크 모델 요약 (구현 완료)
+- `Channel`이 `client`↔`device`를 잇는다. 방향은 `c2s`, `s2c`. `send`, `recv`, `fault` 이벤트는
+  채널이 직접 기록하고, 엔드포인트는 `handle`, `effect`, `state`만 기록한다.
+- 메시지 메타데이터는 이벤트 data의 예약 키 `link`에 담긴다 (`dir`, `n`, `delay_us`, `copy`).
+  `n`은 방향별 송신 시도 번호로, 연결이 끊겨 버려진 송신도 센다.
+- 무작위 모드는 `fork_rng("link/c2s")`, `"link/s2c"`, `"link/disconnect"` 스트림만 쓴다.
+  다른 컴포넌트는 자기 이름의 스트림을 따로 만들어 쓴다 (`Scheduler.rng` 직접 사용 지양).
+- `FaultPlan.from_trace(trace)`로 만든 명시 계획은 시드와 무관하게 같은 다이제스트로 재생된다.
+  이 성질은 축소기의 기반이므로 깨지면 안 된다 (`tests/test_link.py`).

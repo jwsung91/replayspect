@@ -31,7 +31,7 @@ Pre-alpha. v0 is being built in this order:
 
 - [x] Virtual-time scheduler
 - [x] Trace event model and digest
-- [ ] Link model: delay, loss, duplication, disconnects
+- [x] Link model: delay, loss, duplication, disconnects, replayable fault plans
 - [ ] Virtual lift device and client, with seeded bugs (mutants)
 - [ ] Contract YAML and checkers
 - [ ] Scenario runner, repro files, shrinking
@@ -41,8 +41,12 @@ Pre-alpha. v0 is being built in this order:
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-pytest
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest
 ```
+
+replayspect uses no pytest plugins, so disabling plugin autoload is safe. It
+matters in a sourced ROS 2 shell: ROS puts its own pytest plugins (such as
+`launch_testing`) on `PYTHONPATH`, and they can fail during test collection.
 
 ## About the name
 

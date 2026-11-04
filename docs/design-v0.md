@@ -124,13 +124,16 @@ M2, M7, M8은 특정 지연·중복 조합에서만 드러난다. 정상 경로 
 | 순서 뒤바뀜 | 지연 지터로 자연 발생 | 늦은 응답 처리 |
 | 연결 끊김 | 시각, 지속 시간 | 재연결·재전송 |
 
-무작위 모드는 시드로 장애를 뽑고, 명시 모드는 시나리오에 적힌 장애만 적용한다. 무작위 모드도 실제로 뽑힌 장애를 명시 형식으로 트레이스에 남겨, 실패한 무작위 실행을 명시 시나리오로 바꿔 축소할 수 있게 한다. 링크 파라미터는 v3에서 wirestead의 장애 주입 Transport 래퍼와 같은 체계로 맞춘다.
+무작위 모드는 방향별로 분리된 RNG 스트림에서 장애를 뽑고, 명시 모드는 계획(`FaultPlan`)에 적힌 장애만 적용한다. 명시 계획은 메시지를 시각이 아니라 `(dir, n)`, 즉 방향별 n번째 송신으로 지정한다. 시각 기반 지정은 앞선 지연이 바뀌면 다른 메시지를 가리키게 되어 축소에 불안정하기 때문이다. 연결 끊김만 시각(`t_us`)과 지속 시간으로 지정한다.
+
+두 모드는 실제로 적용된 결정을 트레이스에 같은 형식으로 남긴다(송신 이벤트의 `link.delay_us`, `fault` 이벤트). 그래서 `FaultPlan.from_trace`로 무작위 실행을 명시 계획으로 바꾸면, 시드와 무관하게 같은 다이제스트로 재생된다. 축소기는 이 계획에서 항목을 빼 가며 동작한다. 링크 파라미터는 v3에서 wirestead의 장애 주입 Transport 래퍼와 같은 체계로 맞춘다.
 
 ## 판정기
 
 계약 YAML을 읽어 종류별 검사기를 만들고, 트레이스 이벤트를 하나씩 흘려보내 위반을 모은다.
 
 ```json
+{"seq":40,"t_us":2150000,"actor":"device","kind":"recv","name":"MOVE_UP","req_id":"r-0003","data":{"link":{"dir":"c2s","n":3,"copy":0}}}
 {"seq":41,"t_us":2150000,"actor":"device","kind":"effect","name":"motor_start","req_id":"r-0003","data":{"state":"MOVING_UP"}}
 ```
 
@@ -155,9 +158,12 @@ init: {device_state: DOWN}
 steps:
   - {t: 0.0, client: MOVE_UP}
   - {t: 8.0, client: STATUS}
-faults:
-  - {t: 0.0, dir: s2c, kind: delay, ms: 2300, match: ACK}
-  - {t: 2.0, dir: c2s, kind: duplicate, extra_ms: 400}
+faults:                      # FaultPlan.to_dict() 형식
+  messages:
+    - {dir: s2c, n: 0, delay_us: 2300000}        # 첫 응답(ACK) 2.3초 지연
+    - {dir: c2s, n: 1, dup_extra_us: 400000}     # 두 번째 송신(재시도) 중복
+  disconnects:
+    - {t_us: 5000000, duration_us: 1000000}
 run_until: 20.0
 ```
 
