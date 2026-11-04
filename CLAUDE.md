@@ -16,6 +16,9 @@
    시나리오 생성기(무작위, 이후 LLM)는 통과 여부를 결정하지 않는다.
 4. **트레이스가 유일한 관찰 경로**: 판정기는 트레이스만 읽는다. 이벤트 kind는
    `send, recv, handle, effect, state, fault` 여섯 개뿐. `recv`(도착)와 `handle`(처리)은 구분한다.
+   기록은 `trace.record(actor, kind, name, req_id=None, data=None)` 형식이다. 부가 정보는
+   반드시 `data` 딕셔너리 하나로 넘긴다(키워드 인자로 넘기면 TypeError). 요청에 속한 이벤트는
+   `req_id`를 빠뜨리지 않는다. 판정기가 req_id별로 세기 때문에 빠지면 위반을 놓친다.
 5. **같은 시드 = 같은 다이제스트**: 결정성을 깨는 변경은 버그다.
    `tests/test_determinism.py`는 항상 통과해야 한다.
 
@@ -30,6 +33,14 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 - 작업 단위마다 테스트를 먼저 쓰고, 작은 커밋으로 나눈다.
 - 작업 단위를 끝내면 README의 Status 체크리스트를 갱신한다.
 
+## 리뷰 보고 방식
+작업지시서의 리뷰 단계에서는 찾은 항목을 두 가지로 나눠 보고한다.
+- **차단**: 다음 작업지시서의 작업을 시작하기 전에 고쳐야 하는 것. 그대로 두면 다음 작업의
+  결과가 틀리거나(특히 판정기의 미탐), 고치는 비용이 크게 늘어나는 것.
+- **보류**: 실제 위험이지만 지금 고치지 않아도 되는 것. `docs/backlog.md`에 추가할 문구로
+  한두 줄씩 적는다. 직접 파일에 쓰지는 않는다(지시서가 반영한다).
+각 항목에는 재현 여부와, 차단이면 막히는 다음 작업을 함께 적는다.
+
 ## 현재 상태
 - [x] 가상 시간 스케줄러 (`src/replayspect/sim/scheduler.py`), 이름 붙은 RNG 스트림 `fork_rng`
 - [x] 트레이스 이벤트 모델과 다이제스트 (`src/replayspect/trace.py`)
@@ -39,15 +50,20 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 ## 링크 모델 요약 (구현 완료)
 - `Channel`이 `client`↔`device`를 잇는다. 방향은 `c2s`, `s2c`. `send`, `recv`, `fault` 이벤트는
   채널이 직접 기록하고, 엔드포인트는 `handle`, `effect`, `state`만 기록한다.
-- 메시지 필드는 송신 시점에 스냅샷되고, 수신자는 매번 독립된 사본을 받는다.
-  `Trace.record`도 data를 JSON 스냅샷으로 저장한다(튜플은 리스트가 됨).
+- 메시지 필드는 JSON으로 왕복해도 그대로인 값만 허용한다(리스트, 문자열 키, NaN 없음).
+  튜플이나 정수 키가 있으면 송신 시점에 `LinkError`. 필드는 송신 시점에 스냅샷되고,
+  수신자는 매번 독립된 사본을 받는다. `Trace.record`도 data를 JSON 스냅샷으로 저장한다.
 - 메시지 메타데이터는 이벤트 data의 예약 키 `link`에 담긴다.
   `n`은 방향별 송신 순번(정보용), `k`는 같은 `(방향, 메시지 이름, req_id)`의 몇 번째 송신인지다.
 - 명시 계획은 메시지를 `MsgKey(dir, msg, req_id, k)`로 지정한다. 한 요청의 재시도가
-  생기거나 사라져도 다른 요청의 키는 바뀌지 않는다.
+  생기거나 사라져도 다른 요청의 키는 바뀌지 않는다. `req_id`가 없는 메시지는 같은 이름끼리
+  카운터를 공유하므로, 계획으로 겨냥할 메시지에는 `req_id`를 붙인다.
+  `MsgKey`는 비교 정렬이 안 되므로 `sorted(keys, key=MsgKey.sort_key)`로 정렬한다.
+- 모든 송신은 유실되더라도 지연을 추첨하고 `link.delay_us`에 기록한다. 그래서 계획에서
+  유실이나 끊김을 빼면 그 메시지는 원래 뽑혔던 지연으로 도착한다.
 - `FaultPlan`은 기본 지연(`delays`)과 장애(`faults`, `disconnects`)를 분리한다.
   축소기는 장애만 빼고(`without_fault`), 지연은 그대로 둔다.
 - 무작위 모드는 `fork_rng("link/c2s")`, `"link/s2c"`, `"link/disconnect"` 스트림만 쓰고,
-  메시지당 추첨 순서(유실 → 지연 → 중복 → 추가 지연)는 테스트로 고정돼 있다.
+  메시지당 추첨 순서(유실 여부 → 지연 → 중복 여부 → 중복일 때만 추가 지연)는 테스트로 고정돼 있다.
 - `FaultPlan.from_trace(trace)`로 만든 명시 계획은 시드와 무관하게 같은 다이제스트로 재생된다.
   이 성질은 축소기의 기반이므로 깨지면 안 된다 (`tests/test_link.py`).
