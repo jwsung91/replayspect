@@ -8,7 +8,8 @@
 
 ## 절대 원칙 (어기는 변경은 하지 말 것)
 1. **결정성**: 스레드, `time.sleep`, 실제 시계, 실제 소켓 금지. 모든 사건은
-   `Scheduler`를 거치고, 모든 무작위성은 `Scheduler.rng` 하나에서만 나온다.
+   `Scheduler`를 거치고, 모든 무작위성은 `Scheduler`에서 파생된 스트림에서만 나온다.
+   컴포넌트마다 `Scheduler.fork_rng("<컴포넌트 이름>")`으로 자기 스트림을 만들어 쓴다.
    `random` 모듈 전역 함수, `set` 순회 순서, `hash()`에 의존하는 로직 금지.
 2. **시간은 정수 마이크로초**: 로직은 `now_us`, `*_us` API만 쓴다. 초 단위 float는 입출력 편의용.
 3. **계약이 유일한 정답**: 시뮬레이터 코드는 판정기(`contract/`)를 import하지 않는다.
@@ -38,9 +39,15 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 ## 링크 모델 요약 (구현 완료)
 - `Channel`이 `client`↔`device`를 잇는다. 방향은 `c2s`, `s2c`. `send`, `recv`, `fault` 이벤트는
   채널이 직접 기록하고, 엔드포인트는 `handle`, `effect`, `state`만 기록한다.
-- 메시지 메타데이터는 이벤트 data의 예약 키 `link`에 담긴다 (`dir`, `n`, `delay_us`, `copy`).
-  `n`은 방향별 송신 시도 번호로, 연결이 끊겨 버려진 송신도 센다.
-- 무작위 모드는 `fork_rng("link/c2s")`, `"link/s2c"`, `"link/disconnect"` 스트림만 쓴다.
-  다른 컴포넌트는 자기 이름의 스트림을 따로 만들어 쓴다 (`Scheduler.rng` 직접 사용 지양).
+- 메시지 필드는 송신 시점에 스냅샷되고, 수신자는 매번 독립된 사본을 받는다.
+  `Trace.record`도 data를 JSON 스냅샷으로 저장한다(튜플은 리스트가 됨).
+- 메시지 메타데이터는 이벤트 data의 예약 키 `link`에 담긴다.
+  `n`은 방향별 송신 순번(정보용), `k`는 같은 `(방향, 메시지 이름, req_id)`의 몇 번째 송신인지다.
+- 명시 계획은 메시지를 `MsgKey(dir, msg, req_id, k)`로 지정한다. 한 요청의 재시도가
+  생기거나 사라져도 다른 요청의 키는 바뀌지 않는다.
+- `FaultPlan`은 기본 지연(`delays`)과 장애(`faults`, `disconnects`)를 분리한다.
+  축소기는 장애만 빼고(`without_fault`), 지연은 그대로 둔다.
+- 무작위 모드는 `fork_rng("link/c2s")`, `"link/s2c"`, `"link/disconnect"` 스트림만 쓰고,
+  메시지당 추첨 순서(유실 → 지연 → 중복 → 추가 지연)는 테스트로 고정돼 있다.
 - `FaultPlan.from_trace(trace)`로 만든 명시 계획은 시드와 무관하게 같은 다이제스트로 재생된다.
   이 성질은 축소기의 기반이므로 깨지면 안 된다 (`tests/test_link.py`).
