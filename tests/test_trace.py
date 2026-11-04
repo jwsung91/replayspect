@@ -51,3 +51,18 @@ def test_digest_changes_with_any_field():
     a.record("client", "send", "MOVE_UP", "r-1")
     b.record("client", "send", "MOVE_UP", "r-2")
     assert a.digest() != b.digest()
+
+
+def test_data_is_snapshotted():
+    _, tr = make()
+    payload = {"v": [1], "t": (1, 2)}
+    tr.record("client", "send", "M", "r-1", **payload)
+    payload["v"].append(2)
+    assert tr[0].data == {"v": [1], "t": [1, 2]}
+
+
+def test_data_keys_may_shadow_parameters():
+    _, tr = make()
+    ev = tr.record("device", "send", "STATUS_REPLY", "r-1", name="lift-A", kind="x", actor="y", req_id="z")
+    assert (ev.actor, ev.kind, ev.name, ev.req_id) == ("device", "send", "STATUS_REPLY", "r-1")
+    assert ev.data == {"name": "lift-A", "kind": "x", "actor": "y", "req_id": "z"}

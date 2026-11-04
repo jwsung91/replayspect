@@ -83,19 +83,28 @@ class Trace:
         kind: str,
         name: str,
         req_id: str | None = None,
+        /,
         **data: Any,
     ) -> Event:
-        """Append an event stamped with the current virtual time."""
+        """Append an event stamped with the current virtual time.
+
+        The first four parameters are positional-only, so ``data`` may itself
+        contain keys such as ``name`` or ``kind`` (common in message fields).
+
+        ``data`` is stored as a snapshot of its JSON form: a deep copy in
+        which tuples become lists. Mutating the caller's objects afterwards
+        cannot change a recorded event.
+        """
         if kind not in EVENT_KINDS:
             raise TraceError(f"unknown event kind {kind!r}; expected one of {sorted(EVENT_KINDS)}")
         try:
-            _canonical(data)
+            snapshot = json.loads(_canonical(data))
         except (TypeError, ValueError) as exc:
             raise TraceError(f"event data must be JSON-serialisable: {exc}") from exc
         t_us = self._clock_us()
         if self._events and t_us < self._events[-1].t_us:
             raise TraceError(f"time went backwards: {t_us}us after {self._events[-1].t_us}us")
-        ev = Event(len(self._events), t_us, actor, kind, name, req_id, data)
+        ev = Event(len(self._events), t_us, actor, kind, name, req_id, snapshot)
         self._events.append(ev)
         return ev
 
