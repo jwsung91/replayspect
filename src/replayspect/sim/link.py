@@ -18,11 +18,19 @@ Two modes:
 Both modes record the realised decisions in the trace in the same form, so
 :meth:`FaultPlan.from_trace` turns any random run into an explicit plan that
 replays to the same trace digest. Shrinking is built on that property.
+
+Explicit decisions address a message by :class:`MsgKey`: direction, message
+name, request id, and ``k``, the occurrence of that ``(name, req_id)`` on
+that direction. Removing a retry of one request therefore never shifts the
+keys of any other request. A plan keeps baseline timing (``delays``) apart
+from faults (``faults``, ``disconnects``), so removing a fault entry removes
+only that fault.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+import json
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from replayspect.sim.scheduler import Scheduler
@@ -100,39 +108,66 @@ class ChannelProfile:
         return self.c2s if direction == "c2s" else self.s2c
 
 
-@dataclass(frozen=True)
-class MessageFault:
-    """Explicit decisions for the ``n``-th message sent on ``dir`` (0-based).
-
-    ``n`` counts every send attempt on that direction, including messages
-    dropped because the connection was down, so plan keys stay stable.
-    """
+@dataclass(frozen=True, order=True)
+class MsgKey:
+    """Identifies one send: the ``k``-th ``(msg, req_id)`` on ``dir`` (0-based)."""
 
     dir: str
-    n: int
-    drop: bool = False
-    delay_us: int | None = None
-    dup_extra_us: int | None = None
+    msg: str
+    req_id: str | None
+    k: int
 
     def __post_init__(self) -> None:
         if self.dir not in DIRECTIONS:
             raise LinkError(f"dir must be one of {DIRECTIONS}, got {self.dir!r}")
-        if self.n < 0:
-            raise LinkError("n must be >= 0")
-        if self.drop and (self.delay_us is not None or self.dup_extra_us is not None):
-            raise LinkError("a dropped message cannot also have delay_us or dup_extra_us")
-        for name in ("delay_us", "dup_extra_us"):
-            v = getattr(self, name)
-            if v is not None and v < 0:
-                raise LinkError(f"{name} must be >= 0")
+        if self.k < 0:
+            raise LinkError("k must be >= 0")
 
     def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"dir": self.dir, "n": self.n}
+        return {"dir": self.dir, "msg": self.msg, "req_id": self.req_id, "k": self.k}
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> "MsgKey":
+        return cls(d["dir"], d["msg"], d.get("req_id"), d["k"])
+
+    def sort_key(self) -> tuple:
+        return (DIRECTIONS.index(self.dir), self.msg, self.req_id or "", self.k)
+
+
+@dataclass(frozen=True)
+class Delay:
+    """Baseline delivery delay of one message. Not a fault."""
+
+    key: MsgKey
+    delay_us: int
+
+    def __post_init__(self) -> None:
+        if self.delay_us < 0:
+            raise LinkError("delay_us must be >= 0")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {**self.key.to_dict(), "delay_us": self.delay_us}
+
+
+@dataclass(frozen=True)
+class MessageFault:
+    """A fault on one message: either a drop or a duplicate, never both."""
+
+    key: MsgKey
+    drop: bool = False
+    dup_extra_us: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.drop == (self.dup_extra_us is not None):
+            raise LinkError("a message fault is exactly one of drop=True or dup_extra_us")
+        if self.dup_extra_us is not None and self.dup_extra_us < 0:
+            raise LinkError("dup_extra_us must be >= 0")
+
+    def to_dict(self) -> dict[str, Any]:
+        d = self.key.to_dict()
         if self.drop:
             d["drop"] = True
-        if self.delay_us is not None:
-            d["delay_us"] = self.delay_us
-        if self.dup_extra_us is not None:
+        else:
             d["dup_extra_us"] = self.dup_extra_us
         return d
 
@@ -150,63 +185,83 @@ class Disconnect:
         return {"t_us": self.t_us, "duration_us": self.duration_us}
 
 
+def _key_from(d: Mapping[str, Any]) -> MsgKey:
+    return MsgKey(d["dir"], d["msg"], d.get("req_id"), d["k"])
+
+
 @dataclass(frozen=True)
 class FaultPlan:
-    """Everything that happens on the channel in explicit mode."""
+    """Everything that happens on the channel in explicit mode.
 
-    messages: tuple[MessageFault, ...] = ()
+    ``delays`` is baseline timing; messages without an entry use the low end
+    of the profile's ``delay_us``. ``faults`` and ``disconnects`` are the
+    faults; removing one of them removes only that fault.
+    """
+
+    delays: tuple[Delay, ...] = ()
+    faults: tuple[MessageFault, ...] = ()
     disconnects: tuple[Disconnect, ...] = ()
 
     def __post_init__(self) -> None:
-        keys = [(m.dir, m.n) for m in self.messages]
-        if len(keys) != len(set(keys)):
-            raise LinkError("duplicate (dir, n) in plan messages")
+        for label, keys in (("delays", [d.key for d in self.delays]), ("faults", [f.key for f in self.faults])):
+            if len(keys) != len(set(keys)):
+                raise LinkError(f"duplicate message key in plan {label}")
         ds = sorted(self.disconnects, key=lambda d: d.t_us)
         for a, b in zip(ds, ds[1:]):
             if b.t_us < a.t_us + a.duration_us:
                 raise LinkError(f"overlapping disconnects at {a.t_us}us and {b.t_us}us")
+        object.__setattr__(self, "_delay_of", {d.key: d.delay_us for d in self.delays})
+        object.__setattr__(self, "_fault_of", {f.key: f for f in self.faults})
 
-    def message(self, direction: str, n: int) -> MessageFault | None:
-        for m in self.messages:
-            if m.dir == direction and m.n == n:
-                return m
-        return None
+    def delay(self, key: MsgKey) -> int | None:
+        return self._delay_of.get(key)  # type: ignore[attr-defined]
+
+    def fault(self, key: MsgKey) -> MessageFault | None:
+        return self._fault_of.get(key)  # type: ignore[attr-defined]
+
+    def without_fault(self, key: MsgKey) -> "FaultPlan":
+        """The same plan minus the fault on ``key`` (used by shrinking)."""
+        return FaultPlan(self.delays, tuple(f for f in self.faults if f.key != key), self.disconnects)
 
     def to_dict(self) -> dict[str, Any]:
-        msgs = sorted(self.messages, key=lambda m: (DIRECTIONS.index(m.dir), m.n))
         return {
-            "messages": [m.to_dict() for m in msgs],
+            "delays": [d.to_dict() for d in sorted(self.delays, key=lambda d: d.key.sort_key())],
+            "faults": [f.to_dict() for f in sorted(self.faults, key=lambda f: f.key.sort_key())],
             "disconnects": [d.to_dict() for d in sorted(self.disconnects, key=lambda d: d.t_us)],
         }
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "FaultPlan":
         return cls(
-            messages=tuple(MessageFault(**m) for m in d.get("messages", [])),
+            delays=tuple(Delay(_key_from(x), x["delay_us"]) for x in d.get("delays", [])),
+            faults=tuple(
+                MessageFault(_key_from(x), drop=x.get("drop", False), dup_extra_us=x.get("dup_extra_us"))
+                for x in d.get("faults", [])
+            ),
             disconnects=tuple(Disconnect(**x) for x in d.get("disconnects", [])),
         )
 
     @classmethod
     def from_trace(cls, trace: Trace) -> "FaultPlan":
         """Reconstruct the plan that reproduces ``trace`` in explicit mode."""
-        msgs: dict[tuple[str, int], MessageFault] = {}
+        delays: list[Delay] = []
+        faults: list[MessageFault] = []
         disconnects: list[Disconnect] = []
         for ev in trace:
             if ev.kind == "send" and "link" in ev.data:
                 link = ev.data["link"]
                 if "delay_us" in link:
-                    key = (link["dir"], link["n"])
-                    msgs[key] = MessageFault(link["dir"], link["n"], delay_us=link["delay_us"])
+                    delays.append(Delay(MsgKey(link["dir"], ev.name, ev.req_id, link["k"]), link["delay_us"]))
             elif ev.kind == "fault" and ev.actor == "link":
                 if ev.name == "drop" and ev.data.get("reason") == DROP_INJECTED:
-                    key = (ev.data["dir"], ev.data["n"])
-                    msgs[key] = MessageFault(ev.data["dir"], ev.data["n"], drop=True)
+                    faults.append(MessageFault(_key_from({**ev.data, "req_id": ev.req_id}), drop=True))
                 elif ev.name == "duplicate":
-                    key = (ev.data["dir"], ev.data["n"])
-                    msgs[key] = replace(msgs[key], dup_extra_us=ev.data["extra_us"])
+                    faults.append(MessageFault(
+                        _key_from({**ev.data, "req_id": ev.req_id}), dup_extra_us=ev.data["extra_us"]
+                    ))
                 elif ev.name == "disconnect":
                     disconnects.append(Disconnect(ev.t_us, ev.data["duration_us"]))
-        return cls(tuple(msgs.values()), tuple(disconnects))
+        return cls(tuple(delays), tuple(faults), tuple(disconnects))
 
 
 MessageHandler = Callable[[Message], None]
@@ -230,6 +285,7 @@ class Channel:
         self._rng = {d: sched.fork_rng(f"link/{d}") for d in DIRECTIONS}
         self._disc_rng = sched.fork_rng("link/disconnect")
         self._n = {d: 0 for d in DIRECTIONS}
+        self._k: dict[tuple[str, str, str | None], int] = {}
         self._on_message: dict[str, MessageHandler] = {}
         self._on_connection: dict[str, ConnectionHandler | None] = {}
         self.up = True
@@ -276,51 +332,63 @@ class Channel:
         if sender not in ENDPOINTS:
             raise LinkError(f"sender must be one of {ENDPOINTS}, got {sender!r}")
         direction = _DIR_OF_SENDER[sender]
+        # Snapshot the fields now: later mutation by the sender must not
+        # change what is in flight or what the receiver gets.
+        try:
+            fields = json.loads(json.dumps(dict(msg.fields), sort_keys=True))
+        except (TypeError, ValueError) as exc:
+            raise LinkError(f"message fields must be JSON-serialisable: {exc}") from exc
         n = self._n[direction]
         self._n[direction] += 1
-        link: dict[str, Any] = {"dir": direction, "n": n}
+        kk = (direction, msg.name, msg.req_id)
+        k = self._k.get(kk, 0)
+        self._k[kk] = k + 1
+        key = MsgKey(direction, msg.name, msg.req_id, k)
+        link: dict[str, Any] = {"dir": direction, "n": n, "k": k}
 
         if not self.up:
-            self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **msg.fields)
-            self._record_drop(direction, n, msg, DROP_DISCONNECTED)
+            self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **fields)
+            self._record_drop(key, n, DROP_DISCONNECTED)
             return
 
-        drop, delay_us, dup_extra_us = self._decide(direction, n)
+        drop, delay_us, dup_extra_us = self._decide(key)
         if drop:
-            self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **msg.fields)
-            self._record_drop(direction, n, msg, DROP_INJECTED)
+            self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **fields)
+            self._record_drop(key, n, DROP_INJECTED)
             return
 
         link["delay_us"] = delay_us
-        self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **msg.fields)
+        self._trace.record(sender, "send", msg.name, msg.req_id, link=link, **fields)
         epoch = self.epoch
         self._sched.after_us(
-            delay_us, lambda: self._arrive(direction, n, 0, epoch, msg), f"{direction}:{msg.name}"
+            delay_us, lambda: self._arrive(key, n, 0, epoch, fields), f"{direction}:{msg.name}"
         )
         if dup_extra_us is not None:
             self._trace.record(
                 "link", "fault", "duplicate", msg.req_id,
-                dir=direction, n=n, msg=msg.name, extra_us=dup_extra_us,
+                dir=direction, n=n, msg=msg.name, k=k, extra_us=dup_extra_us,
             )
             self._sched.after_us(
                 delay_us + dup_extra_us,
-                lambda: self._arrive(direction, n, 1, epoch, msg),
+                lambda: self._arrive(key, n, 1, epoch, fields),
                 f"{direction}:{msg.name}:dup",
             )
 
-    def _decide(self, direction: str, n: int) -> tuple[bool, int, int | None]:
+    def _decide(self, key: MsgKey) -> tuple[bool, int, int | None]:
         """Return ``(drop, delay_us, dup_extra_us)`` for one message."""
-        prof = self.profile.link(direction)
+        prof = self.profile.link(key.dir)
         if self.plan is not None:
-            mf = self.plan.message(direction, n)
-            if mf is None:
-                return False, prof.delay_us[0], None
-            if mf.drop:
+            fault = self.plan.fault(key)
+            if fault is not None and fault.drop:
                 return True, 0, None
-            delay = mf.delay_us if mf.delay_us is not None else prof.delay_us[0]
-            return False, delay, mf.dup_extra_us
-        rng = self._rng[direction]
+            delay = self.plan.delay(key)
+            if delay is None:
+                delay = prof.delay_us[0]
+            return False, delay, (fault.dup_extra_us if fault is not None else None)
+        rng = self._rng[key.dir]
         # Fixed draw order: drop, delay, duplicate, duplicate extra delay.
+        # tests/test_link.py pins the resulting values; changing the order
+        # changes what every existing seed produces.
         if rng.random() < prof.drop_p:
             return True, 0, None
         delay = rng.randint(*prof.delay_us)
@@ -328,22 +396,24 @@ class Channel:
         extra = rng.randint(*prof.dup_extra_us) if dup else None
         return False, delay, extra
 
-    def _arrive(self, direction: str, n: int, copy: int, epoch: int, msg: Message) -> None:
+    def _arrive(self, key: MsgKey, n: int, copy: int, epoch: int, fields: Mapping[str, Any]) -> None:
         if not self.up or epoch != self.epoch:
-            self._record_drop(direction, n, msg, DROP_CONNECTION_LOST, copy=copy)
+            self._record_drop(key, n, DROP_CONNECTION_LOST, copy=copy)
             return
-        receiver = _RECEIVER_OF_DIR[direction]
+        receiver = _RECEIVER_OF_DIR[key.dir]
         self._trace.record(
-            receiver, "recv", msg.name, msg.req_id,
-            link={"dir": direction, "n": n, "copy": copy}, **msg.fields,
+            receiver, "recv", key.msg, key.req_id,
+            link={"dir": key.dir, "n": n, "k": key.k, "copy": copy}, **fields,
         )
-        self._on_message[receiver](msg)
+        # Each delivery gets its own copy, so a receiver that mutates the
+        # message cannot affect a duplicate still in flight.
+        self._on_message[receiver](Message(key.msg, key.req_id, json.loads(json.dumps(fields))))
 
-    def _record_drop(self, direction: str, n: int, msg: Message, reason: str, copy: int | None = None) -> None:
-        data: dict[str, Any] = {"dir": direction, "n": n, "msg": msg.name, "reason": reason}
+    def _record_drop(self, key: MsgKey, n: int, reason: str, copy: int | None = None) -> None:
+        data: dict[str, Any] = {"dir": key.dir, "n": n, "msg": key.msg, "k": key.k, "reason": reason}
         if copy is not None:
             data["copy"] = copy
-        self._trace.record("link", "fault", "drop", msg.req_id, **data)
+        self._trace.record("link", "fault", "drop", key.req_id, **data)
 
     # -- connection --------------------------------------------------------------
 

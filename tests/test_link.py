@@ -7,12 +7,14 @@ from replayspect import Scheduler, Trace
 from replayspect.sim.link import (
     Channel,
     ChannelProfile,
+    Delay,
     Disconnect,
     FaultPlan,
     LinkError,
     LinkProfile,
     Message,
     MessageFault,
+    MsgKey,
 )
 
 
@@ -38,9 +40,9 @@ def test_default_delivery_and_exact_trace_layout():
     assert [m.name for m in inbox["device"]] == ["MOVE_UP"]
     assert [e.to_dict() for e in trace] == [
         {"seq": 0, "t_us": 500_000, "actor": "client", "kind": "send", "name": "MOVE_UP",
-         "req_id": "r-1", "data": {"floor": 3, "link": {"dir": "c2s", "n": 0, "delay_us": 1_000}}},
+         "req_id": "r-1", "data": {"floor": 3, "link": {"dir": "c2s", "n": 0, "k": 0, "delay_us": 1_000}}},
         {"seq": 1, "t_us": 501_000, "actor": "device", "kind": "recv", "name": "MOVE_UP",
-         "req_id": "r-1", "data": {"floor": 3, "link": {"dir": "c2s", "n": 0, "copy": 0}}},
+         "req_id": "r-1", "data": {"floor": 3, "link": {"dir": "c2s", "n": 0, "k": 0, "copy": 0}}},
     ]
 
 
@@ -91,7 +93,7 @@ def test_duplicate_all_arrives_twice_with_extra_delay():
     recv = [e for e in trace if e.kind == "recv" and e.actor == "device"]
     assert [(e.t_us, e.data["link"]["copy"]) for e in recv] == [(10_000, 0), (15_000, 1)]
     (dup,) = [e for e in trace if e.name == "duplicate"]
-    assert dup.data == {"dir": "c2s", "n": 0, "msg": "PING", "extra_us": 5_000}
+    assert dup.data == {"dir": "c2s", "n": 0, "msg": "PING", "k": 0, "extra_us": 5_000}
 
 
 def test_jitter_reorders_messages_for_some_seed():
@@ -116,7 +118,7 @@ def test_same_instant_arrivals_keep_send_order():
 
 def test_disconnect_drops_in_flight_and_new_sends_then_recovers():
     plan = FaultPlan(
-        messages=(MessageFault("c2s", 0, delay_us=300_000),),
+        delays=(Delay(MsgKey("c2s", "A", "r-0", 0), 300_000),),
         disconnects=(Disconnect(t_us=100_000, duration_us=400_000),),
     )
     sched, trace, ch, inbox, conn = world(plan=plan)
@@ -145,17 +147,46 @@ def test_random_disconnects_happen_and_alternate():
 # -- explicit mode and replay ---------------------------------------------------
 
 
+def ping(i, k=0):
+    return MsgKey("c2s", "PING", f"r-{i:04d}", k)
+
+
 def test_explicit_plan_applies_only_listed_faults():
-    plan = FaultPlan(messages=(
-        MessageFault("c2s", 1, drop=True),
-        MessageFault("c2s", 2, delay_us=50_000, dup_extra_us=10_000),
-    ))
+    plan = FaultPlan(
+        delays=(Delay(ping(2), 50_000),),
+        faults=(MessageFault(ping(1), drop=True), MessageFault(ping(2), dup_extra_us=10_000)),
+    )
     prof = ChannelProfile(c2s=LinkProfile(delay_us=(1_000, 900_000), drop_p=0.9))
     trace, _ = echo.run(0, prof, plan, n_msgs=4, spacing_us=100_000)
-    sends = {e.data["link"]["n"]: e.data["link"].get("delay_us") for e in trace if e.kind == "send" and e.actor == "client"}
-    assert sends == {0: 1_000, 1: None, 2: 50_000, 3: 1_000}
-    recv = [(e.data["link"]["n"], e.data["link"]["copy"], e.t_us) for e in trace if e.kind == "recv" and e.actor == "device"]
-    assert recv == [(0, 0, 1_000), (2, 0, 250_000), (2, 1, 260_000), (3, 0, 301_000)]
+    sends = {e.req_id: e.data["link"].get("delay_us") for e in trace if e.kind == "send" and e.actor == "client"}
+    assert sends == {"r-0000": 1_000, "r-0001": None, "r-0002": 50_000, "r-0003": 1_000}
+    recv = [(e.req_id, e.data["link"]["copy"], e.t_us) for e in trace if e.kind == "recv" and e.actor == "device"]
+    assert recv == [("r-0000", 0, 1_000), ("r-0002", 0, 250_000), ("r-0002", 1, 260_000), ("r-0003", 0, 301_000)]
+
+
+def test_random_draw_order_is_pinned():
+    # Draw order per message: drop, delay, duplicate?, duplicate extra delay.
+    # Changing it changes what every existing seed produces.
+    prof = ChannelProfile(c2s=LinkProfile(delay_us=(0, 999), drop_p=0.3, dup_p=0.3, dup_extra_us=(0, 99)))
+    sched, trace, ch, _, _ = world(prof, seed=0)
+    for i in range(8):
+        sched.at_us(i, lambda i=i: ch.send("client", Message("M", f"r-{i}")))
+    sched.run_until(1)
+    decisions = []
+    for e in trace:
+        if e.kind == "send":
+            decisions.append([e.req_id, e.data["link"].get("delay_us")])
+        elif e.name == "drop":
+            decisions[-1].append("drop")
+        elif e.name == "duplicate":
+            decisions[-1].append(e.data["extra_us"])
+    assert decisions == PINNED_DECISIONS
+
+
+PINNED_DECISIONS = [
+    ["r-0", None, "drop"], ["r-1", 0, 86], ["r-2", None, "drop"], ["r-3", 74],
+    ["r-4", 520], ["r-5", 414], ["r-6", 547], ["r-7", 191],
+]
 
 
 @pytest.mark.parametrize("seed", range(40))
@@ -180,11 +211,86 @@ def test_plan_dict_round_trip_is_json():
     assert echo.run(3, echo.STORMY, FaultPlan.from_dict(d))[0].digest() == echo.run(3, echo.STORMY)[0].digest()
 
 
+def test_removing_one_fault_does_not_shift_other_requests():
+    """Dropping r-A's first PING causes a retry. Removing that drop removes the
+    retry, but the duplicate planned for r-C must still hit r-C."""
+
+    def run(plan):
+        sched, trace, ch, inbox, _ = world(plan=plan)
+        got = set()
+        ch.attach("device", lambda m: ch.send("device", Message("ECHO", m.req_id)))
+        ch.attach("client", lambda m: got.add(m.req_id))
+
+        def send(rid, attempt=0):
+            ch.send("client", Message("PING", rid))
+            if attempt == 0:
+                sched.after(0.1, lambda: rid in got or send(rid, 1))
+
+        sched.at(0.00, lambda: send("r-A"))
+        sched.at(0.05, lambda: send("r-B"))
+        sched.at(0.30, lambda: send("r-C"))
+        sched.run_until(1)
+        return trace
+
+    drop_a = MessageFault(MsgKey("c2s", "PING", "r-A", 0), drop=True)
+    dup_c = MessageFault(MsgKey("c2s", "PING", "r-C", 0), dup_extra_us=7_000)
+    full = FaultPlan(faults=(drop_a, dup_c))
+
+    t_full = run(full)
+    assert [e.req_id for e in t_full if e.kind == "send" and e.actor == "client"] == ["r-A", "r-B", "r-A", "r-C"]
+    t_less = run(full.without_fault(drop_a.key))
+    assert [e.req_id for e in t_less if e.kind == "send" and e.actor == "client"] == ["r-A", "r-B", "r-C"]
+    for t in (t_full, t_less):
+        assert [e.req_id for e in t if e.name == "duplicate"] == ["r-C"]
+
+
+def test_field_names_may_shadow_record_parameters():
+    sched, trace, ch, inbox, _ = world()
+    fields = {"name": "lift-A", "kind": "freight", "actor": "x", "req_id": "y"}
+    sched.at(0, lambda: ch.send("device", Message("STATUS_REPLY", "r-1", fields)))
+    sched.run_until(1)
+    assert inbox["client"][0].fields == fields
+    send, recv = trace.events
+    assert (send.name, send.req_id) == ("STATUS_REPLY", "r-1")
+    assert {k: send.data[k] for k in fields} == fields
+
+
+def test_fields_are_snapshotted_at_send():
+    sched, trace, ch, inbox, _ = world(ChannelProfile(c2s=LinkProfile(dup_p=1.0, dup_extra_us=(5, 5))))
+    payload = {"v": [1]}
+    sched.at(0, lambda: ch.send("client", Message("M", "r-1", payload)))
+    sched.at(0, lambda: payload["v"].append(2))
+    sched.run_until(1)
+    assert [m.fields for m in inbox["device"]] == [{"v": [1]}, {"v": [1]}]
+    assert trace[0].data["v"] == [1]
+    inbox["device"][0].fields["v"].append(99)
+    assert inbox["device"][1].fields == {"v": [1]}
+    assert trace[0].data["v"] == [1]
+
+
+def test_plan_dict_uses_message_keys():
+    plan = FaultPlan(
+        delays=(Delay(MsgKey("s2c", "ACK", "r-3", 0), 2_300_000),),
+        faults=(MessageFault(MsgKey("c2s", "MOVE_UP", "r-3", 1), dup_extra_us=400_000),),
+        disconnects=(Disconnect(5_000_000, 1_000_000),),
+    )
+    assert plan.to_dict() == {
+        "delays": [{"dir": "s2c", "msg": "ACK", "req_id": "r-3", "k": 0, "delay_us": 2_300_000}],
+        "faults": [{"dir": "c2s", "msg": "MOVE_UP", "req_id": "r-3", "k": 1, "dup_extra_us": 400_000}],
+        "disconnects": [{"t_us": 5_000_000, "duration_us": 1_000_000}],
+    }
+    assert FaultPlan.from_dict(plan.to_dict()) == plan
+
+
 @pytest.mark.parametrize("make", [
-    lambda: FaultPlan(messages=(MessageFault("c2s", 0), MessageFault("c2s", 0))),
+    lambda: FaultPlan(delays=(Delay(ping(0), 1), Delay(ping(0), 2))),
+    lambda: FaultPlan(faults=(MessageFault(ping(0), drop=True), MessageFault(ping(0), drop=True))),
     lambda: FaultPlan(disconnects=(Disconnect(0, 100), Disconnect(50, 100))),
-    lambda: MessageFault("c2s", 0, drop=True, delay_us=5),
-    lambda: MessageFault("x2y", 0),
+    lambda: MessageFault(ping(0), drop=True, dup_extra_us=5),
+    lambda: MessageFault(ping(0)),
+    lambda: MsgKey("x2y", "PING", None, 0),
+    lambda: MsgKey("c2s", "PING", None, -1),
+    lambda: Delay(ping(0), -1),
     lambda: Disconnect(10, 0),
 ])
 def test_plan_validation(make):
