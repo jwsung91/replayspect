@@ -13,6 +13,7 @@ scheduled (FIFO), fixed by a monotonically increasing sequence number.
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import random
 from dataclasses import dataclass, field
@@ -75,6 +76,19 @@ class Scheduler:
         self._now_us = 0
         self._seq = 0
         self._queue: list[_Entry] = []
+
+    def fork_rng(self, name: str) -> random.Random:
+        """Return an independent RNG stream derived from ``(seed, name)``.
+
+        Components that draw random numbers (each link direction, disconnect
+        timing, scenario generation) should each use their own named stream.
+        Then adding or removing draws in one component never shifts the
+        numbers another component sees, which keeps shrinking and replay
+        stable. The derivation uses SHA-256, so it does not depend on
+        Python's per-process hash randomisation.
+        """
+        digest = hashlib.sha256(f"{self.seed}/{name}".encode("utf-8")).digest()
+        return random.Random(int.from_bytes(digest[:8], "big"))
 
     # -- clock ---------------------------------------------------------------
 
