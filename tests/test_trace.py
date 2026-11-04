@@ -55,10 +55,11 @@ def test_digest_changes_with_any_field():
 
 def test_data_is_snapshotted():
     _, tr = make()
-    payload = {"v": [1], "t": (1, 2)}
+    payload = {"v": [1], "m": {"k": "x"}}
     tr.record("client", "send", "M", "r-1", payload)
     payload["v"].append(2)
-    assert tr[0].data == {"v": [1], "t": [1, 2]}
+    payload["m"]["k"] = "changed"
+    assert tr[0].data == {"v": [1], "m": {"k": "x"}}
 
 
 def test_data_keys_may_shadow_parameters():
@@ -80,3 +81,46 @@ def test_stray_keyword_is_an_error_not_data():
     _, tr = make()
     with pytest.raises(TypeError):
         tr.record("device", "effect", "motor_start", "r-1", state="MOVING_UP")
+
+
+def test_dict_in_req_id_position_is_rejected():
+    _, tr = make()
+    with pytest.raises(TraceError, match="req_id must be str or None"):
+        tr.record("device", "state", "MOVING_UP", {"from": "DOWN", "on": "MOVE_UP"})
+
+
+@pytest.mark.parametrize("args", [
+    (1, "send", "M"),
+    ("client", "send", None),
+    ("client", "send", "M", 7),
+])
+def test_identity_fields_must_be_strings(args):
+    _, tr = make()
+    with pytest.raises(TraceError):
+        tr.record(*args)
+
+
+def test_data_must_be_a_mapping():
+    _, tr = make()
+    with pytest.raises(TraceError, match="mapping"):
+        tr.record("client", "send", "M", "r-1", [1, 2])
+
+
+@pytest.mark.parametrize("value", [(1, 2), {1: "a"}, float("nan"), float("inf")])
+def test_data_that_would_change_in_json_is_rejected(value):
+    _, tr = make()
+    with pytest.raises(TraceError, match="plain JSON"):
+        tr.record("client", "send", "M", "r-1", {"v": value})
+    assert len(tr) == 0
+
+
+def test_enum_values_are_rejected_use_value():
+    import enum
+
+    class State(str, enum.Enum):
+        DOWN = "DOWN"
+
+    _, tr = make()
+    with pytest.raises(TraceError):
+        tr.record("device", "state", "DOWN", None, {"from": State.DOWN})
+    tr.record("device", "state", "DOWN", None, {"from": State.DOWN.value})

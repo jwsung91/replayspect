@@ -33,6 +33,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from replayspect._json import plain_json_copy
 from replayspect.sim.scheduler import Scheduler
 from replayspect.trace import Trace
 
@@ -271,7 +272,7 @@ class FaultPlan:
 
 
 def _snapshot_fields(msg: Message) -> dict[str, Any]:
-    """Deep-copy message fields through JSON, rejecting anything that would change.
+    """Deep-copy message fields, rejecting anything a JSON round trip would change.
 
     A tuple would arrive as a list and an integer key as a string, which can
     silently change endpoint logic, so such fields are refused at send time
@@ -279,29 +280,13 @@ def _snapshot_fields(msg: Message) -> dict[str, Any]:
     ``Message.fields`` is a mutable dict that may have changed since
     construction.
     """
-    original = dict(msg.fields)
     try:
-        snapshot = json.loads(json.dumps(original, sort_keys=True, allow_nan=False))
-    except (TypeError, ValueError) as exc:
-        raise LinkError(f"{msg.name}: message fields must be JSON-serialisable: {exc}") from exc
-    if snapshot != original or not _same_types(snapshot, original):
-        raise LinkError(
-            f"{msg.name}: message fields must survive a JSON round trip unchanged "
-            "(use lists not tuples, string keys only)"
-        )
+        snapshot = plain_json_copy(dict(msg.fields))
+    except ValueError as exc:
+        raise LinkError(f"{msg.name}: message fields must be plain JSON: {exc}") from exc
     if "link" in snapshot:
         raise LinkError("message field name 'link' is reserved")
     return snapshot
-
-
-def _same_types(a: Any, b: Any) -> bool:
-    if type(a) is not type(b):
-        return False
-    if isinstance(a, dict):
-        return a.keys() == b.keys() and all(_same_types(a[k], b[k]) for k in a)
-    if isinstance(a, list):
-        return len(a) == len(b) and all(_same_types(x, y) for x, y in zip(a, b))
-    return True
 
 
 MessageHandler = Callable[[Message], None]

@@ -18,6 +18,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Iterator, Mapping
 
+from replayspect._json import plain_json_copy
+
 #: The only event kinds a trace may contain.
 #: ``recv`` (a message arrived) and ``handle`` (the client acted on it) are
 #: separate on purpose: some contracts allow receiving a late reply but forbid
@@ -91,17 +93,29 @@ class Trace:
         keys can never collide with the parameters (``name``, ``req_id``...),
         and ``req_id=...`` passed by keyword always lands in ``req_id``.
 
-        ``data`` is stored as a snapshot of its JSON form: a deep copy in
-        which tuples become lists. Mutating the caller's objects afterwards
-        cannot change a recorded event.
+        ``actor``, ``kind`` and ``name`` must be ``str`` and ``req_id`` a
+        ``str`` or ``None``; a dict passed where ``req_id`` belongs is an
+        error, not a request id. ``data`` must be plain JSON (see
+        :mod:`replayspect._json`) and is stored as a deep copy, so mutating the
+        caller's objects afterwards cannot change a recorded event.
         """
-        data = {} if data is None else data
+        for label, value in (("actor", actor), ("kind", kind), ("name", name)):
+            if type(value) is not str:
+                raise TraceError(f"{label} must be str, got {type(value).__name__}")
+        if req_id is not None and type(req_id) is not str:
+            raise TraceError(
+                f"req_id must be str or None, got {type(req_id).__name__}; "
+                "pass extra information as data=..."
+            )
         if kind not in EVENT_KINDS:
             raise TraceError(f"unknown event kind {kind!r}; expected one of {sorted(EVENT_KINDS)}")
+        data = {} if data is None else data
+        if not isinstance(data, Mapping):
+            raise TraceError(f"data must be a mapping, got {type(data).__name__}")
         try:
-            snapshot = json.loads(_canonical(data))
-        except (TypeError, ValueError) as exc:
-            raise TraceError(f"event data must be JSON-serialisable: {exc}") from exc
+            snapshot = plain_json_copy(dict(data))
+        except ValueError as exc:
+            raise TraceError(f"event data must be plain JSON: {exc}") from exc
         t_us = self._clock_us()
         if self._events and t_us < self._events[-1].t_us:
             raise TraceError(f"time went backwards: {t_us}us after {self._events[-1].t_us}us")
