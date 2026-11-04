@@ -19,6 +19,9 @@
    기록은 `trace.record(actor, kind, name, req_id=None, data=None)` 형식이다. 부가 정보는
    반드시 `data` 딕셔너리 하나로 넘긴다(키워드 인자로 넘기면 TypeError). 요청에 속한 이벤트는
    `req_id`를 빠뜨리지 않는다. 판정기가 req_id별로 세기 때문에 빠지면 위반을 놓친다.
+   `actor`, `kind`, `name`은 str, `req_id`는 str 또는 None이어야 하고(아니면 TraceError),
+   `data`와 메시지 필드는 같은 규칙(`replayspect/_json.py`)으로 순수 JSON만 허용한다.
+   튜플, 정수 키, NaN, 열거형 같은 하위 클래스는 거부되니 열거형은 `.value`로 넘긴다.
 5. **같은 시드 = 같은 다이제스트**: 결정성을 깨는 변경은 버그다.
    `tests/test_determinism.py`는 항상 통과해야 한다.
 
@@ -45,7 +48,16 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 - [x] 가상 시간 스케줄러 (`src/replayspect/sim/scheduler.py`), 이름 붙은 RNG 스트림 `fork_rng`
 - [x] 트레이스 이벤트 모델과 다이제스트 (`src/replayspect/trace.py`)
 - [x] 링크 모델 (`src/replayspect/sim/link.py`)
-- [ ] **다음 작업: 가상 리프트 장치와 클라이언트, 뮤턴트 M1~M8** (별도 작업지시서)
+- [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M8 (`src/replayspect/sut/lift.py`)
+- [ ] **다음 작업: 계약 YAML과 판정기** (별도 작업지시서). 결과가 `tests/lift_oracle.py`와 같아야 한다
+
+## 리프트와 오라클 요약 (구현 완료)
+- 프로토콜, 장치·클라이언트 동작, 트레이스 스키마, 뮤턴트 표는 `docs/design-v0.md` "시험 대상" 절이 기준이다.
+- 뮤턴트는 동작만 바꾸고 기록 방식은 바꾸지 않는다. 기록 코드를 뮤턴트 분기 안에 넣지 않는다.
+- `tests/lift_oracle.py`는 계약 C1~C8의 의미를 손으로 고정한 참조 판정기다. 제품 코드가 아니며,
+  이후 계약 YAML로 만든 판정기는 이 오라클과 같은 위반 집합을 내야 한다.
+- 재현에는 시드와 계획이 함께 필요하다. 계획은 링크만 고정하고, 클라이언트 생각 시간처럼
+  엔드포인트가 쓰는 난수는 시드에서 나온다.
 
 ## 링크 모델 요약 (구현 완료)
 - `Channel`이 `client`↔`device`를 잇는다. 방향은 `c2s`, `s2c`. `send`, `recv`, `fault` 이벤트는
@@ -65,5 +77,5 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
   축소기는 장애만 빼고(`without_fault`), 지연은 그대로 둔다.
 - 무작위 모드는 `fork_rng("link/c2s")`, `"link/s2c"`, `"link/disconnect"` 스트림만 쓰고,
   메시지당 추첨 순서(유실 여부 → 지연 → 중복 여부 → 중복일 때만 추가 지연)는 테스트로 고정돼 있다.
-- `FaultPlan.from_trace(trace)`로 만든 명시 계획은 시드와 무관하게 같은 다이제스트로 재생된다.
+- `FaultPlan.from_trace(trace)`로 만든 명시 계획은 같은 시드와 함께 쓰면 같은 다이제스트로 재생된다.
   이 성질은 축소기의 기반이므로 깨지면 안 된다 (`tests/test_link.py`).

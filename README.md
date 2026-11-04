@@ -32,7 +32,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Virtual-time scheduler
 - [x] Trace event model and digest
 - [x] Link model: delay, loss, duplication, disconnects, replayable fault plans
-- [ ] Virtual lift device and client, with seeded bugs (mutants)
+- [x] Virtual lift device and client, with seeded bugs (mutants)
 - [ ] Contract YAML and checkers
 - [ ] Scenario runner, repro files, shrinking
 
