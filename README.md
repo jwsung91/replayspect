@@ -34,14 +34,30 @@ Pre-alpha. v0 is being built in this order:
 - [x] Link model: delay, loss, duplication, disconnects, replayable fault plans
 - [x] Virtual lift device and client, with seeded bugs (mutants)
 - [x] Contract YAML and checkers
-- [ ] Scenario runner, repro files, shrinking
+- [x] Scenario runner, repro files, shrinking
+
+## Usage
+
+```bash
+# random search against the virtual lift with seeded bug M4, then shrink the C3 failure
+python3 -m replayspect search --mutant M4 --target C3 --out repros
+# 1000 runs, system lift.v0, mutants ['M4']
+#   C3: violated in 19 runs, first at seed 58
+# shrunk C3: 56 -> 3 faults (seed 65, 30 runs) -> repros/lift.v0-M4-C3-seed65.json
+
+python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json
+# digest ok, first violations ok, target C3 violated
+```
+
+`search` exits with 1 when any contract was violated, like a failing test.
 
 ## Development
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest          # fast tests
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -m ""    # everything, including slow seed sweeps
 ```
 
 replayspect uses no pytest plugins, so disabling plugin autoload is safe. It

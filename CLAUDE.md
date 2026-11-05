@@ -28,8 +28,11 @@
 ## 개발
 ```bash
 pip install -e ".[dev]"
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q          # 빠른 테스트 (slow 제외)
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 검증, 커밋 전)
 ```
+- 시드 수백 개를 도는 테스트는 `@pytest.mark.slow`로 표시한다. 기본 실행에서 빠지고 `-m ""`로 포함된다.
+- 이 저장소의 명령 예시는 `python3`를 쓴다(`python`이 없는 환경이 있다).
 - ROS 2 환경이 켜진 셸에서는 ROS의 pytest 플러그인이 자동 로드되어 수집 단계에서 실패할 수 있다.
   replayspect는 pytest 플러그인을 쓰지 않으므로 항상 `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`로 실행한다.
 - Python 3.11+, 런타임 의존성은 PyYAML뿐. 새 의존성은 먼저 물어볼 것.
@@ -50,7 +53,16 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
 - [x] 링크 모델 (`src/replayspect/sim/link.py`)
 - [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M8 (`src/replayspect/sut/lift.py`)
 - [x] 계약 YAML과 판정기 (`contracts/lift.v0.yaml`, `src/replayspect/contract/`)
-- [ ] **다음 작업: 실행기, 재현 파일, 축소기** (별도 작업지시서)
+- [x] 실행기, 재현 파일, 축소기, 명령행 (`runner.py`, `shrink.py`, `__main__.py`). v0 완료 기준 4개 충족
+- [ ] 다음: v1 Hypothesis 기준선, v2 LLM 시나리오 생성 (별도 작업지시서)
+
+## 실행기와 축소 요약 (구현 완료)
+- `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
+  가장 작은 재현 파일을 `repros/`에 쓴다. `python3 -m replayspect replay <파일>`로 재생한다.
+- 축소의 "같은 위반"은 목표 계약 ID가 위반 목록에 남아 있는가다. 첫 위반 seq·req_id는
+  장애를 빼면 바뀌므로 기준으로 쓰지 않는다. seq와 다이제스트는 재생 확인에만 쓴다.
+- 축소는 장애(유실·중복·끊김)만 빼고 기본 지연은 남긴다.
+- 탐색은 한 번도 일치하지 않은 계약 패턴을 경고한다. 그 계약은 검증되지 않은 것이다.
 
 ## 계약과 판정기 요약 (구현 완료)
 - 계약 종류 8개의 의미와 보고 시점은 `docs/design-v0.md` "계약 DSL" 절이 기준이다.
