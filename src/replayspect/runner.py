@@ -1,0 +1,227 @@
+"""Running systems under test: random search, repro files and replay.
+
+A **system** couples a runnable integration with its contract file. v0 has
+one, the virtual lift (``lift.v0``).
+
+A **repro file** is everything needed to rerun a failure exactly: the
+system, seed, mutants, how long the run lasted, and the explicit fault plan.
+It also records what the run is expected to produce (trace digest and the
+first violation of each contract), so a replay can prove it reproduced the
+same execution, not just a similar one.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping
+
+from replayspect import __version__
+from replayspect.contract import (
+    ContractSet,
+    EventPattern,
+    Violation,
+    contract_patterns,
+    first_violation_details,
+    judge,
+    load_contracts,
+    matched_patterns,
+)
+from replayspect.sim.link import FaultPlan
+from replayspect.trace import Trace
+
+REPRO_FORMAT = "replayspect.repro/1"
+ROOT = Path(__file__).resolve().parents[2]
+
+
+# -- systems --------------------------------------------------------------------------
+
+RunFn = Callable[[int, "FaultPlan | None", tuple[str, ...], int], Trace]
+
+
+@dataclass(frozen=True)
+class System:
+    name: str
+    run: RunFn  # (seed, plan, mutants, until_us) -> trace
+    contracts_path: Path
+    until_us: int
+
+    def contracts(self) -> ContractSet:
+        return load_contracts(self.contracts_path)
+
+
+def _run_lift(seed: int, plan: FaultPlan | None, mutants: tuple[str, ...], until_us: int) -> Trace:
+    from replayspect.sut.lift import run_lift
+
+    return run_lift(seed, plan=plan, mutants=mutants, until_us=until_us)
+
+
+SYSTEMS: dict[str, System] = {
+    "lift.v0": System("lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000),
+}
+
+
+def get_system(name: str) -> System:
+    try:
+        return SYSTEMS[name]
+    except KeyError:
+        raise ValueError(f"unknown system {name!r}; known: {sorted(SYSTEMS)}") from None
+
+
+# -- single runs --------------------------------------------------------------------------
+
+
+@dataclass
+class Run:
+    system: str
+    seed: int
+    mutants: tuple[str, ...]
+    until_us: int
+    plan: FaultPlan | None
+    trace: Trace
+    violations: list[Violation]
+
+    def violated(self) -> set[str]:
+        return {v.contract for v in self.violations}
+
+    def first(self) -> list[Violation]:
+        return first_violation_details(self.violations)
+
+
+def run_once(
+    system: System,
+    seed: int,
+    mutants: Iterable[str] = (),
+    plan: FaultPlan | None = None,
+    contracts: ContractSet | None = None,
+    until_us: int | None = None,
+) -> Run:
+    ms = tuple(sorted(mutants))
+    end = system.until_us if until_us is None else until_us
+    trace = system.run(seed, plan, ms, end)
+    cs = contracts if contracts is not None else system.contracts()
+    return Run(system.name, seed, ms, end, plan, trace, judge(trace, cs, end))
+
+
+# -- search -------------------------------------------------------------------------------------
+
+
+@dataclass
+class SearchResult:
+    runs: int = 0
+    hits: dict[str, int] = field(default_factory=dict)        # contract -> runs violating it
+    first_seed: dict[str, int] = field(default_factory=dict)  # contract -> first violating seed
+    unmatched: set[EventPattern] = field(default_factory=set)
+    failures: list[Run] = field(default_factory=list)          # first failing run per contract
+
+
+def search(
+    system: System,
+    seeds: Iterable[int],
+    mutants: Iterable[str] = (),
+    contracts: ContractSet | None = None,
+) -> SearchResult:
+    """Run random-fault seeds and collect, per contract, how often it failed.
+
+    ``unmatched`` lists contract patterns that matched no event in any run.
+    A contract whose pattern never matched could not have failed; a typo in
+    a message name looks exactly like "no violations".
+    """
+    cs = contracts if contracts is not None else system.contracts()
+    ms = tuple(mutants)
+    res = SearchResult(unmatched=set(contract_patterns(cs)))
+    for seed in seeds:
+        run = run_once(system, seed, ms, None, cs)
+        res.runs += 1
+        if res.unmatched:
+            res.unmatched -= matched_patterns(run.trace, cs)
+        for c in sorted(run.violated()):
+            res.hits[c] = res.hits.get(c, 0) + 1
+            if c not in res.first_seed:
+                res.first_seed[c] = seed
+                res.failures.append(run)
+    return res
+
+
+# -- repro files ----------------------------------------------------------------------------------
+
+
+def harness_version() -> dict[str, Any]:
+    """Package version and, when available, the git commit of the checkout."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, timeout=5
+        ).stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        commit = None
+    return {"version": __version__, "git": commit}
+
+
+def violation_dict(v: Violation) -> dict[str, Any]:
+    return {"contract": v.contract, "seq": v.seq, "req_id": v.req_id}
+
+
+def make_repro(run: Run, target: str, shrink: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Build a repro document for ``run``. The run must have an explicit plan."""
+    if run.plan is None:
+        raise ValueError("a repro needs an explicit plan; use FaultPlan.from_trace(run.trace)")
+    if target not in run.violated():
+        raise ValueError(f"run does not violate {target}")
+    doc: dict[str, Any] = {
+        "format": REPRO_FORMAT,
+        "system": run.system,
+        "harness": harness_version(),
+        "seed": run.seed,
+        "mutants": list(run.mutants),
+        "until_us": run.until_us,
+        "target": target,
+        "plan": run.plan.to_dict(),
+        "expect": {
+            "digest": run.trace.digest(),
+            "first_violations": [violation_dict(v) for v in run.first()],
+        },
+    }
+    if shrink is not None:
+        doc["shrink"] = dict(shrink)
+    return doc
+
+
+def write_repro(doc: Mapping[str, Any], path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def read_repro(path: Path) -> dict[str, Any]:
+    doc = json.loads(Path(path).read_text(encoding="utf-8"))
+    if doc.get("format") != REPRO_FORMAT:
+        raise ValueError(f"{path}: not a {REPRO_FORMAT} file")
+    return doc
+
+
+@dataclass
+class ReplayResult:
+    run: Run
+    digest_ok: bool
+    violations_ok: bool
+    target_ok: bool
+
+    @property
+    def ok(self) -> bool:
+        return self.digest_ok and self.violations_ok and self.target_ok
+
+
+def replay(doc: Mapping[str, Any], contracts: ContractSet | None = None) -> ReplayResult:
+    """Rerun a repro and check it produced exactly the recorded execution."""
+    system = get_system(doc["system"])
+    plan = FaultPlan.from_dict(doc["plan"])
+    run = run_once(system, doc["seed"], doc["mutants"], plan, contracts, doc["until_us"])
+    expect = doc["expect"]
+    return ReplayResult(
+        run,
+        digest_ok=run.trace.digest() == expect["digest"],
+        violations_ok=[violation_dict(v) for v in run.first()] == expect["first_violations"],
+        target_ok=doc["target"] in run.violated(),
+    )
