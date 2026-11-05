@@ -23,3 +23,5 @@ packages = ["src/replayspect"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+markers = ["slow: sweeps over many seeds; excluded by default, run with -m \"\""]
+addopts = "-m 'not slow'"

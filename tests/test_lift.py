@@ -83,12 +83,17 @@ def test_illegal_command_gets_error_and_no_motion():
     assert violated(t, END) == set()
 
 
-@pytest.mark.parametrize("seed", range(300))
+def seeds(n, fast):
+    """Seeds 0..n-1; those from ``fast`` on are marked slow."""
+    return [s if s < fast else pytest.param(s, marks=pytest.mark.slow) for s in range(n)]
+
+
+@pytest.mark.parametrize("seed", seeds(300, fast=20))
 def test_correct_lift_violates_nothing(seed):
     assert check(run_lift(seed), END) == []
 
 
-@pytest.mark.parametrize("seed", range(30))
+@pytest.mark.parametrize("seed", seeds(30, fast=5))
 def test_lift_run_replays_from_its_plan(seed):
     original = run_lift(seed)
     # The plan fixes the link; the seed still drives the endpoints (think time).
@@ -113,10 +118,11 @@ def test_mutant_is_first_caught_at_pinned_seed(mutant):
     assert contract in violated(run_lift(first, mutants=[mutant]), END)
 
 
+@pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])
 @pytest.mark.parametrize("mutant", sorted(MUTANTS))
-def test_mutant_only_breaks_its_own_contracts(mutant):
+def test_mutant_only_breaks_its_own_contracts(mutant, n):
     allowed = {INTENDED[mutant]} | ALSO_ALLOWED.get(mutant, set())
-    for seed in range(100):
+    for seed in range(n):
         assert violated(run_lift(seed, mutants=[mutant]), END) <= allowed, seed
 
 

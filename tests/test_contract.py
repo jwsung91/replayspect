@@ -8,9 +8,13 @@ from replayspect.contract import (
     ContractError,
     EventPattern,
     Operand,
+    Violation,
+    contract_patterns,
+    first_violation_details,
     first_violations,
     judge,
     load_contracts,
+    matched_patterns,
 )
 from replayspect.contract.spec import parse_duration_us
 from replayspect.sut.lift import MUTANTS, run_lift
@@ -75,6 +79,27 @@ def test_operands():
 def test_bad_operands(bad):
     with pytest.raises(ContractError):
         Operand.parse(bad)
+
+
+def test_yaml_null_and_integers_are_literals():
+    cs = load_contracts("contracts:\n  - {id: K, kind: consistent, event: d.send(X), field: data.v, equals: null}\n"
+                        "  - {id: L, kind: consistent, event: d.send(X), field: data.v, equals: 42}")
+    tr = trace_of((0, "d", "send", "X", "a", {"v": 42}), (1, "d", "send", "X", "b", {}))
+    assert found(tr, cs) == [("K", "a", 0), ("L", "b", 1)]
+
+
+@pytest.mark.parametrize("bad", ["[1, 2]", "{a: 1}", "true", "1.5"])
+def test_non_scalar_operands_are_contract_errors(bad):
+    with pytest.raises(ContractError, match="operand"):
+        load_contracts(f"contracts:\n  - {{id: K, kind: consistent, event: d.send(X), field: data.v, equals: {bad}}}")
+
+
+def test_operators_inside_quotes_are_not_split():
+    ev = Event(0, 0, "c", "send", "X", "r", {"x": "=="})
+    assert Condition.parse("data.x == '=='").holds(ev, {})
+    assert not Condition.parse("data.x != \"==\"").holds(ev, {})
+    with pytest.raises(ContractError):
+        Condition.parse("data.x == '=' == 'a'")
 
 
 def test_conditions():
@@ -253,9 +278,45 @@ def test_first_violations():
 # -- equivalence with the reference oracle -----------------------------------------------
 
 
+@pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])
 @pytest.mark.parametrize("mutant", [None] + sorted(MUTANTS))
-def test_judge_matches_oracle_on_first_violations(mutant):
+def test_judge_matches_oracle_on_first_violations(mutant, n):
     cs = load_contracts(LIFT)
-    for seed in range(100):
+    for seed in range(n):
         tr = run_lift(seed, mutants=[mutant] if mutant else [])
         assert first_violations(judge(tr, cs, END)) == lift_oracle.first_violations(tr, END), seed
+
+
+# -- judge API details -------------------------------------------------------------------
+
+
+def test_end_before_last_event_is_rejected():
+    tr = trace_of((5_000, "d", "send", "X", "a", None))
+    cs = one("  - {id: K, kind: at_most_once, per: req_id, event: d.send(X)}")
+    assert judge(tr, cs, 5_000) == []
+    with pytest.raises(ValueError, match="before the last event"):
+        judge(tr, cs, 5)
+
+
+def test_first_violation_details_breaks_seq_ties_by_req_id():
+    vs = [Violation("C2", "b", 9, ""), Violation("C2", "a", 9, ""), Violation("C1", None, 9, ""),
+          Violation("C1", "z", 3, ""), Violation("C3", "a", 1, "")]
+    assert [(v.contract, v.req_id, v.seq) for v in first_violation_details(vs)] == [
+        ("C3", "a", 1), ("C1", "z", 3), ("C2", "a", 9),
+    ]
+
+
+def test_contract_patterns_include_last_references():
+    pats = {str(p) for p in contract_patterns(load_contracts(LIFT))}
+    assert pats == {
+        "client.handle(DONE)", "client.handle(DONE|ERROR)", "client.send(MOVE_DOWN|MOVE_UP)",
+        "device.effect(motor_start)", "device.recv(MOVE_DOWN|MOVE_UP)", "device.send(DONE)",
+        "device.send(DONE|ERROR)", "device.send(ERROR)", "device.send(STATUS_REPLY)",
+        "device.state",  # used by C3 and by C5's last(device.state)
+    }
+
+
+def test_matched_patterns():
+    cs = load_contracts(LIFT)
+    tr = trace_of((0, "device", "state", "DOWN", None, {"from": None, "on": "init"}))
+    assert {str(p) for p in matched_patterns(tr, cs)} == {"device.state"}

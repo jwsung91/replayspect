@@ -225,8 +225,15 @@ def build_checkers(cs: ContractSet) -> list[Checker]:
 
 
 def judge(trace: Trace | Iterable[Event], contracts: ContractSet, end_us: int) -> list[Violation]:
-    """Run every contract over ``trace`` and return all violations, in report order."""
+    """Run every contract over ``trace`` and return all violations, in report order.
+
+    ``end_us`` is the time the run was simulated until. It must not be earlier
+    than the last event; a smaller value usually means a unit mistake, which
+    would silently flip deadline checks.
+    """
     events = list(trace)
+    if events and end_us < events[-1].t_us:
+        raise ValueError(f"end_us={end_us} is before the last event at {events[-1].t_us}us")
     checkers = build_checkers(contracts)
     watched: set[EventPattern] = set().union(*(c.last_patterns() for c in checkers)) if checkers else set()
     last: dict[EventPattern, Event] = {}
@@ -248,3 +255,53 @@ def first_violations(violations: Iterable[Violation]) -> dict[str, int]:
     for v in violations:
         first[v.contract] = min(v.seq, first.get(v.contract, v.seq))
     return first
+
+
+def first_violation_details(violations: Iterable[Violation]) -> list[Violation]:
+    """The earliest violation of each contract, sorted by ``(seq, req_id, contract)``.
+
+    Several keys can fail at the same seq (for example at the end of the run);
+    the smallest ``req_id`` wins (``None`` sorts first), so the choice is stable.
+    """
+    best: dict[str, Violation] = {}
+    for v in violations:
+        cur = best.get(v.contract)
+        if cur is None or _order(v) < _order(cur):
+            best[v.contract] = v
+    return sorted(best.values(), key=lambda v: (*_order(v), v.contract))
+
+
+def _order(v: Violation) -> tuple[int, str]:
+    return (v.seq, "" if v.req_id is None else v.req_id)
+
+
+def matched_patterns(trace: Trace | Iterable[Event], contracts: ContractSet) -> set[EventPattern]:
+    """Every pattern used by ``contracts`` that matches at least one event of ``trace``.
+
+    A contract whose patterns never match anything cannot fail, so "no
+    violations" over a batch of runs means little until every pattern has
+    matched at least once. Compare against :func:`contract_patterns`.
+    """
+    pats = contract_patterns(contracts)
+    hit: set[EventPattern] = set()
+    for ev in trace:
+        for p in pats - hit:
+            if p.matches(ev):
+                hit.add(p)
+    return hit
+
+
+def contract_patterns(contracts: ContractSet) -> set[EventPattern]:
+    """Every event pattern the contracts refer to, including inside ``last(...)``."""
+    pats: set[EventPattern] = set()
+    for c in contracts.contracts:
+        for key in ("event", "start", "opens", "closes", "bound"):
+            if key in c.params:
+                pats.add(c.params[key])
+        pats.update(c.params.get("events", ()))
+        if "when" in c.params:
+            pats |= c.params["when"].last_patterns()
+        for key in ("field", "equals"):
+            if key in c.params and c.params[key].pattern is not None:
+                pats.add(c.params[key].pattern)
+    return pats

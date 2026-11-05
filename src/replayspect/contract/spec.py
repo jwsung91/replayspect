@@ -109,7 +109,14 @@ class Operand:
     value: Any = None
 
     @classmethod
-    def parse(cls, text: str) -> "Operand":
+    def parse(cls, text: Any) -> "Operand":
+        # YAML may already have turned `null` or `42` into Python values.
+        if text is None:
+            return cls("literal", value=None)
+        if type(text) is int:
+            return cls("literal", value=text)
+        if type(text) is not str:
+            raise ContractError(f"operand must be a string, null or an integer, got {text!r}")
         t = text.strip()
         if len(t) >= 2 and t[0] == t[-1] and t[0] in "'\"":
             return cls("literal", value=t[1:-1])
@@ -158,6 +165,26 @@ def _lookup(ev: Event, path: tuple[str, ...]) -> Any:
     return value
 
 
+def _operators_outside_quotes(text: str) -> list[tuple[int, str]]:
+    """Positions of ``==`` and ``!=`` that are not inside a quoted literal."""
+    out: list[tuple[int, str]] = []
+    quote: str | None = None
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        elif text[i:i + 2] in ("==", "!="):
+            out.append((i, text[i:i + 2]))
+            i += 2
+            continue
+        i += 1
+    return out
+
+
 @dataclass(frozen=True)
 class Condition:
     left: Operand
@@ -168,11 +195,11 @@ class Condition:
     def parse(cls, text: str) -> "Condition":
         if not isinstance(text, str):
             raise ContractError(f"condition must be a string, got {text!r}")
-        for op in ("==", "!="):
-            if text.count(op) == 1:
-                left, right = text.split(op)
-                return cls(Operand.parse(left), op, Operand.parse(right))
-        raise ContractError(f"bad condition {text!r}; expected '<operand> == <operand>' or '!='")
+        found = _operators_outside_quotes(text)
+        if len(found) != 1:
+            raise ContractError(f"bad condition {text!r}; expected '<operand> == <operand>' or '!='")
+        i, op = found[0]
+        return cls(Operand.parse(text[:i]), op, Operand.parse(text[i + 2:]))
 
     def holds(self, ev: Event, last: Mapping[EventPattern, Event]) -> bool:
         a, b = self.left.evaluate(ev, last), self.right.evaluate(ev, last)

@@ -1,6 +1,14 @@
 """Behavioural contracts: load them from YAML and judge traces against them."""
 
-from replayspect.contract.checkers import Violation, build_checkers, first_violations, judge
+from replayspect.contract.checkers import (
+    Violation,
+    build_checkers,
+    contract_patterns,
+    first_violation_details,
+    first_violations,
+    judge,
+    matched_patterns,
+)
 from replayspect.contract.spec import (
     KINDS,
     Condition,
@@ -22,7 +30,10 @@ __all__ = [
     "Operand",
     "Violation",
     "build_checkers",
+    "contract_patterns",
+    "first_violation_details",
     "first_violations",
     "judge",
     "load_contracts",
+    "matched_patterns",
 ]
