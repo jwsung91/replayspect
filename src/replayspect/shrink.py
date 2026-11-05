@@ -21,7 +21,7 @@ keeps the failure (the result is 1-minimal).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union
+from typing import Iterable, Union
 
 from replayspect.contract import ContractSet
 from replayspect.runner import Run, System, run_once
@@ -39,12 +39,14 @@ class ShrinkResult:
     faults_after: int
     runs: int                 # simulations spent while shrinking
     default_delay_sends: int  # sends in the final run with no delay entry in the plan
+    total_runs: int = 0       # best_repro: simulations over all candidates, replays included
 
     def summary(self) -> dict[str, int]:
         return {
             "faults_before": self.faults_before,
             "faults_after": self.faults_after,
             "runs": self.runs,
+            "total_runs": self.total_runs or self.runs,
             "default_delay_sends": self.default_delay_sends,
         }
 
@@ -60,6 +62,7 @@ def _plan(base: FaultPlan, keep: list[Item]) -> FaultPlan:
         base.delays,
         tuple(i for i in keep if isinstance(i, MessageFault)),
         tuple(i for i in keep if isinstance(i, Disconnect)),
+        base.base,
     )
 
 
@@ -136,34 +139,36 @@ def shrink(
 
 def best_repro(
     system: System,
-    seeds,
-    mutants=(),
-    target: str = "",
+    failing: Iterable[Run],
+    target: str,
     contracts: ContractSet | None = None,
-    candidates: int = 5,
-) -> tuple[ShrinkResult | None, int]:
-    """Shrink up to ``candidates`` failing seeds and keep the smallest result.
+) -> ShrinkResult | None:
+    """Shrink each failing random run and keep the smallest result.
 
     How small a failure shrinks depends on the seed: the same bug may need
-    two faults in one run and six in another. Returns the smallest result
-    (ties go to the earlier seed) and the number of seeds tried, or
-    ``(None, tried)`` if no seed violated ``target``.
+    two faults in one run and six in another. ``failing`` are random-fault
+    runs that violate ``target`` (for example ``search(..., keep_for=target,
+    keep=5).kept``); they are not run again. Each is first replayed from its
+    explicit plan, which must reproduce it exactly, then shrunk. Ties go to
+    the earlier run. Returns ``None`` if ``failing`` is empty.
+
+    ``ShrinkResult.runs`` of the returned result counts only its own shrink;
+    ``total_runs`` on it counts every simulation spent over all candidates.
     """
     cs = contracts if contracts is not None else system.contracts()
     best: ShrinkResult | None = None
-    found = tried = 0
-    for seed in seeds:
-        tried += 1
-        rnd = run_once(system, seed, mutants, None, cs)
+    total = 0
+    for rnd in failing:
         if target not in rnd.violated():
-            continue
-        explicit = run_once(system, seed, mutants, FaultPlan.from_trace(rnd.trace), cs)
+            raise ValueError(f"seed {rnd.seed} does not violate {target}")
+        explicit = run_once(system, rnd.seed, rnd.mutants, FaultPlan.from_trace(rnd.trace), cs, rnd.until_us)
+        total += 1
         if explicit.trace.digest() != rnd.trace.digest():
-            raise RuntimeError(f"seed {seed}: explicit plan did not replay the random run")
+            raise RuntimeError(f"seed {rnd.seed}: explicit plan did not replay the random run")
         r = shrink(system, explicit, target, cs)
+        total += r.runs
         if best is None or r.faults_after < best.faults_after:
             best = r
-        found += 1
-        if found >= candidates:
-            break
-    return best, tried
+    if best is not None:
+        best.total_runs = total
+    return best

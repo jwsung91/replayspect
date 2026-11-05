@@ -20,7 +20,7 @@ def _search(args: argparse.Namespace) -> int:
     system = get_system(args.system)
     cs = system.contracts()
     seeds = range(args.seed_start, args.seed_start + args.seeds)
-    res = search(system, seeds, args.mutant, cs)
+    res = search(system, seeds, args.mutant, cs, keep_for=args.target, keep=args.candidates)
     print(f"{res.runs} runs, system {system.name}, mutants {args.mutant or 'none'}")
     for c in cs.ids():
         if c in res.hits:
@@ -34,13 +34,15 @@ def _search(args: argparse.Namespace) -> int:
     if args.target not in res.hits:
         print(f"target {args.target} was not violated; nothing to shrink")
         return 0
-    best, _ = best_repro(system, seeds, args.mutant, args.target, cs, args.candidates)
+    best = best_repro(system, res.kept, args.target, cs)
     assert best is not None
     doc = make_repro(best.run, args.target, best.summary())
     name = f"{system.name}-{'-'.join(best.run.mutants) or 'none'}-{args.target}-seed{best.run.seed}.json"
     path = write_repro(doc, Path(args.out) / name)
     print(f"shrunk {args.target}: {best.faults_before} -> {best.faults_after} faults "
           f"(seed {best.run.seed}, {best.runs} runs) -> {path}")
+    print(f"simulations: {res.runs} search + {best.total_runs} shrink over {len(res.kept)} candidates")
+    print(f"  {doc['explain']['violation']['detail']}")
     return 1
 
 

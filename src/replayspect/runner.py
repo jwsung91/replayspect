@@ -29,7 +29,7 @@ from replayspect.contract import (
     load_contracts,
     matched_patterns,
 )
-from replayspect.sim.link import FaultPlan
+from replayspect.sim.link import FaultPlan, PlanReport, plan_report
 from replayspect.trace import Trace
 
 REPRO_FORMAT = "replayspect.repro/1"
@@ -82,12 +82,22 @@ class Run:
     plan: FaultPlan | None
     trace: Trace
     violations: list[Violation]
+    plan_report: PlanReport | None = None  # set when a plan was given
 
     def violated(self) -> set[str]:
         return {v.contract for v in self.violations}
 
     def first(self) -> list[Violation]:
         return first_violation_details(self.violations)
+
+    def first_of(self, contract: str) -> Violation | None:
+        return next((v for v in self.first() if v.contract == contract), None)
+
+    def context(self, seq: int, before: int = 8, after: int = 4) -> list[dict[str, Any]]:
+        """Events around ``seq`` (as dicts), for explaining a violation."""
+        events = self.trace.events
+        lo, hi = max(0, seq - before), min(len(events), seq + after + 1)
+        return [e.to_dict() for e in events[lo:hi]]
 
 
 def run_once(
@@ -102,7 +112,8 @@ def run_once(
     end = system.until_us if until_us is None else until_us
     trace = system.run(seed, plan, ms, end)
     cs = contracts if contracts is not None else system.contracts()
-    return Run(system.name, seed, ms, end, plan, trace, judge(trace, cs, end))
+    report = plan_report(plan, trace) if plan is not None else None
+    return Run(system.name, seed, ms, end, plan, trace, judge(trace, cs, end), report)
 
 
 # -- search -------------------------------------------------------------------------------------
@@ -115,6 +126,7 @@ class SearchResult:
     first_seed: dict[str, int] = field(default_factory=dict)  # contract -> first violating seed
     unmatched: set[EventPattern] = field(default_factory=set)
     failures: list[Run] = field(default_factory=list)          # first failing run per contract
+    kept: list[Run] = field(default_factory=list)              # failing runs of ``keep_for``
 
 
 def search(
@@ -122,12 +134,18 @@ def search(
     seeds: Iterable[int],
     mutants: Iterable[str] = (),
     contracts: ContractSet | None = None,
+    keep_for: str | None = None,
+    keep: int = 0,
 ) -> SearchResult:
     """Run random-fault seeds and collect, per contract, how often it failed.
 
     ``unmatched`` lists contract patterns that matched no event in any run.
     A contract whose pattern never matched could not have failed; a typo in
     a message name looks exactly like "no violations".
+
+    With ``keep_for`` and ``keep``, the first ``keep`` runs violating that
+    contract are kept in ``kept`` so they can be shrunk without running the
+    same seeds again. Every seed in ``seeds`` is still run.
     """
     cs = contracts if contracts is not None else system.contracts()
     ms = tuple(mutants)
@@ -137,11 +155,14 @@ def search(
         res.runs += 1
         if res.unmatched:
             res.unmatched -= matched_patterns(run.trace, cs)
-        for c in sorted(run.violated()):
+        violated = run.violated()
+        for c in sorted(violated):
             res.hits[c] = res.hits.get(c, 0) + 1
             if c not in res.first_seed:
                 res.first_seed[c] = seed
                 res.failures.append(run)
+        if keep_for in violated and len(res.kept) < keep:
+            res.kept.append(run)
     return res
 
 
@@ -160,7 +181,23 @@ def harness_version() -> dict[str, Any]:
 
 
 def violation_dict(v: Violation) -> dict[str, Any]:
-    return {"contract": v.contract, "seq": v.seq, "req_id": v.req_id}
+    return {"contract": v.contract, "seq": v.seq, "req_id": v.req_id, "detail": v.detail}
+
+
+def explain(run: Run, target: str, before: int = 8, after: int = 4) -> dict[str, Any]:
+    """The target's first violation and the events around it, for a human reader.
+
+    Not compared on replay; it is there to make a repro understandable.
+    """
+    v = run.first_of(target)
+    if v is None:
+        raise ValueError(f"run does not violate {target}")
+    key_events = [e.to_dict() for e in run.trace if v.req_id is not None and e.req_id == v.req_id]
+    return {
+        "violation": violation_dict(v),
+        "events": run.context(v.seq, before, after),
+        "key_events": key_events[:40],  # everything that happened to the violating req_id
+    }
 
 
 def make_repro(run: Run, target: str, shrink: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -182,6 +219,7 @@ def make_repro(run: Run, target: str, shrink: Mapping[str, Any] | None = None) -
             "digest": run.trace.digest(),
             "first_violations": [violation_dict(v) for v in run.first()],
         },
+        "explain": explain(run, target),
     }
     if shrink is not None:
         doc["shrink"] = dict(shrink)

@@ -74,7 +74,11 @@ def test_repro_round_trip_and_replay(tmp_path):
     back = read_repro(path)
     assert back == json.loads(json.dumps(doc))
     assert back["format"] == REPRO_FORMAT
-    assert back["expect"]["first_violations"][0]["contract"] == "C5"
+    first = back["expect"]["first_violations"][0]
+    assert first["contract"] == "C5" and first["detail"] == "'UP' != 'MOVING_DOWN'"
+    assert back["explain"]["violation"] == first
+    assert any(e["seq"] == first["seq"] for e in back["explain"]["events"])
+    assert all(e.get("req_id") == first["req_id"] for e in back["explain"]["key_events"])
     assert set(back["harness"]) == {"version", "git"}
     r = replay(back)
     assert r.ok and r.digest_ok and r.violations_ok and r.target_ok
@@ -129,15 +133,26 @@ def test_shrunk_run_is_reproducible():
     assert again.trace.digest() == r.run.trace.digest()
 
 
-def test_best_repro_keeps_the_smallest_of_several_seeds():
-    best, tried = best_repro(LIFT, range(1000), ["M4"], "C3", CS, candidates=2)
-    # the first two failing seeds are 58 (shrinks to 6) and 65 (shrinks to 3)
-    assert (best.run.seed, best.faults_after, tried) == (65, 3, 66)
+def test_search_keeps_failing_runs_of_the_target():
+    res = search(LIFT, range(70), ["M4"], CS, keep_for="C3", keep=2)
+    assert res.runs == 70
+    assert [r.seed for r in res.kept] == [58, 65]
+    assert all("C3" in r.violated() for r in res.kept)
 
 
-def test_best_repro_none_when_target_never_fails():
-    best, tried = best_repro(LIFT, range(3), [], "C1", CS)
-    assert best is None and tried == 3
+def test_best_repro_keeps_the_smallest_without_rerunning_search():
+    res = search(LIFT, range(70), ["M4"], CS, keep_for="C3", keep=2)
+    best = best_repro(LIFT, res.kept, "C3", CS)
+    # seed 58 shrinks to 6 faults, seed 65 to 3
+    assert (best.run.seed, best.faults_after) == (65, 3)
+    assert best.total_runs > best.runs
+    assert best.summary()["total_runs"] == best.total_runs
+
+
+def test_best_repro_none_without_candidates_and_rejects_non_failing_runs():
+    assert best_repro(LIFT, [], "C1", CS) is None
+    with pytest.raises(ValueError, match="does not violate"):
+        best_repro(LIFT, [run_once(LIFT, 0, (), None, CS)], "C1", CS)
 
 
 # -- command line ----------------------------------------------------------------------------------
@@ -149,6 +164,7 @@ def test_cli_search_and_replay(tmp_path, capsys):
     assert code == 1
     assert "C5: violated in 3 runs, first at seed 0" in out
     assert "shrunk C5:" in out and "-> 0 faults" in out
+    assert "simulations: 3 search + " in out
     (path,) = tmp_path.glob("*.json")
     assert path.name == "lift.v0-M5-C5-seed0.json"
     assert main(["replay", str(path)]) == 0
@@ -165,3 +181,20 @@ def test_cli_runs_as_a_module(tmp_path):
     out = subprocess.run([sys.executable, "-m", "replayspect", "search", "--seeds", "1"],
                          env=env, capture_output=True, text=True)
     assert out.returncode == 0 and "1 runs" in out.stdout
+
+
+def test_run_with_a_plan_carries_its_plan_report():
+    from replayspect.sim.link import MessageFault, MsgKey
+
+    plan = FaultPlan(faults=(MessageFault(MsgKey("c2s", "MOVE_UP", "r-9999", 0), drop=True),), base="random")
+    r = run_once(LIFT, 0, (), plan, CS)
+    assert [f.key.req_id for f in r.plan_report.unmatched_faults] == ["r-9999"]
+    assert run_once(LIFT, 0, (), None, CS).plan_report is None
+
+
+def test_run_context_window():
+    r = run_once(LIFT, 0, ["M5"], None, CS)
+    v = r.first_of("C5")
+    ctx = r.context(v.seq, before=2, after=1)
+    assert [e["seq"] for e in ctx] == [v.seq - 2, v.seq - 1, v.seq, v.seq + 1]
+    assert r.first_of("C1") is None
