@@ -40,84 +40,58 @@ flowchart LR
   SH --> RE["재현 파일 → 회귀 테스트"]
 ```
 
-## 계약 DSL 초안
+## 계약 DSL
 
-계약은 프로토콜 정의(메시지, 상태, 전이)와 계약 목록 두 부분으로 된 YAML 하나다. 모든 계약은 트레이스만으로 판정할 수 있어야 하므로, 계약이 참조하는 값은 "시험 대상" 절의 트레이스 스키마에 정의된 이벤트 필드뿐이다.
+계약은 YAML 파일 하나다(`contracts/lift.v0.yaml`). 프로토콜의 상태 전이와 계약 목록으로 이뤄진다. 모든 계약은 트레이스만으로 판정할 수 있어야 하므로, 계약이 참조하는 값은 "시험 대상" 절의 트레이스 스키마에 정의된 이벤트 필드뿐이다. 로더와 판정기는 `src/replayspect/contract/`.
 
 ```yaml
-protocol: lift.v0
-messages:
-  request:  [MOVE_UP, MOVE_DOWN, STATUS]
-  response: [ACK, DONE, ERROR, STATUS_REPLY]
-states: [DOWN, MOVING_UP, UP, MOVING_DOWN]
-transitions:
-  - {from: null,        on: init,      to: DOWN}
-  - {from: DOWN,        on: MOVE_UP,   to: MOVING_UP}
-  - {from: MOVING_UP,   on: arrived,   to: UP}
-  - {from: UP,          on: MOVE_DOWN, to: MOVING_DOWN}
-  - {from: MOVING_DOWN, on: arrived,   to: DOWN}
-
+transitions:            # [from, on, to] 삼중항. 초기 상태는 from이 null
+  - [null, init, DOWN]
+  - [DOWN, MOVE_UP, MOVING_UP]
 contracts:
-  - id: C1   # 안전 계약
-    desc: 모터 시작은 req_id당 최대 1회
-    kind: at_most_once
-    per: req_id
-    event: device.effect(motor_start)
   - id: C2
-    desc: 클라이언트는 이동 명령을 첫 송신 후 15초 안에 정확히 한 번 닫는다
     kind: exactly_once
     per: req_id
-    opens: client.send(MOVE_UP|MOVE_DOWN)
+    start: client.send(MOVE_UP|MOVE_DOWN)
     event: client.handle(DONE|ERROR)
     within: 15s
-  - id: C3
-    desc: 장치 상태는 선언된 전이로만 바뀐다
-    kind: state_machine
-    event: device.state
-  - id: C4
-    desc: 클라이언트는 그 명령의 req_id를 단 DONE으로만 명령을 완료한다
-    kind: forbid
-    event: client.handle(DONE)
-    when: data.msg_req_id != req_id
-  - id: C5
-    desc: STATUS_REPLY는 장치의 현재 상태(마지막 device.state)를 보고한다
-    kind: consistent
-    event: device.send(STATUS_REPLY)
-    field: state
-    equals: last(device.state).name
-  - id: C6
-    desc: 클라이언트가 동시에 열어 둔 이동 명령은 하나뿐이다
-    kind: at_most_one_open
-    per: req_id
-    opens: client.send(MOVE_UP|MOVE_DOWN)
-    closes: client.handle(DONE|ERROR)
-  - id: C7
-    desc: 장치가 보내는 종료 응답 수는 그 req_id로 받은 요청 수를 넘지 않는다
-    kind: count_le
-    per: req_id
-    event: device.send(DONE|ERROR)
-    bound: device.recv(MOVE_UP|MOVE_DOWN)
-  - id: C8
-    desc: 장치는 같은 req_id에 DONE과 ERROR를 모두 보내지 않는다
-    kind: mutually_exclusive
-    per: req_id
-    events: [device.send(DONE), device.send(ERROR)]
 ```
 
-| 종류 | 의미 | 판정 방식 |
+전이를 `{from, on, to}` 매핑이 아니라 삼중항으로 쓰는 이유: PyYAML이 따르는 YAML 1.1은 따옴표 없는 `on` 키를 불리언 `true`로 읽는다. 로더는 이름 자리에 순수 문자열이 아닌 값이 오면 거부하므로 `yes`/`no`/`on`/`off`를 이름으로 쓴 실수도 잡힌다.
+
+**이벤트 패턴**: `actor.kind` 또는 `actor.kind(NAME|NAME...)`. 예: `client.send(MOVE_UP|MOVE_DOWN)`, `device.state`.
+
+**피연산자**: `req_id`, `name`, `actor`, `kind`, `t_us`, `data.<필드>[.<필드>...]`, 리터럴(`'문자열'`, 정수, `null`), `last(<패턴>).<피연산자>`(현재 이벤트 이전에 패턴과 일치한 가장 최근 이벤트, 없으면 `null`). **조건**: `<피연산자> == <피연산자>` 또는 `!=`. 임의의 코드는 허용하지 않는다.
+
+**계약 C1~C8** (전체는 `contracts/lift.v0.yaml`)
+
+| ID | 종류 | 내용 |
 | --- | --- | --- |
-| at_most_once | 키별 이벤트 최대 1회 | 키별 카운터 |
-| exactly_once | 열린 키마다 이벤트 정확히 1회, 기한 내 | 카운터 + 종료 시 미달·기한 검사 |
-| state_machine | 선언되지 않은 전이 금지 | 상태 이벤트의 (from, on, to)를 전이 테이블과 대조 |
-| forbid | 조건을 만족하는 이벤트 금지 | 이벤트마다 조건식 평가 |
-| consistent | 메시지 필드와 트레이스에서 추적한 상태 일치 | 송신 시점의 마지막 상태 이벤트와 비교 |
-| at_most_one_open | 열린 키가 동시에 둘 이상 금지 | 열림·닫힘 이벤트로 열린 키 추적 |
-| count_le | 키별 이벤트 수 ≤ 다른 이벤트 수 | 키별 두 카운터 비교 |
-| mutually_exclusive | 키별로 나열한 이벤트 중 둘 이상 발생 금지 | 키별 발생 집합 |
+| C1 | at_most_once | 모터 시작은 req_id당 최대 1회 (안전 계약) |
+| C2 | exactly_once | 클라이언트는 이동 명령을 첫 송신 후 15초 안에 정확히 한 번 닫는다 |
+| C3 | state_machine | 장치 상태는 선언된 전이로만, 직전 상태에서 출발해 바뀐다 |
+| C4 | forbid | 클라이언트는 그 명령의 req_id를 단 DONE으로만 명령을 완료한다 |
+| C5 | consistent | STATUS_REPLY는 장치의 현재 상태(마지막 `device.state`)를 보고한다 |
+| C6 | at_most_one_open | 클라이언트가 동시에 열어 둔 이동 명령은 하나뿐이다 |
+| C7 | count_le | 장치의 종료 응답 수는 그 req_id로 받은 요청 수를 넘지 않는다 |
+| C8 | mutually_exclusive | 장치는 같은 req_id에 DONE과 ERROR를 모두 보내지 않는다 |
 
-조건식은 트레이스 이벤트 필드와 트레이스에서 추적한 값(`last(...)`)만 참조하는 작은 식 언어로 제한한다. 각 계약의 의미는 `tests/lift_oracle.py`에 손으로 쓴 판정 코드로 고정해 두었고, 계약에서 생성할 판정기는 이 오라클과 같은 결과를 내야 한다.
+**계약 종류와 보고 시점.** 모든 위반은 그것을 증명하는 **가장 이른 이벤트**에서 보고한다. 실행이 끝나야 알 수 있는 위반은 `seq = len(trace)`로 보고한다.
 
-**C1에 대해.** 처음에는 M1·M2(중복 제거 결함)를 C1으로 잡으려 했다. 하지만 장치가 실행 직전에 상태를 검사하므로, 늦게 온 중복은 이중 동작이 아니라 `ERROR`로 끝난다. 그래서 중복 제거 결함의 실제 피해는 "리프트는 움직였는데 클라이언트는 실패로 받는" 응답 불일치(C8)로 나타난다. C1은 상태 검사가 무너지는 경우를 막는 안전 계약으로 남긴다. v0 뮤턴트 중 C1을 직접 겨냥하는 것은 없다.
+| 종류 | 키 | 의미 | 보고 시점 |
+| --- | --- | --- | --- |
+| at_most_once | `event` | 키별 최대 1회 | 두 번째 발생 |
+| exactly_once | `start`, `event`, `within` | `start`가 처음 나온 키마다 `event`가 정확히 1회, 그 첫 `start` 후 `within` 이내. 시작되지 않은 키의 `event`는 무시 | 늦은 첫 발생, 두 번째 발생, 또는 기한이 지나도록 없으면 실행 끝 |
+| state_machine | `event` | `(data.from, data.on, name)`이 선언된 전이이고, `data.from`이 직전 상태 이벤트의 `name`과 같다(처음엔 `null`) | 해당 상태 이벤트 |
+| forbid | `event`, `when` | `when`이 참인 `event` 금지 | 해당 이벤트 |
+| consistent | `event`, `field`, `equals` | 모든 `event`에서 `field == equals` | 해당 이벤트 |
+| at_most_one_open | `opens`, `closes` | `opens`가 나올 **때마다** 그 키가 열린다(닫힌 키도 다시 열림). `closes`가 닫는다. 다른 키가 열려 있는데 `opens`가 나오면 위반 | 그 `opens` 이벤트 |
+| count_le | `event`, `bound` | 매 `event` 시점에 키별 누적 `event` 수 ≤ 누적 `bound` 수 | 초과한 `event` |
+| mutually_exclusive | `events` | 키별로 나열한 패턴 중 둘 이상 일치 금지 | 두 번째 패턴이 처음 일치한 이벤트(키당 한 번) |
+
+`exactly_once`의 `start`와 `at_most_one_open`의 `opens`는 일부러 다른 키워드다. 앞의 것은 키마다 **첫** 이벤트만 기준 시각으로 쓰고, 뒤의 것은 **매** 이벤트가 키를 연다. M8이 닫은 명령을 재전송해 다시 여는 경로를 C6이 잡는 것은 뒤의 의미 덕분이다.
+
+**C1에 대해.** 처음에는 M1·M2(중복 제거 결함)를 C1으로 잡으려 했다. 하지만 장치가 실행 직전에 상태를 검사하므로, 늦게 온 중복은 이중 동작이 아니라 `ERROR`로 끝난다. 그래서 중복 제거 결함의 실제 피해는 "리프트는 움직였는데 클라이언트는 실패로 받는" 응답 불일치(C8)로 나타난다. C1은 상태 검사가 무너지는 경우를 막는 안전 계약으로 남긴다. v0 뮤턴트 중 C1을 직접 겨냥하는 것은 없어, C1은 손으로 만든 트레이스로만 검증한다.
 
 ## 시험 대상: 가상 리프트와 클라이언트
 
@@ -187,21 +161,31 @@ M4(약 2%)와 M8(약 14%)은 무작위 장애로 잘 안 잡힌다. M4는 "클�
 
 ## 판정기
 
-계약 YAML을 읽어 종류별 검사기를 만들고, 트레이스 이벤트를 하나씩 흘려보내 위반을 모은다.
+`judge(trace, contracts, end_us)`가 계약마다 판정기를 만들고, 트레이스 이벤트를 순서대로 한 번씩 흘려보내 위반을 모은다.
+
+```python
+class Checker:
+    def on_event(self, ev: Event, last: dict[EventPattern, Event]) -> list[Violation]: ...
+    def on_end(self, end_us: int, end_seq: int) -> list[Violation]: ...
+
+@dataclass(frozen=True)
+class Violation:
+    contract: str      # 계약 ID
+    req_id: str | None # 키
+    seq: int           # 위반을 증명하는 가장 이른 이벤트, 실행 끝이면 len(trace)
+    detail: str
+```
 
 ```json
 {"seq":40,"t_us":2150000,"actor":"device","kind":"recv","name":"MOVE_UP","req_id":"r-0003","data":{"link":{"dir":"c2s","n":3,"k":0,"copy":0}}}
-{"seq":41,"t_us":2150000,"actor":"device","kind":"effect","name":"motor_start","req_id":"r-0003","data":{"state":"MOVING_UP"}}
+{"seq":42,"t_us":2200000,"actor":"device","kind":"effect","name":"motor_start","req_id":"r-0003","data":{"dir":"up"}}
 ```
 
-```python
-class Checker(Protocol):
-    contract_id: str
-    def on_event(self, ev: Event) -> list[Violation]: ...
-    def on_end(self, final: Snapshot) -> list[Violation]: ...
-```
+**실행 종료 시각은 명시적으로 받는다.** `end_us`는 시뮬레이션을 돌린 시각(`run_until`)이다. 마지막 이벤트 시각으로 대신하면, 기한 검사(C2)가 실행 끝 무렵에 우연히 기록된 이벤트가 있느냐에 따라 뒤집힐 수 있다.
 
-위반은 계약 ID, 키(req_id), 위반 이벤트 seq, 근거 이벤트 seq 목록을 담는다. 판정기 자체도 종류별 정상·위반 트레이스 단위 테스트로 검증하고, 결함 없는 구현을 1,000개 시드로 돌려 오탐 0을 확인한다.
+**판정기의 정답은 참조 오라클이다.** `tests/lift_oracle.py`는 C1~C8의 의미를 손으로 쓴 코드로 고정한다. 판정기는 **(실행, 계약)마다 첫 위반의 seq**가 오라클과 같아야 한다. 위반 여부만 비교하면 엉뚱한 지점에서 잡아도 통과하고, 위반 목록 전체를 비교하면 두 번째 이후 위반의 보고 방식까지 맞춰야 해서 과하다. 첫 위반 이후를 어떻게 보고할지는 판정기 재량이다.
+
+WO-006 시점에 정상 구현과 뮤턴트 8개를 각각 시드 1,000개(실행 9,000회)로 돌려, 판정기와 오라클의 첫 위반이 모두 일치함을 확인했다. 테스트는 시드 100개로 같은 비교를 한다.
 
 ## 시나리오 포맷과 재현 파일
 
@@ -234,11 +218,10 @@ run_until: 20.0
 3. 모든 재현 파일이 재실행 시 같은 트레이스 다이제스트
 4. 축소 후 재현 시나리오가 스텝과 장애 합쳐 5개 이하
 
-뮤턴트별 검출에 걸린 시드 수를 기록해 v1의 기준선 데이터로 쓴다. 기준 1과 2는 WO-005에서 손으로 쓴 오라클(`tests/lift_oracle.py`)로 먼저 확인했다(위 "시험 대상" 절의 표). 계약에서 생성한 판정기로 같은 결과를 내는 것이 남은 일이다. 이후 v1 Hypothesis 기준선, v2 LLM + 커버리지 피드백, v3 문서→계약 추출과 wirestead 연동.
+뮤턴트별 검출에 걸린 시드 수를 기록해 v1의 기준선 데이터로 쓴다. 기준 1과 2는 충족됐다. WO-005에서 손으로 쓴 오라클로 확인했고(위 "시험 대상" 절의 표), WO-006에서 계약 YAML로 만든 판정기가 같은 9,000회 실행에서 오라클과 첫 위반까지 일치함을 확인했다. 남은 것은 기준 3·4(재현 파일, 축소)다. 이후 v1 Hypothesis 기준선, v2 LLM + 커버리지 피드백, v3 문서→계약 추출과 wirestead 연동.
 
 ## 열린 질문
 
-- 계약 DSL: YAML vs 파이썬 내부 DSL
 - 저장소 공개 시점
 
-결정된 것: 장치의 중복 제거 기억은 재연결 후에도 유지한다(클라이언트 주도 복구와 짝).
+결정된 것: 장치의 중복 제거 기억은 재연결 후에도 유지한다(클라이언트 주도 복구와 짝). 계약 DSL은 YAML로 하고, 조건식은 위의 작은 식 언어로 제한한다.
