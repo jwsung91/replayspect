@@ -44,6 +44,8 @@ python3 -m replayspect search --mutant M4 --target C3 --out repros
 # 1000 runs, system lift.v0, mutants ['M4']
 #   C3: violated in 19 runs, first at seed 58
 # shrunk C3: 56 -> 3 faults (seed 65, 30 runs) -> repros/lift.v0-M4-C3-seed65.json
+# simulations: 1000 search + 153 shrink over 5 candidates
+#   MOVING_DOWN --MOVE_UP--> MOVING_UP is not declared
 
 python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json
 # digest ok, first violations ok, target C3 violated

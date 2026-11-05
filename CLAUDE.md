@@ -54,7 +54,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M8 (`src/replayspect/sut/lift.py`)
 - [x] 계약 YAML과 판정기 (`contracts/lift.v0.yaml`, `src/replayspect/contract/`)
 - [x] 실행기, 재현 파일, 축소기, 명령행 (`runner.py`, `shrink.py`, `__main__.py`). v0 완료 기준 4개 충족
-- [ ] 다음: v1 Hypothesis 기준선, v2 LLM 시나리오 생성 (별도 작업지시서)
+- [x] v2 실험 준비: 계획 검사·`base: random`·계획 적용 보고·위반 설명·실행 수 집계
+- [ ] 다음: v2 첫 실험, LLM이 쓴 계획으로 M4·M8 찾기 (`docs/design-v0.md` 마지막 절)
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
@@ -63,6 +64,9 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
   장애를 빼면 바뀌므로 기준으로 쓰지 않는다. seq와 다이제스트는 재생 확인에만 쓴다.
 - 축소는 장애(유실·중복·끊김)만 빼고 기본 지연은 남긴다.
 - 탐색은 한 번도 일치하지 않은 계약 패턴을 경고한다. 그 계약은 검증되지 않은 것이다.
+- `FaultPlan.from_dict`는 모르는/빠진 필드와 잘못된 타입을 거부한다. 계획에 `base: random`을 주면
+  지연은 시드와 메시지 키로 뽑고 장애는 계획에 적힌 것만 일어난다(사람·LLM이 쓴 계획용).
+- 계획을 준 실행은 `Run.plan_report`로 효과 없던 항목(없는 키, 끊김 중 송신, 안 일어난 끊김)을 알려 준다.
 
 ## 계약과 판정기 요약 (구현 완료)
 - 계약 종류 8개의 의미와 보고 시점은 `docs/design-v0.md` "계약 DSL" 절이 기준이다.
