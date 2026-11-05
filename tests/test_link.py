@@ -385,3 +385,125 @@ def test_msg_keys_sort_only_via_sort_key():
     with pytest.raises(TypeError):
         sorted(keys)
     assert sorted(keys, key=MsgKey.sort_key)[0] == MsgKey("c2s", "HB", None, 1)
+
+
+# -- strict plan parsing ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("d,match", [
+    ({"lose": []}, "unknown plan fields"),
+    ({"faults": [{"dir": "c2s", "msg": "M", "req_id": "r", "k": 0, "lose": 1}]}, "unknown fields"),
+    ({"faults": [{"dir": "c2s", "msg": "M", "req_id": "r", "drop": True}]}, "missing"),
+    ({"delays": [{"dir": "c2s", "msg": "M", "req_id": "r", "k": 0}]}, "missing"),
+    ({"faults": [{"dir": "c2s", "msg": 5, "req_id": "r", "k": 0, "drop": True}]}, "msg must be a string"),
+    ({"faults": [{"dir": "c2s", "msg": "M", "req_id": 3, "k": 0, "drop": True}]}, "req_id"),
+    ({"faults": [{"dir": "c2s", "msg": "M", "req_id": "r", "k": "0", "drop": True}]}, "k must be an integer"),
+    ({"faults": [{"dir": "c2s", "msg": "M", "req_id": "r", "k": 0, "drop": "yes"}]}, "drop must be"),
+    ({"disconnects": [{"t_us": 1.5, "duration_us": 10}]}, "t_us must be an integer"),
+    ({"faults": {"dir": "c2s"}}, "must be a list"),
+    ({"base": "chaos"}, "base must be"),
+    ([], "mapping"),
+])
+def test_plan_from_dict_rejects_malformed_input(d, match):
+    with pytest.raises(LinkError, match=match):
+        FaultPlan.from_dict(d)
+
+
+def test_plan_req_id_may_be_omitted_for_messages_without_one():
+    plan = FaultPlan.from_dict({"faults": [{"dir": "c2s", "msg": "HB", "k": 2, "drop": True}]})
+    assert plan.faults[0].key == MsgKey("c2s", "HB", None, 2)
+
+
+# -- random base: chosen faults on top of seed-dependent timing ---------------------------
+
+
+def _send_delays(trace):
+    return {(e.data["link"]["dir"], e.name, e.req_id, e.data["link"]["k"]): e.data["link"]["delay_us"]
+            for e in trace if e.kind == "send"}
+
+
+def test_random_base_round_trips_and_defaults_to_fixed():
+    plan = FaultPlan(faults=(MessageFault(ping(1), drop=True),), base="random")
+    assert plan.to_dict()["base"] == "random"
+    assert FaultPlan.from_dict(plan.to_dict()) == plan
+    assert "base" not in FaultPlan().to_dict()
+    assert FaultPlan.from_dict({}).base == "fixed"
+
+
+def test_random_base_draws_delays_from_the_profile_and_the_seed():
+    plan = FaultPlan(base="random")
+    a, _ = echo.run(1, echo.STORMY, plan)
+    b, _ = echo.run(2, echo.STORMY, plan)
+    da, db = _send_delays(a), _send_delays(b)
+    lo, hi = echo.STORMY.c2s.delay_us
+    assert all(lo <= v <= hi for v in da.values())
+    assert len(set(da.values())) > 10
+    assert da != db
+    assert echo.run(1, echo.STORMY, plan)[0].digest() == a.digest()
+
+
+def test_random_base_injects_only_planned_faults():
+    plan = FaultPlan(faults=(MessageFault(ping(3), drop=True),), base="random")
+    trace, conn = echo.run(4, echo.STORMY, plan)
+    faults = [(e.name, e.req_id) for e in trace if e.kind == "fault"]
+    assert faults == [("drop", "r-0003")]
+    assert conn == []
+
+
+def test_random_base_keeps_other_delays_when_a_fault_is_added():
+    quiet = FaultPlan(base="random")
+    noisy = FaultPlan(faults=(MessageFault(ping(3), drop=True), MessageFault(ping(5), dup_extra_us=1)), base="random")
+    dq = _send_delays(echo.run(7, echo.STORMY, quiet)[0])
+    dn = _send_delays(echo.run(7, echo.STORMY, noisy)[0])
+    shared = set(dq) & set(dn)
+    assert len(shared) > 40
+    assert all(dq[k] == dn[k] for k in shared)
+
+
+def test_random_base_respects_planned_delays():
+    plan = FaultPlan(delays=(Delay(ping(2), 123_456),), base="random")
+    trace, _ = echo.run(0, echo.STORMY, plan)
+    assert _send_delays(trace)[("c2s", "PING", "r-0002", 0)] == 123_456
+
+
+def test_random_base_run_replays_exactly_as_a_fixed_plan():
+    plan = FaultPlan(faults=(MessageFault(ping(3), drop=True),), disconnects=(Disconnect(1_000_000, 300_000),),
+                     base="random")
+    trace, _ = echo.run(5, echo.STORMY, plan)
+    fixed = FaultPlan.from_trace(trace)
+    assert fixed.base == "fixed"
+    assert echo.run(5, echo.STORMY, fixed)[0].digest() == trace.digest()
+
+
+# -- plan report ------------------------------------------------------------------------------
+
+
+def test_plan_report_lists_entries_that_never_took_effect():
+    from replayspect.sim.link import plan_report
+
+    ghost = MsgKey("c2s", "PING", "r-9999", 0)
+    typo = MsgKey("c2s", "PNIG", "r-0001", 0)
+    lost = ping(2)  # sent at 0.4 s, during the disconnect below
+    plan = FaultPlan(
+        delays=(Delay(ping(0), 5_000), Delay(ghost, 5_000)),
+        faults=(MessageFault(ping(1), drop=True), MessageFault(typo, drop=True), MessageFault(lost, drop=True)),
+        disconnects=(Disconnect(300_000, 200_000), Disconnect(50_000_000, 1_000)),
+    )
+    trace, _ = echo.run(0, echo.STORMY, plan, n_msgs=5)
+    rep = plan_report(plan, trace)
+    assert [d.key for d in rep.unmatched_delays] == [ghost]
+    assert [f.key for f in rep.unmatched_faults] == [typo]
+    assert [f.key for f in rep.faults_lost_to_disconnect] == [lost]
+    assert rep.unapplied_disconnects == (Disconnect(50_000_000, 1_000),)
+    assert not rep.all_applied
+    assert set(rep.to_dict()) == {
+        "unmatched_delays", "unmatched_faults", "faults_lost_to_disconnect", "unapplied_disconnects",
+    }
+
+
+def test_plan_from_trace_is_fully_applied():
+    from replayspect.sim.link import plan_report
+
+    trace, _ = echo.run(3, echo.STORMY)
+    plan = FaultPlan.from_trace(trace)
+    assert plan_report(plan, echo.run(3, echo.STORMY, plan)[0]).all_applied

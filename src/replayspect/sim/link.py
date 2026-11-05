@@ -196,20 +196,42 @@ def _key_from(d: Mapping[str, Any]) -> MsgKey:
     return MsgKey(d["dir"], d["msg"], d.get("req_id"), d["k"])
 
 
+BASES = ("fixed", "random")
+
+_PLAN_KEYS = {"base", "delays", "faults", "disconnects"}
+_ITEM_KEYS = {
+    "delays": ({"dir", "msg", "req_id", "k", "delay_us"}, {"dir", "msg", "k", "delay_us"}),
+    "faults": ({"dir", "msg", "req_id", "k", "drop", "dup_extra_us"}, {"dir", "msg", "k"}),
+    "disconnects": ({"t_us", "duration_us"}, {"t_us", "duration_us"}),
+}
+
+
 @dataclass(frozen=True)
 class FaultPlan:
-    """Everything that happens on the channel in explicit mode.
+    """Everything that happens on the channel when a plan is given.
 
-    ``delays`` is baseline timing; messages without an entry use the low end
-    of the profile's ``delay_us``. ``faults`` and ``disconnects`` are the
-    faults; removing one of them removes only that fault.
+    ``faults`` and ``disconnects`` are the faults; removing one of them removes
+    only that fault. No other fault happens. ``delays`` sets the delivery
+    delay of individual messages, and ``base`` decides the delay of every
+    message without an entry:
+
+    * ``"fixed"`` (default): the low end of the profile's ``delay_us``. A plan
+      made by :meth:`from_trace` lists every delay, so this is exact replay.
+    * ``"random"``: drawn from the profile range by an RNG keyed on the
+      scheduler seed and the message's :class:`MsgKey`. Each message gets the
+      same delay whatever else happens in the run, so adding or removing a
+      fault never shifts the timing of other messages. Use this to put chosen
+      faults on top of realistic, seed-dependent timing.
     """
 
     delays: tuple[Delay, ...] = ()
     faults: tuple[MessageFault, ...] = ()
     disconnects: tuple[Disconnect, ...] = ()
+    base: str = "fixed"
 
     def __post_init__(self) -> None:
+        if self.base not in BASES:
+            raise LinkError(f"base must be one of {BASES}, got {self.base!r}")
         for label, keys in (("delays", [d.key for d in self.delays]), ("faults", [f.key for f in self.faults])):
             if len(keys) != len(set(keys)):
                 raise LinkError(f"duplicate message key in plan {label}")
@@ -228,24 +250,62 @@ class FaultPlan:
 
     def without_fault(self, key: MsgKey) -> "FaultPlan":
         """The same plan minus the fault on ``key`` (used by shrinking)."""
-        return FaultPlan(self.delays, tuple(f for f in self.faults if f.key != key), self.disconnects)
+        return FaultPlan(self.delays, tuple(f for f in self.faults if f.key != key), self.disconnects, self.base)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "delays": [d.to_dict() for d in sorted(self.delays, key=lambda d: d.key.sort_key())],
             "faults": [f.to_dict() for f in sorted(self.faults, key=lambda f: f.key.sort_key())],
             "disconnects": [d.to_dict() for d in sorted(self.disconnects, key=lambda d: d.t_us)],
         }
+        if self.base != "fixed":
+            d["base"] = self.base
+        return d
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "FaultPlan":
+        """Parse a plan, rejecting unknown or missing fields and wrong types.
+
+        A plan written by hand or by a model must fail loudly here rather than
+        run with a misspelled field silently ignored.
+        """
+        if not isinstance(d, Mapping):
+            raise LinkError(f"plan must be a mapping, got {type(d).__name__}")
+        extra = set(d) - _PLAN_KEYS
+        if extra:
+            raise LinkError(f"unknown plan fields {sorted(extra)}; allowed {sorted(_PLAN_KEYS)}")
+        lists: dict[str, list] = {}
+        for section, (allowed, required) in _ITEM_KEYS.items():
+            items = d.get(section, [])
+            if not isinstance(items, list):
+                raise LinkError(f"{section} must be a list")
+            for i, x in enumerate(items):
+                where = f"{section}[{i}]"
+                if not isinstance(x, Mapping):
+                    raise LinkError(f"{where} must be a mapping")
+                if set(x) - allowed:
+                    raise LinkError(f"{where}: unknown fields {sorted(set(x) - allowed)}; allowed {sorted(allowed)}")
+                if required - set(x):
+                    raise LinkError(f"{where}: missing {sorted(required - set(x))}")
+                for name in ("msg",):
+                    if name in x and type(x[name]) is not str:
+                        raise LinkError(f"{where}: {name} must be a string")
+                if "req_id" in x and x["req_id"] is not None and type(x["req_id"]) is not str:
+                    raise LinkError(f"{where}: req_id must be a string or null")
+                for name in ("k", "delay_us", "dup_extra_us", "t_us", "duration_us"):
+                    if x.get(name) is not None and type(x[name]) is not int:
+                        raise LinkError(f"{where}: {name} must be an integer")
+                if "drop" in x and type(x["drop"]) is not bool:
+                    raise LinkError(f"{where}: drop must be true or false")
+            lists[section] = items
         return cls(
-            delays=tuple(Delay(_key_from(x), x["delay_us"]) for x in d.get("delays", [])),
+            delays=tuple(Delay(_key_from(x), x["delay_us"]) for x in lists["delays"]),
             faults=tuple(
                 MessageFault(_key_from(x), drop=x.get("drop", False), dup_extra_us=x.get("dup_extra_us"))
-                for x in d.get("faults", [])
+                for x in lists["faults"]
             ),
-            disconnects=tuple(Disconnect(**x) for x in d.get("disconnects", [])),
+            disconnects=tuple(Disconnect(x["t_us"], x["duration_us"]) for x in lists["disconnects"]),
+            base=d.get("base", "fixed"),
         )
 
     @classmethod
@@ -406,7 +466,7 @@ class Channel:
             fault = self.plan.fault(key)
             delay = self.plan.delay(key)
             if delay is None:
-                delay = prof.delay_us[0]
+                delay = self._keyed_delay(key) if self.plan.base == "random" else prof.delay_us[0]
             if fault is not None and fault.drop:
                 return True, delay, None
             return False, delay, (fault.dup_extra_us if fault is not None else None)
@@ -420,6 +480,11 @@ class Channel:
         dup = rng.random() < prof.dup_p
         extra = rng.randint(*prof.dup_extra_us) if dup else None
         return drop, delay, (None if drop else extra)
+
+    def _keyed_delay(self, key: MsgKey) -> int:
+        """Delay drawn from an RNG keyed on (seed, message key), independent of order."""
+        name = f"link/keyed-delay/{key.dir}/{key.msg}/{key.req_id}/{key.k}"
+        return self._sched.fork_rng(name).randint(*self.profile.link(key.dir).delay_us)
 
     def _arrive(self, key: MsgKey, n: int, copy: int, epoch: int, fields: Mapping[str, Any]) -> None:
         if not self.up or epoch != self.epoch:
@@ -483,3 +548,57 @@ class Channel:
         wait = max(1, round(self._disc_rng.expovariate(1.0 / mean)))
         duration = self._disc_rng.randint(*self.profile.disconnect_duration_us)
         self._sched.after_us(wait, lambda: self._disconnect(duration), "link:disconnect")
+
+
+@dataclass(frozen=True)
+class PlanReport:
+    """Which plan entries did nothing in a run.
+
+    * ``unmatched_delays`` / ``unmatched_faults``: no message with that key was
+      ever sent. Usually a wrong ``req_id``, ``msg`` or ``k``.
+    * ``faults_lost_to_disconnect``: the message was sent, but while the
+      connection was down, so it was lost anyway and the fault had no effect.
+    * ``unapplied_disconnects``: the disconnect never happened (for example
+      it was scheduled after the end of the run).
+    """
+
+    unmatched_delays: tuple[Delay, ...]
+    unmatched_faults: tuple[MessageFault, ...]
+    faults_lost_to_disconnect: tuple[MessageFault, ...]
+    unapplied_disconnects: tuple[Disconnect, ...]
+
+    @property
+    def all_applied(self) -> bool:
+        return not (
+            self.unmatched_delays or self.unmatched_faults
+            or self.faults_lost_to_disconnect or self.unapplied_disconnects
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "unmatched_delays": [d.to_dict() for d in self.unmatched_delays],
+            "unmatched_faults": [f.to_dict() for f in self.unmatched_faults],
+            "faults_lost_to_disconnect": [f.to_dict() for f in self.faults_lost_to_disconnect],
+            "unapplied_disconnects": [d.to_dict() for d in self.unapplied_disconnects],
+        }
+
+
+def plan_report(plan: FaultPlan, trace: Trace) -> PlanReport:
+    sent: set[MsgKey] = set()
+    lost_while_down: set[MsgKey] = set()
+    happened: set[tuple[int, int]] = set()
+    for ev in trace:
+        if ev.kind == "send" and "link" in ev.data:
+            link = ev.data["link"]
+            sent.add(MsgKey(link["dir"], ev.name, ev.req_id, link["k"]))
+        elif ev.kind == "fault" and ev.actor == "link":
+            if ev.name == "drop" and ev.data.get("reason") == DROP_DISCONNECTED:
+                lost_while_down.add(_key_from({**ev.data, "req_id": ev.req_id}))
+            elif ev.name == "disconnect":
+                happened.add((ev.t_us, ev.data["duration_us"]))
+    return PlanReport(
+        tuple(d for d in plan.delays if d.key not in sent),
+        tuple(f for f in plan.faults if f.key not in sent),
+        tuple(f for f in plan.faults if f.key in lost_while_down),
+        tuple(d for d in plan.disconnects if (d.t_us, d.duration_us) not in happened),
+    )
