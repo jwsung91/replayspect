@@ -42,6 +42,39 @@ RunFn = Callable[[int, "FaultPlan | None", tuple[str, ...], int], Trace]
 
 
 @dataclass(frozen=True)
+class PlanVocabulary:
+    """Message keys a generated plan may target, read off the protocol description.
+
+    Only what a planner can learn from the protocol goes here, never anything
+    about mutants: generated plans must start from the same knowledge.
+    """
+
+    #: Move commands as ``(req_id, c2s message name)``.
+    commands: tuple[tuple[str, str], ...]
+    #: Device messages that answer a move command.
+    command_replies: tuple[str, ...]
+    #: Request ids of periodic polls.
+    polls: tuple[str, ...]
+    poll_request: str
+    poll_reply: str
+    #: Largest ``k`` to target. Resends after reconnects can go higher; see the design notes.
+    max_k: int
+
+
+def _lift_vocabulary() -> PlanVocabulary:
+    # protocol-lift.md: 6 commands alternating MOVE_UP / MOVE_DOWN from MOVE_UP, ids r-0001...;
+    # at most two resends; STATUS every second over a 90 s run, ids s-0001...
+    return PlanVocabulary(
+        commands=tuple((f"r-{n:04d}", "MOVE_UP" if n % 2 else "MOVE_DOWN") for n in range(1, 7)),
+        command_replies=("ACK", "DONE", "ERROR"),
+        polls=tuple(f"s-{n:04d}" for n in range(1, 91)),
+        poll_request="STATUS",
+        poll_reply="STATUS_REPLY",
+        max_k=3,
+    )
+
+
+@dataclass(frozen=True)
 class System:
     name: str
     run: RunFn  # (seed, plan, mutants, until_us) -> trace
@@ -52,6 +85,8 @@ class System:
     quiet_messages: frozenset[str] = frozenset()
     #: Description of the protocol for planners. Must not mention mutants.
     protocol_path: Path | None = None
+    #: Message keys for generated plans (the Hypothesis baseline).
+    vocabulary: PlanVocabulary | None = None
 
     def contracts(self) -> ContractSet:
         return load_contracts(self.contracts_path)
@@ -73,6 +108,7 @@ SYSTEMS: dict[str, System] = {
     "lift.v0": System(
         "lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000,
         _lift_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-lift.md",
+        _lift_vocabulary(),
     ),
 }
 

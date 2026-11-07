@@ -6,6 +6,8 @@ search    Run random-fault seeds against a system, report which contracts
 replay    Rerun a repro file and check it reproduces the recorded execution.
 baseline  Random search over the same seeds a planning session uses
           (seed_base, seed_base + 1, ...): how many runs until a violation.
+          With --strategy hypothesis, Hypothesis writes the fault plans
+          instead (needs the hyp extra), once per Hypothesis seed.
 session   Summarize a planning-session log and rerun it to check it replays.
 """
 
@@ -60,6 +62,8 @@ def _replay(args: argparse.Namespace) -> int:
 
 
 def _baseline(args: argparse.Namespace) -> int:
+    if args.strategy == "hypothesis":
+        return _baseline_hypothesis(args)
     system = get_system(args.system)
     cs = system.contracts()
     first = None
@@ -70,6 +74,34 @@ def _baseline(args: argparse.Namespace) -> int:
     where = f"first violation at run {first} ({first + 1} runs)" if first is not None else "no violation"
     print(f"random search, seeds {args.seed_base}..{args.seed_base + args.budget - 1}, "
           f"mutants {args.mutant or 'none'}: {where}")
+    return 0
+
+
+def _baseline_hypothesis(args: argparse.Namespace) -> int:
+    try:
+        from replayspect.hyp import HYPOTHESIS_VERSION, hyp_search
+    except ImportError:
+        print('--strategy hypothesis needs the hypothesis package: pip install -e ".[hyp]"', file=sys.stderr)
+        return 2
+    seeds = range(args.hyp_seed_start, args.hyp_seed_start + args.hyp_seeds)
+    print(f"hypothesis plans {HYPOTHESIS_VERSION}, seeds {args.seed_base}..{args.seed_base + args.budget - 1}, "
+          f"mutants {args.mutant or 'none'}, hypothesis seeds {seeds.start}..{seeds.stop - 1}")
+    found = []
+    for h in seeds:
+        r = hyp_search(args.mutant, args.seed_base, args.budget, h, args.system)
+        where = (f"first violation at run {r.first_violation_run} ({r.runs_to_first_violation} runs), "
+                 f"violated {', '.join(r.violated)}" if r.first_violation_run is not None else "no violation")
+        print(f"  hypothesis seed {h}: {where}; rejected {r.rejected}, "
+              f"no-effect entries {r.no_effect_entries}/{r.entries}")
+        if r.runs_to_first_violation is not None:
+            found.append(r.runs_to_first_violation)
+    line = f"detected {len(found)}/{len(seeds)}"
+    if found:
+        found.sort()
+        mid = len(found) // 2
+        median = found[mid] if len(found) % 2 else (found[mid - 1] + found[mid]) / 2
+        line += f"; runs to first violation when detected: median {median}, min {found[0]}, max {found[-1]}"
+    print(line)
     return 0
 
 
@@ -108,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--mutant", action="append", default=[])
     b.add_argument("--seed-base", type=int, default=0)
     b.add_argument("--budget", type=int, default=100)
+    b.add_argument("--strategy", choices=["random", "hypothesis"], default="random")
+    b.add_argument("--hyp-seeds", type=int, default=20, help="hypothesis strategy: how many Hypothesis seeds")
+    b.add_argument("--hyp-seed-start", type=int, default=0)
     b.set_defaults(fn=_baseline)
     se = sub.add_parser("session", help="summarize a planning-session log")
     se.add_argument("log")
