@@ -507,3 +507,51 @@ def test_plan_from_trace_is_fully_applied():
     trace, _ = echo.run(3, echo.STORMY)
     plan = FaultPlan.from_trace(trace)
     assert plan_report(plan, echo.run(3, echo.STORMY, plan)[0]).all_applied
+
+
+# -- bounds for written plans ---------------------------------------------------------------
+
+
+def test_plan_bounds():
+    from replayspect.sim.link import check_plan_bounds
+
+    prof = echo.STORMY
+    ok = FaultPlan(
+        delays=(Delay(ping(1), 400_000),),
+        faults=(MessageFault(ping(2), dup_extra_us=300_000),),
+        disconnects=(Disconnect(1_000_000, 600_000),),
+        base="random",
+    )
+    check_plan_bounds(ok, prof, until_us=20_000_000, max_faults=2)
+    bad = [
+        (FaultPlan(delays=(Delay(ping(1), 400_001),)), "delay"),
+        (FaultPlan(delays=(Delay(ping(1), 19_999),)), "delay"),
+        (FaultPlan(faults=(MessageFault(ping(2), dup_extra_us=300_001),)), "dup_extra_us"),
+        (FaultPlan(disconnects=(Disconnect(0, 99_999),)), "duration_us"),
+        (FaultPlan(disconnects=(Disconnect(20_000_000, 100_000),)), "after the run ends"),
+    ]
+    for plan, match in bad:
+        with pytest.raises(LinkError, match=match):
+            check_plan_bounds(plan, prof, until_us=20_000_000)
+    with pytest.raises(LinkError, match="at most 1"):
+        check_plan_bounds(ok, prof, max_faults=1)
+
+
+@pytest.mark.parametrize("field", ["k", "delay_us"])
+def test_null_numbers_are_link_errors(field):
+    item = {"dir": "c2s", "msg": "M", "req_id": "r", "k": 0, "delay_us": 5}
+    item[field] = None
+    with pytest.raises(LinkError, match=f"{field} must be an integer"):
+        FaultPlan.from_dict({"delays": [item]})
+    with pytest.raises(LinkError, match="t_us must be an integer"):
+        FaultPlan.from_dict({"disconnects": [{"t_us": None, "duration_us": 5}]})
+    with pytest.raises(LinkError, match="dup_extra_us must be an integer"):
+        FaultPlan.from_dict({"faults": [{"dir": "c2s", "msg": "M", "k": 0, "dup_extra_us": None}]})
+
+
+def test_keyed_delay_distinguishes_missing_req_id_from_the_string_none():
+    sched = Scheduler(0)
+    ch = Channel(sched, Trace(lambda: sched.now_us), echo.STORMY, FaultPlan(base="random"))
+    a = ch._keyed_delay(MsgKey("c2s", "HB", None, 0))
+    b = ch._keyed_delay(MsgKey("c2s", "HB", "None", 0))
+    assert a != b

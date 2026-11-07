@@ -293,8 +293,8 @@ class FaultPlan:
                 if "req_id" in x and x["req_id"] is not None and type(x["req_id"]) is not str:
                     raise LinkError(f"{where}: req_id must be a string or null")
                 for name in ("k", "delay_us", "dup_extra_us", "t_us", "duration_us"):
-                    if x.get(name) is not None and type(x[name]) is not int:
-                        raise LinkError(f"{where}: {name} must be an integer")
+                    if name in x and type(x[name]) is not int:
+                        raise LinkError(f"{where}: {name} must be an integer, got {x[name]!r}")
                 if "drop" in x and type(x["drop"]) is not bool:
                     raise LinkError(f"{where}: drop must be true or false")
             lists[section] = items
@@ -483,7 +483,8 @@ class Channel:
 
     def _keyed_delay(self, key: MsgKey) -> int:
         """Delay drawn from an RNG keyed on (seed, message key), independent of order."""
-        name = f"link/keyed-delay/{key.dir}/{key.msg}/{key.req_id}/{key.k}"
+        rid = "-" if key.req_id is None else f"={key.req_id}"  # None and "None" must differ
+        name = f"link/keyed-delay/{key.dir}/{key.msg}/{rid}/{key.k}"
         return self._sched.fork_rng(name).randint(*self.profile.link(key.dir).delay_us)
 
     def _arrive(self, key: MsgKey, n: int, copy: int, epoch: int, fields: Mapping[str, Any]) -> None:
@@ -602,3 +603,39 @@ def plan_report(plan: FaultPlan, trace: Trace) -> PlanReport:
         tuple(f for f in plan.faults if f.key in lost_while_down),
         tuple(d for d in plan.disconnects if (d.t_us, d.duration_us) not in happened),
     )
+
+
+def check_plan_bounds(
+    plan: FaultPlan,
+    profile: ChannelProfile,
+    until_us: int | None = None,
+    max_faults: int | None = None,
+) -> None:
+    """Reject a plan whose values fall outside what ``profile`` could produce.
+
+    Used when a person or a model writes plans to compare against random
+    search: with no bounds, a plan could win simply by using faults random
+    search never draws (a 60 s delay, an 80 s disconnect). Checks every
+    delay against the direction's ``delay_us`` range, every duplicate offset
+    against ``dup_extra_us``, every disconnect duration against
+    ``disconnect_duration_us`` and its start against ``until_us``, and the
+    number of faults plus disconnects against ``max_faults``.
+    """
+    def within(value: int, rng: tuple[int, int], what: str) -> None:
+        lo, hi = rng
+        if not lo <= value <= hi:
+            raise LinkError(f"{what} = {value} us is outside the allowed range [{lo}, {hi}] us")
+
+    for d in plan.delays:
+        within(d.delay_us, profile.link(d.key.dir).delay_us, f"delay of {d.key.dir} {d.key.msg} {d.key.req_id} k={d.key.k}")
+    for f in plan.faults:
+        if f.dup_extra_us is not None:
+            within(f.dup_extra_us, profile.link(f.key.dir).dup_extra_us,
+                   f"dup_extra_us of {f.key.dir} {f.key.msg} {f.key.req_id} k={f.key.k}")
+    for d in plan.disconnects:
+        within(d.duration_us, profile.disconnect_duration_us, f"disconnect at {d.t_us} us: duration_us")
+        if until_us is not None and d.t_us >= until_us:
+            raise LinkError(f"disconnect at {d.t_us} us starts after the run ends at {until_us} us")
+    n = len(plan.faults) + len(plan.disconnects)
+    if max_faults is not None and n > max_faults:
+        raise LinkError(f"plan has {n} faults and disconnects; at most {max_faults} allowed")
