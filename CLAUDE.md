@@ -55,7 +55,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 계약 YAML과 판정기 (`contracts/lift.v0.yaml`, `src/replayspect/contract/`)
 - [x] 실행기, 재현 파일, 축소기, 명령행 (`runner.py`, `shrink.py`, `__main__.py`). v0 완료 기준 4개 충족
 - [x] v2 실험 준비: 계획 검사·`base: random`·계획 적용 보고·위반 설명·실행 수 집계
-- [ ] 다음: v2 첫 실험, LLM이 쓴 계획으로 M4·M8 찾기 (`docs/design-v0.md` 마지막 절)
+- [x] v2 실험 장치: 계획 세션(`session.py`), MCP 서버(`mcp_server.py`), 기준선·세션 명령행
+- [ ] 다음: v2 시행과 결과 정리 (`docs/experiment-v2.md`), 이어서 작업 모드 MCP 도구(탐색·축소·재생)
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
@@ -103,3 +104,13 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
   메시지당 추첨 순서(유실 여부 → 지연 → 중복 여부 → 중복일 때만 추가 지연)는 테스트로 고정돼 있다.
 - `FaultPlan.from_trace(trace)`로 만든 명시 계획은 같은 시드와 함께 쓰면 같은 다이제스트로 재생된다.
   이 성질은 축소기의 기반이므로 깨지면 안 된다 (`tests/test_link.py`).
+
+## 계획 세션과 MCP 요약 (구현 완료)
+- 계획기에게 보이는 문서는 `docs/protocol-lift.md`, `docs/plan-format.md`, 계약 YAML뿐이다.
+  이 세 파일에는 뮤턴트나 결함의 단서를 절대 쓰지 않는다. `tests/test_session.py`가 `describe` 결과를 검사한다.
+- 세션 API에서 시드 배정·예산·범위·로그를 강제하고 도구 결과에 뮤턴트를 포함하지 않는다. 숨긴 설정의 파일·자동 문맥 노출 차단과 시행 등록은 운영 절차가 맡는다.
+- MCP 도구 래퍼는 비동기 함수로 두고 세션 호출 중 await하지 않는다. SDK 2의 작업 스레드로 세션 상태 변경이 분산되지 않게 한다.
+- 세션 로그에는 뮤턴트가 적힌다. 계획기가 읽을 수 있는 디렉터리에 두지 않는다. 기존 로그 경로는 재사용할 수 없으며 중단된 시행을 새 로그로 몰래 재시도하지 않는다.
+- 같은 시드여도 기준선과 계획은 지연 생성 방식이 다르다. 장애가 많을수록 검출에 유리하다고 가정하지 않는다.
+- 시행 경로는 중립 ID로 만들고, 클라이언트 내장 도구·다른 MCP·자동 문맥을 제한한다. `permissions.allow`만으로 도구 전체 허용 목록을 만들 수는 없다.
+- `mcp` 패키지는 선택 의존성이다(`pip install -e ".[mcp]"`). 없으면 MCP 서버 테스트는 건너뛴다.

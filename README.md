@@ -35,6 +35,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Virtual lift device and client, with seeded bugs (mutants)
 - [x] Contract YAML and checkers
 - [x] Scenario runner, repro files, shrinking
+- [x] Planning sessions, MCP server, run summaries and baseline comparison
 
 ## Usage
 
@@ -53,10 +54,29 @@ python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json
 
 `search` exits with 1 when any contract was violated, like a failing test.
 
+### Planning sessions over MCP
+
+A planner (a person, or a model behind an MCP client) can drive the simulator
+itself: it reads the protocol, contracts and plan format, submits fault plans,
+and gets back each run's timeline and violations. The session hides which bug
+is seeded, assigns seeds, counts every call against a budget and logs
+everything so the session can be rerun exactly.
+
+```bash
+pip install -e ".[mcp]"
+python3 -m replayspect.mcp_server --mutant M4 --seed-base 1000 --budget 120 --log /tmp/m4.jsonl
+python3 -m replayspect session /tmp/m4.jsonl --verify        # after the session
+python3 -m replayspect baseline --mutant M4 --seed-base 1000 --budget 120
+```
+
+Each session requires a new log path; an existing path is refused to prevent
+restarts from resetting the run budget. See `docs/experiment-v2.md` for isolated
+trials and the limits of the comparison with random search.
+
 ## Development
 
 ```bash
-python -m venv .venv && . .venv/bin/activate
+python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest          # fast tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -m ""    # everything, including slow seed sweeps
