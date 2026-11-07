@@ -37,6 +37,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Scenario runner, repro files, shrinking
 - [x] Planning sessions, MCP server, run summaries and baseline comparison
 - [x] First v2 trials: LLM planner vs random search on one mutant (`docs/experiment-v2.md`)
+- [x] Work-mode MCP tools: search, shrink and replay from an MCP client
 
 ## Usage
 
@@ -73,6 +74,25 @@ python3 -m replayspect baseline --mutant M4 --seed-base 1000 --budget 120
 Each session requires a new log path; an existing path is refused to prevent
 restarts from resetting the run budget. See `docs/experiment-v2.md` for isolated
 trials and the limits of the comparison with random search.
+
+### Work tools over MCP
+
+For your own work from an MCP client (for example Claude Code), a separate
+server offers the same search, shrink and replay as the command line:
+
+```bash
+claude mcp add replayspect-work -- python3 -m replayspect.mcp_work --repros repros
+```
+
+- `search`: random-fault seeds; with a target contract, the smallest shrunk
+  failure is written to the repro directory and its file name returned.
+- `shrink`: shrink one failing run, from a fault plan you give (for example
+  one a planning session found) or from a seed's random faults.
+- `replay`: rerun a repro file by name and check it reproduces exactly.
+
+Nothing is hidden or budgeted here: mutants and seeds are plain arguments.
+Never give this server to a planner in a trial. Repro files are only read
+and written inside `--repros`, by plain file name, and never overwritten.
 
 ## Development
 

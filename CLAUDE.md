@@ -57,7 +57,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v2 실험 준비: 계획 검사·`base: random`·계획 적용 보고·위반 설명·실행 수 집계
 - [x] v2 실험 장치: 계획 세션(`session.py`), MCP 서버(`mcp_server.py`), 기준선·세션 명령행
 - [x] v2 1차 시행: M4, 완료 3회(사후 추가 1회 포함), 결과와 해석의 한계는 `docs/experiment-v2.md` "1차 시행 기록"
-- [ ] 다음: 작업 모드 MCP 도구(탐색·축소·재생)
+- [x] 작업 모드 MCP 도구: 별도 서버(`mcp_work.py`)의 search·shrink·replay
+- [ ] 다음: 미정 (후보: v2 M8 시행, v1 Hypothesis 기준선)
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
@@ -115,3 +116,6 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - 같은 시드여도 기준선과 계획은 지연 생성 방식이 다르다. 장애가 많을수록 검출에 유리하다고 가정하지 않는다.
 - 시행 경로는 중립 ID로 만들고, 클라이언트 내장 도구·다른 MCP·자동 문맥을 제한한다. `permissions.allow`만으로 도구 전체 허용 목록을 만들 수는 없다.
 - `mcp` 패키지는 선택 의존성이다(`pip install -e ".[mcp]"`). 없으면 MCP 서버 테스트는 건너뛴다.
+- 작업 모드 서버(`python3 -m replayspect.mcp_work --repros DIR`)는 개발자용이다. 뮤턴트·시드를 숨기지 않고
+  예산도 없으므로 시행의 계획기에게 절대 주지 않는다. 실험 서버(`mcp_server.py`)에 작업 도구를 섞지 않는다.
+  재현 파일은 `--repros` 안에서만 파일 이름으로 읽고 쓰며 덮어쓰지 않는다.

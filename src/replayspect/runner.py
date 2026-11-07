@@ -240,9 +240,12 @@ def make_repro(run: Run, target: str, shrink: Mapping[str, Any] | None = None) -
     return doc
 
 
-def write_repro(doc: Mapping[str, Any], path: Path) -> Path:
+def write_repro(doc: Mapping[str, Any], path: Path, exclusive: bool = False) -> Path:
+    """Write ``doc`` as JSON. With ``exclusive``, raise FileExistsError instead of overwriting."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    with path.open("x" if exclusive else "w", encoding="utf-8") as f:
+        f.write(text)
     return path
 
 
