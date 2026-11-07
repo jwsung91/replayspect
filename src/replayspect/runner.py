@@ -29,7 +29,7 @@ from replayspect.contract import (
     load_contracts,
     matched_patterns,
 )
-from replayspect.sim.link import FaultPlan, PlanReport, plan_report
+from replayspect.sim.link import ChannelProfile, FaultPlan, PlanReport, plan_report
 from replayspect.trace import Trace
 
 REPRO_FORMAT = "replayspect.repro/1"
@@ -47,6 +47,11 @@ class System:
     run: RunFn  # (seed, plan, mutants, until_us) -> trace
     contracts_path: Path
     until_us: int
+    profile: ChannelProfile
+    #: Message names left out of run summaries (periodic polling and the like).
+    quiet_messages: frozenset[str] = frozenset()
+    #: Description of the protocol for planners. Must not mention mutants.
+    protocol_path: Path | None = None
 
     def contracts(self) -> ContractSet:
         return load_contracts(self.contracts_path)
@@ -58,8 +63,17 @@ def _run_lift(seed: int, plan: FaultPlan | None, mutants: tuple[str, ...], until
     return run_lift(seed, plan=plan, mutants=mutants, until_us=until_us)
 
 
+def _lift_profile() -> ChannelProfile:
+    from replayspect.sut.lift import SEARCH_PROFILE
+
+    return SEARCH_PROFILE
+
+
 SYSTEMS: dict[str, System] = {
-    "lift.v0": System("lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000),
+    "lift.v0": System(
+        "lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000,
+        _lift_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-lift.md",
+    ),
 }
 
 
@@ -263,3 +277,50 @@ def replay(doc: Mapping[str, Any], contracts: ContractSet | None = None) -> Repl
         violations_ok=[violation_dict(v) for v in run.first()] == expect["first_violations"],
         target_ok=doc["target"] in run.violated(),
     )
+
+
+# -- summaries for planners -------------------------------------------------------------------
+
+
+def _s(us: int) -> str:
+    return f"{us / 1_000_000:.3f}"
+
+
+def summary_line(ev: Any) -> str:
+    """One compact, human- and model-readable line per event."""
+    d, rid = ev.data, ev.req_id or "-"
+    head = f"{_s(ev.t_us)}s {ev.actor} {ev.kind} {ev.name} {rid}"
+    if ev.kind == "send" and "link" in d:
+        return f"{head} k={d['link']['k']} delay={_s(d['link']['delay_us'])}s"
+    if ev.kind == "recv" and "link" in d:
+        extra = " (duplicate copy)" if d["link"].get("copy") else ""
+        return f"{head} k={d['link']['k']}{extra}"
+    if ev.kind == "state":
+        return f"{head} (from {d.get('from')} on {d.get('on')})"
+    if ev.kind == "handle":
+        return f"{head} (cause {d.get('cause')}, message {d.get('msg_req_id')})"
+    if ev.kind == "fault" and ev.name in ("drop", "duplicate"):
+        what = d.get("reason") if ev.name == "drop" else f"extra={_s(d.get('extra_us', 0))}s"
+        return f"{_s(ev.t_us)}s link {ev.name} {d.get('dir')} {d.get('msg')} {rid} k={d.get('k')} {what}"
+    if ev.kind == "fault" and ev.name == "disconnect":
+        return f"{_s(ev.t_us)}s link disconnect for {_s(d.get('duration_us', 0))}s"
+    if ev.kind == "fault":
+        return f"{_s(ev.t_us)}s link {ev.name}"
+    return head
+
+
+def run_summary(run: Run, system: System, max_lines: int = 250) -> list[str]:
+    """The run's timeline without quiet messages, one line per event.
+
+    Gives a planner the message keys (``msg``, ``req_id``, ``k``) and timing it
+    needs to target faults, whether or not anything was violated.
+    """
+    quiet = system.quiet_messages
+    lines = []
+    for ev in run.trace:
+        if ev.name in quiet or (ev.kind == "fault" and ev.data.get("msg") in quiet):
+            continue
+        lines.append(summary_line(ev))
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + [f"... {len(lines) - max_lines} more lines omitted"]
+    return lines

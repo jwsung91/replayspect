@@ -198,3 +198,37 @@ def test_run_context_window():
     ctx = r.context(v.seq, before=2, after=1)
     assert [e["seq"] for e in ctx] == [v.seq - 2, v.seq - 1, v.seq, v.seq + 1]
     assert r.first_of("C1") is None
+
+
+def test_run_summary_leaves_out_quiet_messages_and_formats_lines():
+    from replayspect.runner import run_summary, summary_line
+
+    r = run_once(LIFT, 0, ["M4"], FaultPlan(base="random"), CS)
+    lines = run_summary(r, LIFT)
+    assert lines[:3] == [
+        "0.000s device state DOWN - (from None on init)",
+        "0.000s client send MOVE_UP r-0001 k=0 delay=0.357s",
+        "0.357s device recv MOVE_UP r-0001 k=0",
+    ]
+    assert not any("STATUS" in line for line in lines)
+    assert any(line.endswith("(cause reply, message r-0001)") for line in lines)
+    assert run_summary(r, LIFT, max_lines=5)[-1].startswith("... ")
+    assert LIFT.quiet_messages == {"STATUS", "STATUS_REPLY"}
+    assert LIFT.protocol_path.name == "protocol-lift.md"
+
+
+def test_summary_lines_for_faults():
+    from replayspect.runner import run_summary
+    from replayspect.sim.link import Disconnect, MessageFault, MsgKey
+
+    plan = FaultPlan(
+        faults=(MessageFault(MsgKey("c2s", "MOVE_UP", "r-0001", 0), drop=True),
+                MessageFault(MsgKey("s2c", "ACK", "r-0001", 0), dup_extra_us=250_000)),
+        disconnects=(Disconnect(20_000_000, 500_000),),
+        base="random",
+    )
+    lines = run_summary(run_once(LIFT, 0, [], plan, CS), LIFT)
+    assert "0.000s link drop c2s MOVE_UP r-0001 k=0 injected" in lines
+    assert any(" link duplicate s2c ACK r-0001 k=0 extra=0.250s" in line for line in lines)
+    assert "20.000s link disconnect for 0.500s" in lines
+    assert "20.500s link reconnect" in lines
