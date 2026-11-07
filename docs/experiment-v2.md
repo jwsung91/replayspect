@@ -78,6 +78,28 @@ PYCONFIG
   구독 OAuth 인증은 사용하지 않는다. 비밀 값은 전사나 결과표에 기록하지 않는다.
   인증 방식이 맞지 않으면 제한 옵션을 임의로 빼지 말고 별도 격리 절차를 검증한다.
 
+### 구독 인증 경로 (`--bare` 없이)
+
+구독(OAuth) 인증으로 시행하려면 `--bare`를 빼는 대신 비어 있는 전용 설정 디렉터리를 쓴다.
+사용자 스킬·플러그인·메모리·기록·설정·CLAUDE.md는 설정 디렉터리에서 읽히므로 처음부터 없다.
+토큰은 운영자가 `claude setup-token`으로 만들어 권한 600 파일에 두고, 전사·결과표에 남기지 않는다.
+
+```bash
+mkdir -p "$HOME/rs-control/claude-config" && chmod 700 "$HOME/rs-control/claude-config"
+env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+  CLAUDE_CONFIG_DIR="$HOME/rs-control/claude-config" \
+  CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$HOME/rs-control/oauth-token")" \
+  claude --restricted --setting-sources "" --tools "" ...   # 나머지 옵션은 아래 시행 명령과 같다
+```
+
+- `--max-budget-usd`로 세션당 상한을 둔다. 상한이나 구독 사용량 한도에 걸리면 중단된 시행이다.
+- 계정에 연결된 claude.ai 커넥터는 설정 디렉터리와 무관하게 계정 쪽에서 올 수 있다.
+  `--strict-mcp-config`가 이를 막는지는 점검 세션의 초기화 이벤트로 확인한다.
+- 이 경로는 `--bare`보다 보장이 약하므로 시행마다 전사의 초기화 이벤트(도구·MCP 서버·스킬·플러그인)와
+  숨긴 정보 단어를 감사하고, 하나라도 어긋나면 오염된 시행으로 분류한다.
+  클라이언트 내장 플러그인(`path: builtin`)과, 실행할 도구가 없는 내장 에이전트 정의는 허용하되 기록한다.
+- 토큰을 붙여넣을 때 줄바꿈이 섞이면 인증이 실패하므로 공백을 제거해 넘긴다.
+
 파일 읽기 요청 한 번이 거부됐다는 사실만으로 격리를 통과시켜서는 안 된다. 실제 시행 전 별도의
 중립 점검 ID와 별도 로그로 내장 도구 부재, 다른 MCP 부재, 자동 주입된 답 단서 부재를 확인한다.
 점검 세션과 실제 시행 세션·로그를 재사용하지 않는다. **WO-009에서는 이 모델 호출 점검도 하지 않는다.**
