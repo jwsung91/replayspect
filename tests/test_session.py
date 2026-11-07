@@ -156,6 +156,24 @@ def test_a_reasoned_plan_wins_where_random_search_rarely_does():
     assert not any(clean.run_plan(REASONED)["violations"] for _ in range(50))
 
 
+#: Another plan from the protocol description alone: the device never receives the
+#: first command, so the client gives up after its last resend (6 s); the link then
+#: drops and comes back while the client is idle and thinking.
+REASONED_RECONNECT = {
+    "base": "random",
+    "faults": [{"dir": "c2s", "msg": "MOVE_UP", "req_id": "r-0001", "k": k, "drop": True} for k in range(3)],
+    "disconnects": [{"t_us": 6_500_000, "duration_us": 500_000}],
+}
+
+
+def test_a_reasoned_reconnect_plan_wins_where_a_correct_client_passes():
+    s = session(mutants=("M8",), budget=50)
+    results = [s.run_plan(REASONED_RECONNECT) for _ in range(50)]
+    assert all(r["violations"] for r in results)  # 50 of 50 seeds; random search: about 14 in 100
+    clean = session(budget=50)
+    assert not any(clean.run_plan(REASONED_RECONNECT)["violations"] for _ in range(50))
+
+
 # -- command line ------------------------------------------------------------------------------
 
 
