@@ -38,6 +38,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Planning sessions, MCP server, run summaries and baseline comparison
 - [x] First v2 trials: LLM planner vs random search on one mutant (`docs/experiment-v2.md`)
 - [x] Second v2 trials on a mutant that random search finds quickly: roughly a tie
+- [x] v1 baseline: Hypothesis writes fault plans in the planner's plan space (`docs/design-v0.md`)
 - [x] Work-mode MCP tools: search, shrink and replay from an MCP client
 
 ## Usage
@@ -56,6 +57,23 @@ python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json
 ```
 
 `search` exits with 1 when any contract was violated, like a failing test.
+
+### Hypothesis baseline
+
+Hypothesis can write the fault plans instead, in the same plan space a planner
+uses and over the same seeds, once per Hypothesis seed:
+
+```bash
+pip install -e ".[hyp]"
+python3 -m replayspect baseline --mutant M4 --seed-base 1000 --budget 120 --strategy hypothesis --hyp-seeds 20
+# hypothesis plans 6.170.15, seeds 1000..1119, mutants ['M4'], hypothesis seeds 0..19
+#   hypothesis seed 0: first violation at run 13 (14 runs), violated C3; rejected 0, no-effect entries 15/29
+#   ...
+# detected 19/20; runs to first violation when detected: median 41, min 14, max 88
+```
+
+Generated plans depend on the Hypothesis version as well as its seed, so the
+version is printed with the results.
 
 ### Planning sessions over MCP
 

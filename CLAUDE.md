@@ -68,7 +68,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v2 1차 시행: M4, 완료 3회(사후 추가 1회 포함), 결과와 해석의 한계는 `docs/experiment-v2.md` "1차 시행 기록"
 - [x] 작업 모드 MCP 도구: 별도 서버(`mcp_work.py`)의 search·shrink·replay
 - [x] v2 2차 시행: M8, 완료 3회, 기준선과 거의 같음(20 대 21). `docs/experiment-v2.md` "2차 시행 기록"
-- [ ] 다음: 미정 (후보: v1 Hypothesis 기준선)
+- [x] v1 Hypothesis 기준선: 계획기와 같은 계획 공간의 생성 계획(`hyp.py`), 결과는 `docs/design-v0.md` "v1 기준선"
+- [ ] 다음: 미정
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
@@ -116,6 +117,14 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
   메시지당 추첨 순서(유실 여부 → 지연 → 중복 여부 → 중복일 때만 추가 지연)는 테스트로 고정돼 있다.
 - `FaultPlan.from_trace(trace)`로 만든 명시 계획은 같은 시드와 함께 쓰면 같은 다이제스트로 재생된다.
   이 성질은 축소기의 기반이므로 깨지면 안 된다 (`tests/test_link.py`).
+
+## Hypothesis 기준선 요약 (구현 완료)
+- `hyp.py`는 Hypothesis가 쓴 `base: random` 계획을 `Session`으로 돌린다. 시드·범위 검사·실행 수가 계획기 세션과 같다.
+- 메시지 키는 `System.vocabulary`(`PlanVocabulary`)에서만 뽑는다. 프로토콜 문서에서 읽을 수 있는 것만 넣고 뮤턴트 정보는 넣지 않는다.
+- Hypothesis에게 실패를 알리지 않는다(재실행이 다른 시드를 받아 flaky가 되고 예산을 쓴다). 첫 위반은 세션이 기록한다.
+- `hyp_search`는 Hypothesis의 로컬 소스 상수 추첨을 막는다(`no_local_constants`, 비공개 훅). Hypothesis를 올릴 때
+  `tests/test_hyp.py`의 표식 상수 테스트가 통과하는지 확인하고, 결과에는 Hypothesis 버전을 적는다.
+- `hypothesis`는 선택 의존성이다(`pip install -e ".[hyp]"`). 없으면 관련 테스트는 건너뛴다.
 
 ## 계획 세션과 MCP 요약 (구현 완료)
 - 계획기에게 보이는 문서는 `docs/protocol-lift.md`, `docs/plan-format.md`, 계약 YAML뿐이다.
