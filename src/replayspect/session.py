@@ -222,6 +222,38 @@ def summarize_log(path: Path) -> dict[str, Any]:
     }
 
 
+def _current_texts(system_name: str) -> dict[str, str]:
+    system = get_system(system_name)
+    paths = {"protocol": system.protocol_path, "contracts": system.contracts_path, "plan_format": PLAN_FORMAT_PATH}
+    return {k: v.read_text(encoding="utf-8") for k, v in paths.items() if v is not None}
+
+
+def environment_diff(path: Path) -> list[str]:
+    """How the current environment differs from the one a log recorded, one line per difference.
+
+    Separate from :func:`verify_log`: a replay can still match on a newer harness, and a
+    mismatching replay is easier to diagnose when the environment differences are known.
+    """
+    head = read_log(path)[0]
+    system = get_system(head["config"].get("system", "lift.v0"))
+    texts = _current_texts(system.name)
+    now: dict[str, tuple[Any, Any]] = {
+        "harness version": (head.get("harness", {}).get("version"), harness_version()["version"]),
+        "harness git": (head.get("harness", {}).get("git"), harness_version()["git"]),
+        "python": (head.get("python"), platform.python_version()),
+        "until_us": (head.get("until_us"), system.until_us),
+    }
+    for name, text in texts.items():
+        now[f"{name} sha256"] = (head.get("hashes", {}).get(name), _sha(text))
+
+    def show(v: Any) -> str:
+        if v is None:
+            return "not recorded"
+        return v[:12] if isinstance(v, str) and len(v) >= 40 else str(v)
+
+    return [f"{name}: log {show(was)}, now {show(cur)}" for name, (was, cur) in now.items() if was != cur]
+
+
 def verify_log(path: Path) -> list[int]:
     """Rerun every accepted plan of a log; return the run numbers that came out different."""
     records = read_log(path)

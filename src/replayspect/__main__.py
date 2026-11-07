@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from replayspect.runner import get_system, make_repro, read_repro, replay, run_once, search, write_repro
-from replayspect.session import summarize_log, verify_log
+from replayspect.session import environment_diff, summarize_log, verify_log
 from replayspect.shrink import best_repro
 
 
@@ -116,6 +116,9 @@ def _session(args: argparse.Namespace) -> int:
     if args.verify:
         bad = verify_log(Path(args.log))
         print("replay: ok" if not bad else f"replay: runs {bad} came out different")
+        diff = environment_diff(Path(args.log))
+        print("environment: same as the log" if not diff else
+              "environment differs from the log:\n" + "\n".join(f"  {line}" for line in diff))
         return 0 if not bad else 1
     return 0
 

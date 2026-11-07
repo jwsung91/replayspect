@@ -4,7 +4,7 @@ import re
 import pytest
 
 from replayspect.__main__ import main
-from replayspect.session import Session, SessionConfig, read_log, summarize_log, verify_log
+from replayspect.session import Session, SessionConfig, environment_diff, read_log, summarize_log, verify_log
 from replayspect.sut.lift import MUTANTS, SEARCH_PROFILE
 
 QUIET = {"base": "random"}
@@ -207,6 +207,59 @@ def test_existing_log_cannot_reset_budget_or_seeds(tmp_path):
     assert path.read_bytes() == before
     assert summarize_log(path)["runs"] == 1
     assert verify_log(path) == []
+
+
+def _rewrite_header(path, **changes):
+    recs = read_log(path)
+    for dotted, value in changes.items():
+        obj = recs[0]
+        *parents, last = dotted.split("__")
+        for k in parents:
+            obj = obj[k]
+        obj[last] = value
+    path.write_text("".join(json.dumps(r) + "\n" for r in recs))
+
+
+def test_environment_of_a_fresh_log_matches(tmp_path):
+    session(tmp_path).run_plan(QUIET)
+    assert environment_diff(tmp_path / "log.jsonl") == []
+
+
+def test_environment_differences_are_reported_one_per_line(tmp_path):
+    session(tmp_path).run_plan(QUIET)
+    path = tmp_path / "log.jsonl"
+    _rewrite_header(path, python="3.11.0", harness__git="0" * 40, hashes__contracts="f" * 64, until_us=1)
+    diff = environment_diff(path)
+    assert len(diff) == 4
+    assert any(line.startswith("python: log 3.11.0, now ") for line in diff)
+    assert any(line.startswith("harness git: log 000000000000, now ") for line in diff)
+    assert any(line.startswith("contracts sha256: log ffffffffffff, now ") for line in diff)
+    assert any(line.startswith("until_us: log 1, now 90000000") for line in diff)
+    # replay is judged separately: the runs themselves still replay
+    _rewrite_header(path, until_us=90_000_000)
+    assert verify_log(path) == []
+
+
+def test_environment_check_survives_a_log_without_the_newer_fields(tmp_path):
+    session(tmp_path).run_plan(QUIET)
+    path = tmp_path / "log.jsonl"
+    recs = read_log(path)
+    del recs[0]["python"], recs[0]["hashes"]["plan_format"]
+    path.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    diff = environment_diff(path)
+    assert "python: log not recorded, now " + __import__("platform").python_version() in diff
+    assert any(line.startswith("plan_format sha256: log not recorded, now ") for line in diff)
+
+
+def test_cli_session_verify_reports_environment_separately(tmp_path, capsys):
+    session(tmp_path, mutants=("M4",), budget=2).run_plan(QUIET)
+    path = tmp_path / "log.jsonl"
+    assert main(["session", str(path), "--verify"]) == 0
+    assert "environment: same as the log" in capsys.readouterr().out
+    _rewrite_header(path, python="3.11.0")
+    assert main(["session", str(path), "--verify"]) == 0  # exit code follows the replay only
+    out = capsys.readouterr().out
+    assert "replay: ok" in out and "environment differs from the log:\n  python: log 3.11.0, now " in out
 
 
 def test_even_empty_log_paths_are_reserved(tmp_path):
