@@ -67,7 +67,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v2 실험 장치: 계획 세션(`session.py`), MCP 서버(`mcp_server.py`), 기준선·세션 명령행
 - [x] v2 1차 시행: M4, 완료 3회(사후 추가 1회 포함), 결과와 해석의 한계는 `docs/experiment-v2.md` "1차 시행 기록"
 - [x] 작업 모드 MCP 도구: 별도 서버(`mcp_work.py`)의 search·shrink·replay
-- [ ] 다음: 미정 (후보: v2 M8 시행, v1 Hypothesis 기준선)
+- [x] v2 2차 시행: M8, 완료 3회, 기준선과 거의 같음(20 대 21). `docs/experiment-v2.md` "2차 시행 기록"
+- [ ] 다음: 미정 (후보: v1 Hypothesis 기준선)
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해

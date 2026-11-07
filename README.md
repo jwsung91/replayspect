@@ -37,6 +37,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Scenario runner, repro files, shrinking
 - [x] Planning sessions, MCP server, run summaries and baseline comparison
 - [x] First v2 trials: LLM planner vs random search on one mutant (`docs/experiment-v2.md`)
+- [x] Second v2 trials on a mutant that random search finds quickly: roughly a tie
 - [x] Work-mode MCP tools: search, shrink and replay from an MCP client
 
 ## Usage
