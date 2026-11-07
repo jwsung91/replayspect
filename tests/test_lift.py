@@ -9,10 +9,12 @@ QUIET = ChannelProfile()  # 1 ms links, no faults
 
 #: What each mutant is designed to break. M6 and M8 may also break a second
 #: contract as a direct consequence (see docs/design-v0.md).
-INTENDED = {"M1": "C8", "M2": "C8", "M3": "C7", "M4": "C3", "M5": "C5", "M6": "C6", "M7": "C4", "M8": "C2"}
+INTENDED = {"M1": "C8", "M2": "C8", "M3": "C7", "M4": "C3", "M5": "C5", "M6": "C6", "M7": "C4", "M8": "C2",
+            "M9": "C8", "M10": "C8", "M11": "C8"}
 ALSO_ALLOWED = {"M6": {"C2"}, "M8": {"C6"}}
 #: First seed (with SEARCH_PROFILE) at which the intended contract is violated.
-FIRST_DETECTION = {"M1": 0, "M2": 0, "M3": 0, "M4": 58, "M5": 0, "M6": 0, "M7": 1, "M8": 5}
+FIRST_DETECTION = {"M1": 0, "M2": 0, "M3": 0, "M4": 58, "M5": 0, "M6": 0, "M7": 1, "M8": 5,
+                   "M9": 113, "M10": 36, "M11": 65}
 
 
 def events(trace, actor=None, kind=None, name=None):
@@ -128,7 +130,7 @@ def test_mutant_only_breaks_its_own_contracts(mutant, n):
 
 def test_unknown_mutant_is_rejected():
     with pytest.raises(ValueError):
-        run_lift(0, mutants=["M9"])
+        run_lift(0, mutants=["M99"])
 
 
 def test_lift_digest_is_stable_across_processes():

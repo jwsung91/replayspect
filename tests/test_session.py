@@ -43,7 +43,7 @@ def test_describe_has_everything_and_no_hidden_configuration():
     d = session(mutants=("M4",)).describe()
     assert set(d) == {"system", "task", "protocol", "contracts", "plan_format", "limits", "budget"}
     text = all_text(d)
-    assert not re.search(r"\bM[1-8]\b", text)
+    assert not re.search(r"\bM\d+\b", text)
     for word in ("mutant", "Mutant", "뮤턴트", "seeded bug"):
         assert word not in text
     for description in MUTANTS.values():
@@ -66,7 +66,7 @@ def test_run_result_shape_and_no_mutant_names():
     assert set(r) == {"status", "run", "violations", "no_effect", "timeline", "budget"}
     assert r["status"] == "ok" and r["run"] == 0
     assert r["violations"][0]["contract"] == "C5" and r["violations"][0]["at_s"] > 0
-    assert not re.search(r"\bM[1-8]\b", all_text(r))
+    assert not re.search(r"\bM\d+\b", all_text(r))
     assert not any("STATUS" in line for line in r["timeline"])
     assert r["timeline"][0] == "0.000s device state DOWN - (from None on init)"
 
@@ -172,6 +172,38 @@ def test_a_reasoned_reconnect_plan_wins_where_a_correct_client_passes():
     assert all(r["violations"] for r in results)  # 50 of 50 seeds; random search: about 14 in 100
     clean = session(budget=50)
     assert not any(clean.run_plan(REASONED_RECONNECT)["violations"] for _ in range(50))
+
+
+def _key(d, m, r, k, **x):
+    return {"dir": d, "msg": m, "req_id": r, "k": k, **x}
+
+
+#: More plans written from the protocol alone, one per device mutant that random search
+#: finds in about 2 of 100 seeds (M9, M10, M11).
+REASONED_MORE = {
+    # a copy of the first command arrives within the 50 ms before it executes
+    "M9": {"base": "random", "faults": [_key("c2s", "MOVE_UP", "r-0001", 0, dup_extra_us=10_000)]},
+    # the first command never arrives, so the second is refused; then the second arrives again
+    "M10": {"base": "random", "faults": [_key("c2s", "MOVE_UP", "r-0001", k, drop=True) for k in range(3)]
+            + [_key("c2s", "MOVE_DOWN", "r-0002", 0, dup_extra_us=500_000)]},
+    # a late copy of the first command's resend arrives after the second command was accepted
+    "M11": {"base": "random",
+            "delays": [_key("c2s", "MOVE_UP", "r-0001", 1, delay_us=1_500_000),
+                       _key("c2s", "MOVE_DOWN", "r-0002", 0, delay_us=10_000)],
+            "faults": [_key("s2c", "ACK", "r-0001", 0, drop=True),
+                       _key("c2s", "MOVE_UP", "r-0001", 1, dup_extra_us=4_000_000)]},
+}
+
+
+@pytest.mark.parametrize("mutant,least", [("M9", 50), ("M10", 50), ("M11", 40)])  # of 50; seen: 50, 50, 44
+def test_reasoned_plans_win_on_the_rarely_found_device_mutants(mutant, least):
+    plan = REASONED_MORE[mutant]
+    s = session(mutants=(mutant,), budget=50)
+    results = [s.run_plan(plan) for _ in range(50)]
+    assert sum(bool(r["violations"]) for r in results) >= least
+    assert {v["contract"] for r in results for v in r["violations"]} == {"C8"}
+    clean = session(budget=50)
+    assert not any(clean.run_plan(plan)["violations"] for _ in range(50))
 
 
 # -- command line ------------------------------------------------------------------------------

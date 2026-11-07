@@ -77,6 +77,9 @@ MUTANTS = {
     "M6": "client: a retry gets a new req_id instead of reusing the original",
     "M7": "client: any DONE completes the open command, whatever its req_id",
     "M8": "client: after an ack timeout, keeps the command open until the next one starts",
+    "M9": "device: records a new request id when it starts executing, not when it accepts it",
+    "M10": "device: answers a repeat of a refused request with DONE instead of the stored ERROR",
+    "M11": "device: remembers only the most recent request id",
 }
 
 #: Random faults used for mutant search. Delays and duplicate offsets reach
@@ -121,14 +124,20 @@ class LiftDevice:
         r = msg.req_id
         if "M1" not in self.m and r in self.results:
             result = self.results[r]
+            if "M10" in self.m and result == "ERROR":
+                result = "DONE"
             self.send(result, r, {"reason": "illegal"} if result == "ERROR" else None)
             return
-        if "M2" not in self.m:
+        if "M11" in self.m:
+            self.results.clear()
+        if "M2" not in self.m and "M9" not in self.m:
             self.results[r] = "ACK"
         self.send("ACK", r)
         self.sched.after_us(PROC_US, lambda: self.execute(msg.name, r), f"device:execute:{r}")
 
     def execute(self, cmd: str, r: str) -> None:
+        if "M9" in self.m:
+            self.results[r] = "ACK"
         need, moving, _, direction = MOVES[cmd]
         legal = self.state == need
         if "M4" in self.m and self.state == OPPOSITE_WHILE_MOVING[cmd]:

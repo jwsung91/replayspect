@@ -60,7 +60,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 가상 시간 스케줄러 (`src/replayspect/sim/scheduler.py`), 이름 붙은 RNG 스트림 `fork_rng`
 - [x] 트레이스 이벤트 모델과 다이제스트 (`src/replayspect/trace.py`)
 - [x] 링크 모델 (`src/replayspect/sim/link.py`)
-- [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M8 (`src/replayspect/sut/lift.py`)
+- [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M11 (`src/replayspect/sut/lift.py`, M9~M11은 v2 3차용, 시행 전 push 금지)
 - [x] 계약 YAML과 판정기 (`contracts/lift.v0.yaml`, `src/replayspect/contract/`)
 - [x] 실행기, 재현 파일, 축소기, 명령행 (`runner.py`, `shrink.py`, `__main__.py`). v0 완료 기준 4개 충족
 - [x] v2 실험 준비: 계획 검사·`base: random`·계획 적용 보고·위반 설명·실행 수 집계

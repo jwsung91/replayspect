@@ -49,7 +49,7 @@ def test_search_target_not_violated(tmp_path):
 
 
 @pytest.mark.parametrize("kw, match", [
-    ({"mutants": ["M9"]}, "unknown mutants"),
+    ({"mutants": ["M99"]}, "unknown mutants"),
     ({"target": "C99"}, "unknown contract"),
     ({"seeds": 0}, "seeds"),
     ({"seeds": 10_001}, "seeds"),
@@ -94,7 +94,7 @@ def test_shrink_a_random_run_when_no_plan_is_given(tmp_path):
       "plan": {"base": "random", "disconnects": [{"t_us": 1_000_000, "duration_us": 60_000_000}]}},
      "outside the allowed range"),
     ({"seed": 0, "target": "C99"}, "unknown contract"),
-    ({"seed": 0, "target": "C8", "mutants": ["M9"]}, "unknown mutants"),
+    ({"seed": 0, "target": "C8", "mutants": ["M99"]}, "unknown mutants"),
 ])
 def test_shrink_rejects_bad_input(tmp_path, kw, match):
     r = ws(tmp_path).shrink(**kw)
