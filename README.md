@@ -39,6 +39,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] First v2 trials: LLM planner vs random search on one mutant (`docs/experiment-v2.md`)
 - [x] Second v2 trials on a mutant that random search finds quickly: roughly a tie
 - [x] v1 baseline: Hypothesis writes fault plans in the planner's plan space (`docs/design-v0.md`)
+- [x] Third v2 trials on three new mutants that random search rarely finds (`docs/experiment-v2.md`)
 - [x] Work-mode MCP tools: search, shrink and replay from an MCP client
 
 ## Usage

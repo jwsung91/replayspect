@@ -60,7 +60,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 가상 시간 스케줄러 (`src/replayspect/sim/scheduler.py`), 이름 붙은 RNG 스트림 `fork_rng`
 - [x] 트레이스 이벤트 모델과 다이제스트 (`src/replayspect/trace.py`)
 - [x] 링크 모델 (`src/replayspect/sim/link.py`)
-- [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M11 (`src/replayspect/sut/lift.py`, M9~M11은 v2 3차용, 시행 전 push 금지)
+- [x] 가상 리프트 장치·클라이언트와 뮤턴트 M1~M11 (`src/replayspect/sut/lift.py`, M9~M11은 v2 3차용)
 - [x] 계약 YAML과 판정기 (`contracts/lift.v0.yaml`, `src/replayspect/contract/`)
 - [x] 실행기, 재현 파일, 축소기, 명령행 (`runner.py`, `shrink.py`, `__main__.py`). v0 완료 기준 4개 충족
 - [x] v2 실험 준비: 계획 검사·`base: random`·계획 적용 보고·위반 설명·실행 수 집계
@@ -69,6 +69,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 작업 모드 MCP 도구: 별도 서버(`mcp_work.py`)의 search·shrink·replay
 - [x] v2 2차 시행: M8, 완료 3회, 기준선과 거의 같음(20 대 21). `docs/experiment-v2.md` "2차 시행 기록"
 - [x] v1 Hypothesis 기준선: 계획기와 같은 계획 공간의 생성 계획(`hyp.py`), 결과는 `docs/design-v0.md` "v1 기준선"
+- [x] v2 3차 시행: M9·M10·M11, 27회 중 26회 검출, 검출 시 모두 무작위보다 빠름. `docs/experiment-v2.md` "3차 시행 기록"
 - [ ] 다음: 미정
 
 ## 실행기와 축소 요약 (구현 완료)
