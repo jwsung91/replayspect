@@ -36,6 +36,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Contract YAML and checkers
 - [x] Scenario runner, repro files, shrinking
 - [x] Planning sessions, MCP server, run summaries and baseline comparison
+- [x] First v2 trials: LLM planner vs random search on one mutant (`docs/experiment-v2.md`)
 
 ## Usage
 

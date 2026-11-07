@@ -56,7 +56,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 실행기, 재현 파일, 축소기, 명령행 (`runner.py`, `shrink.py`, `__main__.py`). v0 완료 기준 4개 충족
 - [x] v2 실험 준비: 계획 검사·`base: random`·계획 적용 보고·위반 설명·실행 수 집계
 - [x] v2 실험 장치: 계획 세션(`session.py`), MCP 서버(`mcp_server.py`), 기준선·세션 명령행
-- [ ] 다음: v2 시행과 결과 정리 (`docs/experiment-v2.md`), 이어서 작업 모드 MCP 도구(탐색·축소·재생)
+- [x] v2 1차 시행: M4, 완료 3회(사후 추가 1회 포함), 결과와 해석의 한계는 `docs/experiment-v2.md` "1차 시행 기록"
+- [ ] 다음: 작업 모드 MCP 도구(탐색·축소·재생)
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
