@@ -48,6 +48,8 @@ def test_describe_has_everything_and_no_hidden_configuration():
         assert word not in text
     for description in MUTANTS.values():
         assert description not in text
+    # no pointers to operator-side sources (implementation, design notes, reference oracle)
+    assert not re.search(r"src/|tests/|docs/|\.py\b|oracle|design-v0", text)
     assert d["budget"] == {"total": 20, "used": 0, "left": 20}
 
 

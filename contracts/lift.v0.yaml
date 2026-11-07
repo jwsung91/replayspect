@@ -1,6 +1,4 @@
-# Behavioural contracts for the virtual lift (src/replayspect/sut/lift.py).
-# Semantics of each kind: docs/design-v0.md, "계약 DSL" section.
-# Reference meaning of each contract: tests/lift_oracle.py.
+# Behavioural contracts for the lift protocol.
 
 protocol: lift.v0
 
