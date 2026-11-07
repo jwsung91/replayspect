@@ -4,8 +4,8 @@
 source=https://github.com/jwsung91/agent-rules
 profile=codex
 source_ref=main
-source_commit=172c789ae3202badd6ede69aaeca59d1b2003c9d
-generated_at=2026-11-07T03:44:20+00:00
+source_commit=c9acb2598f00941fc4f1c5d03e0eb2083fb051a2
+generated_at=2026-11-07T17:32:59+09:00
 managed_block=true
 -->
 
