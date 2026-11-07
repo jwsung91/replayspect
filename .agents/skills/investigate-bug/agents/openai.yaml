@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investigate Bug"
+  short_description: "Find root causes before making focused fixes"
+  default_prompt: "Use $investigate-bug to investigate this bug, identify its root cause, and validate the smallest appropriate fix."

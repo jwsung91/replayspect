@@ -1,0 +1,4 @@
+interface:
+  display_name: "Validate Change"
+  short_description: "Run focused checks and report validation evidence"
+  default_prompt: "Use $validate-change to select and run focused checks for the current change."

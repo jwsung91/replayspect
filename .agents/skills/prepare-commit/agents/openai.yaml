@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Commit"
+  short_description: "Stage and write a conventional commit for changes"
+  default_prompt: "Use $prepare-commit to prepare a conventional commit for the current changes."

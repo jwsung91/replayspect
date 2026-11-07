@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Change"
+  short_description: "Review changes for defects, risks, and validation gaps"
+  default_prompt: "Use $review-change to review this change for defects, regressions, risks, and validation gaps without modifying files."

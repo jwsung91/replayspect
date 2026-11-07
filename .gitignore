@@ -6,3 +6,6 @@ dist/
 build/
 .pytest_cache/
 repros/*.local.*
+
+# agent-rules tool state (the generated rules and skills are committed)
+/.agent-rules/bases/
