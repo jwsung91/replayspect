@@ -100,7 +100,7 @@ def test_mutants_and_a_variant_cannot_be_combined():
 
 
 def _variant_repro(tmp_path, variant_file: Path) -> Path:
-    var = get_system("lift.v0", spec("LIFT_PUBLIC_M5", variant_file))
+    var = get_system("lift.v0", spec("LIFT_PUBLIC_FAILING", variant_file))
     rnd = run_once(var, 0)
     run = run_once(var, 0, (), FaultPlan.from_trace(rnd.trace), None, rnd.until_us)
     doc = make_repro(run, "C5")
@@ -123,7 +123,7 @@ def test_replay_notes_a_changed_variant_file_first(tmp_path, capsys):
     path = _variant_repro(tmp_path, copy)
     copy.write_text(FILE.read_text() + "\n# edited\n")
     r = replay(read_repro(path))
-    assert r.ok and r.variant_note == f"variant file changed since the repro was written: {copy}:LIFT_PUBLIC_M5"
+    assert r.ok and r.variant_note == f"variant file changed since the repro was written: {copy}:LIFT_PUBLIC_FAILING"
     assert main(["replay", str(path)]) == 0
     first = capsys.readouterr().out.splitlines()[0]
     assert first.startswith("note: variant file changed") and "the digest decides" in first
