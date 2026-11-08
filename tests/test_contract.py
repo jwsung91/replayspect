@@ -212,6 +212,10 @@ def test_forbid():
         (2, "client", "handle", "ERROR", "r-3", {"msg_req_id": None}),
     )
     assert found(tr, cs) == [("K", "r-2", 1)]
+    # The detail quotes the condition as written (whitespace collapsed), not its Python repr.
+    assert [v.detail for v in judge(tr, cs, END)] == ["DONE where data.msg_req_id != req_id"]
+    spaced = Condition.parse("data.msg_req_id   !=  req_id")
+    assert str(spaced) == "data.msg_req_id != req_id" and spaced == Condition.parse("data.msg_req_id != req_id")
 
 
 def test_consistent_with_last():

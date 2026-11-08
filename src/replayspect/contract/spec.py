@@ -33,7 +33,7 @@ recent earlier event matching the pattern (``null`` if there is none).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -190,6 +190,11 @@ class Condition:
     left: Operand
     op: str
     right: Operand
+    #: The condition as written in the contract file; violation details quote it.
+    text: str = field(default="", compare=False, repr=False)
+
+    def __str__(self) -> str:
+        return self.text or f"{self.left} {self.op} {self.right}"
 
     @classmethod
     def parse(cls, text: str) -> "Condition":
@@ -199,7 +204,7 @@ class Condition:
         if len(found) != 1:
             raise ContractError(f"bad condition {text!r}; expected '<operand> == <operand>' or '!='")
         i, op = found[0]
-        return cls(Operand.parse(text[:i]), op, Operand.parse(text[i + 2:]))
+        return cls(Operand.parse(text[:i]), op, Operand.parse(text[i + 2:]), " ".join(text.split()))
 
     def holds(self, ev: Event, last: Mapping[EventPattern, Event]) -> bool:
         a, b = self.left.evaluate(ev, last), self.right.evaluate(ev, last)
