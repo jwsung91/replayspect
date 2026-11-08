@@ -46,7 +46,7 @@ Tried with `load_contracts` and `judge` on hand-made events:
   - **One transition table per file.** `transitions` is shared by every `state_machine` contract, so a system file with several state machines mixes their tables.
   - **No way to reuse contracts.** Nothing loads several contract files or puts a prefix on the actor names in `contracts/lift.v0.yaml` (`device.*`) when it is used inside a composed system.
   - **Shared request ids.** `req_id` values (`r-0001`) are not unique across subsystems. Per-`req_id` contracts are filtered by actor today, so they do not collide; a cross-module contract keyed by `req_id` would.
-- Side finding: a `forbid` violation's detail prints the parsed condition's Python repr, not the YAML text (this also affects C4 in both example contract files).
+- Side finding: a `forbid` violation's detail prints the parsed condition's Python repr, not the YAML text (this also affects C4 in both example contract files). Since fixed: the detail now quotes the condition text.
 
 ## 3. Why not now, and when to look again
 
