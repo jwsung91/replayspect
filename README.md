@@ -42,6 +42,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Third v2 trials on three new mutants that random search rarely finds (`docs/experiment-v2.md`)
 - [x] Work-mode MCP tools: search, shrink and replay from an MCP client
 - [x] Second system: virtual turntable (`turntable.v0`), no mutants yet (`docs/protocol-turntable.md`)
+- [x] v3 WP1: `rewind` viewer for trace files, `replay --trace-out` (`docs/work-order-v3.md`)
 
 ## Usage
 
@@ -59,6 +60,43 @@ python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json
 ```
 
 `search` exits with 1 when any contract was violated, like a failing test.
+
+### Rewind a trace
+
+`replay --trace-out` writes the reproduced run as a trace file (JSON Lines).
+`rewind` reads trace files only, so it does not need the system that made
+them. It prints a short summary; add `--at` to see the state at a virtual
+time, `--step N` for the next N events (negative: the previous ones),
+`--window T0 T1` and `--actor` to select events, `--ref` for the first
+divergence from another trace and `--contracts` to judge it. Times are
+microseconds or have a unit (`15.6s`, `500ms`). Listings stop at `--limit`
+(default 50); `--full PATH` writes every selected event to a new file.
+
+```bash
+python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json --trace-out traces/m4.jsonl
+# digest ok, first violations ok, target C3 violated
+# trace: 431 events -> traces/m4.jsonl
+
+python3 -m replayspect rewind traces/m4.jsonl --contracts contracts/lift.v0.yaml --at 15.6s --step 4 --actor device
+# judged until t=90.000000s (last event; pass --end to change)
+#   C3 violated at #88 15.677267s r-0003: MOVING_DOWN --MOVE_UP--> MOVING_UP is not declared
+# contracts (lift.v0): 1 violated, 7 ok (C1, C2, C4, C5, C6, C7, C8)
+# trace: 431 events, 0.000000s..90.000000s; actors: client 206, device 222, link 3
+# selection (actor device): 222 events; kinds: effect 11, recv 97, send 102, state 12
+# at t=15.600000s: 85 of 431 events have happened; next #85 at 15.627267s
+#   device: state MOVING_DOWN (since 13.103042s); last event #81 14.497674s device send STATUS_REPLY s-0013 k=0 {"state":"MOVING_DOWN"}
+#   judged until t=15.600000s (the rewind time)
+#   contracts so far: 0 violated, 8 ok (C1, C2, C3, C4, C5, C6, C7, C8)
+# step 4: selected events after t=15.600000s (4):
+#   #85 15.627267s device recv MOVE_UP r-0003 k=0
+#   #86 15.627267s device send ACK r-0003 k=0
+#   #87 15.677267s device effect motor_start r-0003 {"dir":"up"}
+#   #88 15.677267s device state MOVING_UP r-0003 {"from":"MOVING_DOWN","on":"MOVE_UP"}
+```
+
+Deadline contracts (C2: closed within 15 s) depend on the end time, so the
+first line always says where judging stopped. A contract none of whose
+trigger events occurred is reported as *not exercised*, not as ok.
 
 ### Hypothesis baseline
 

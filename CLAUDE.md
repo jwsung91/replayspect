@@ -71,7 +71,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v1 Hypothesis 기준선: 계획기와 같은 계획 공간의 생성 계획(`hyp.py`), 결과는 `docs/design-v0.md` "v1 기준선"
 - [x] v2 3차 시행: M9·M10·M11, 27회 중 26회 검출, 검출 시 모두 무작위보다 빠름. `docs/experiment-v2.md` "3차 시행 기록"
 - [x] 두 번째 시스템: 가상 턴테이블(`turntable.v0`, `src/replayspect/sut/turntable.py`), 뮤턴트 없음. `docs/design-v0.md` "가상 턴테이블"
-- [ ] 다음: 턴테이블 결함(사용자 설계) 구현과 선별
+- [x] v3 WP1 되감기 뷰어: `rewind` 명령(`src/replayspect/rewind.py`), `replay --trace-out`. 트레이스 파일만 읽는다
+- [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
