@@ -44,6 +44,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Second system: virtual turntable (`turntable.v0`), no mutants yet (`docs/protocol-turntable.md`)
 - [x] v3 WP1: `rewind` viewer for trace files, `replay --trace-out` (`docs/work-order-v3.md`)
 - [x] v3 WP2: trace schema with header, fidelity and source (`docs/trace-schema.md`, `schemas/trace-1.schema.json`)
+- [x] v3 WP3: run an implementation variant loaded from outside the package (`--variant`)
 
 ## Usage
 
@@ -125,6 +126,19 @@ python3 -m replayspect baseline --mutant M4 --seed-base 1000 --budget 120 --stra
 
 Generated plans depend on the Hypothesis version as well as its seed, so the
 version is printed with the results.
+
+### Implementation variants
+
+`search` and `baseline` take `--variant path/to/file.py:NAME` (or
+`package.module:NAME`): the system runs that implementation instead of the
+registered one, with the same contracts, link profile and run length. A
+variant builds its run from the package's scheduler, channel and trace and
+uses the link profile it is given (`src/replayspect/variant.py`), so its
+digests compare with the system's. A repro made with a variant records the
+spec and the file's digest, and `replay` loads it again; if the file has
+changed since, the first line of the output says so and the digest decides.
+Variants never appear in trace headers or in anything a planner sees.
+Loading a variant runs its code, so load only files you trust.
 
 ### Planning sessions over MCP
 

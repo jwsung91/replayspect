@@ -5,8 +5,9 @@ system by submitting fault plans. Within one session, this API enforces
 the seed schedule, budget and bounds. Operators must separately isolate
 the planner from hidden configuration and register all trials:
 
-* **Hidden configuration.** Mutants are fixed by whoever starts the session
-  and never appear in anything returned to the planner.
+* **Hidden configuration.** Mutants or an implementation variant are fixed
+  by whoever starts the session and never appear in anything returned to the
+  planner.
 * **Seed schedule.** The n-th run (counting from 0) uses environment seed
   ``seed_base + n``, the same seeds random search uses for its n-th run. The
   planner never chooses or sees seeds.
@@ -17,7 +18,7 @@ the planner from hidden configuration and register all trials:
   link profile and contain at most ``max_faults`` faults and disconnects.
 * **Log.** Every call is appended to a JSON Lines log, which is enough to
   rerun the session exactly (:func:`verify_log`). Keep the log outside any
-  directory the planner can read: it names the mutants. A log path is
+  directory the planner can read: it names the mutants or variant. A log path is
   reserved by exclusive creation; restarting with that path is refused.
   Interrupted trials must be reported as interrupted, not restarted.
 """
@@ -50,6 +51,8 @@ class SessionConfig:
     seed_base: int = 0
     budget: int = 100
     max_faults: int = 20
+    #: Variant spec (see :mod:`replayspect.variant`); cannot be combined with ``mutants``.
+    variant: str | None = None
 
 
 def _sha(text: str) -> str:
@@ -66,7 +69,9 @@ class Session:
     _texts: dict[str, str] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
-        self.system = get_system(self.config.system)
+        if self.config.variant is not None and self.config.mutants:
+            raise ValueError("mutants and a variant cannot be combined")
+        self.system = get_system(self.config.system, self.config.variant)
         self.contracts = self.system.contracts()
         if self.system.protocol_path is None:
             raise ValueError(f"system {self.system.name} has no protocol description for planners")
@@ -75,15 +80,21 @@ class Session:
             "contracts": self.system.contracts_path.read_text(encoding="utf-8"),
             "plan_format": PLAN_FORMAT_PATH.read_text(encoding="utf-8"),
         }
-        self._log({
+        config = {**asdict(self.config), "mutants": list(self.config.mutants)}
+        head: dict[str, Any] = {
             "type": "session",
             "format": LOG_FORMAT,
-            "config": {**asdict(self.config), "mutants": list(self.config.mutants)},
+            "config": config,
             "until_us": self.system.until_us,
             "hashes": {k: _sha(v) for k, v in self._texts.items()},
             "harness": harness_version(),
             "python": platform.python_version(),
-        })
+        }
+        if self.system.variant is None:
+            del config["variant"]  # logs without a variant stay as they were
+        else:
+            head["variant"] = self.system.variant.to_dict()
+        self._log(head)
 
     # -- what the planner sees ---------------------------------------------------------
 
@@ -235,7 +246,7 @@ def environment_diff(path: Path) -> list[str]:
     mismatching replay is easier to diagnose when the environment differences are known.
     """
     head = read_log(path)[0]
-    system = get_system(head["config"].get("system", "lift.v0"))
+    system = get_system(head["config"].get("system", "lift.v0"), head["config"].get("variant"))
     texts = _current_texts(system.name)
     now: dict[str, tuple[Any, Any]] = {
         "harness version": (head.get("harness", {}).get("version"), harness_version()["version"]),
@@ -245,6 +256,8 @@ def environment_diff(path: Path) -> list[str]:
     }
     for name, text in texts.items():
         now[f"{name} sha256"] = (head.get("hashes", {}).get(name), _sha(text))
+    if system.variant is not None:
+        now["variant file sha256"] = ((head.get("variant") or {}).get("sha256"), system.variant.sha256)
 
     def show(v: Any) -> str:
         if v is None:

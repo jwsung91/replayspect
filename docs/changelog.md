@@ -37,3 +37,7 @@ before. The new `tracefile` module holds the reader and writer, and
 it). The rule for trace files shown to planners is written down: `seed`,
 `plan`, `contracts` and `slice.of` set to null, and no mutant in the file
 name. WP4 will enforce it with tests.
+
+## WP3: implementation variants
+
+A system can run an implementation variant loaded from outside the package (`--variant`).

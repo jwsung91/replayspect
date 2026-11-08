@@ -18,6 +18,11 @@ baseline  Random search over the same seeds a planning session uses
           With --strategy hypothesis, Hypothesis writes the fault plans
           instead (needs the hyp extra), once per Hypothesis seed.
 session   Summarize a planning-session log and rerun it to check it replays.
+
+search and baseline take --variant SPEC: run an implementation of the system
+loaded from outside the package (path/to/file.py:NAME or package.module:NAME;
+see replayspect.variant) instead of the registered one. A repro made with a
+variant records it, and replay loads it again.
 """
 
 from __future__ import annotations
@@ -28,18 +33,36 @@ from pathlib import Path
 
 from replayspect.contract import ContractError
 from replayspect.rewind import Selection, judge_setup, parse_time_us, read_trace, view, write_full
-from replayspect.runner import get_system, make_repro, read_repro, replay, run_once, search, write_repro
+from replayspect.runner import System, get_system, make_repro, read_repro, replay, run_once, search, write_repro
 from replayspect.session import environment_diff, summarize_log, verify_log
 from replayspect.shrink import best_repro
 from replayspect.tracefile import Header, TraceFileError, contracts_ref, plan_ref, read_trace_file, write_trace_file
 
 
+def _system(args: argparse.Namespace) -> System | None:
+    """The system to run, with ``--variant`` if given; None (after a message) when it cannot be set up."""
+    if args.variant and args.mutant:
+        print("--mutant and --variant cannot be combined", file=sys.stderr)
+        return None
+    try:
+        return get_system(args.system, args.variant)
+    except ValueError as exc:
+        print(f"{args.cmd}: {exc}", file=sys.stderr)
+        return None
+
+
+def _runs_what(args: argparse.Namespace) -> str:
+    return f"variant {args.variant}" if args.variant else f"mutants {args.mutant or 'none'}"
+
+
 def _search(args: argparse.Namespace) -> int:
-    system = get_system(args.system)
+    system = _system(args)
+    if system is None:
+        return 2
     cs = system.contracts()
     seeds = range(args.seed_start, args.seed_start + args.seeds)
     res = search(system, seeds, args.mutant, cs, keep_for=args.target, keep=args.candidates)
-    print(f"{res.runs} runs, system {system.name}, mutants {args.mutant or 'none'}")
+    print(f"{res.runs} runs, system {system.name}, {_runs_what(args)}")
     for c in cs.ids():
         if c in res.hits:
             print(f"  {c}: violated in {res.hits[c]} runs, first at seed {res.first_seed[c]}")
@@ -55,7 +78,9 @@ def _search(args: argparse.Namespace) -> int:
     best = best_repro(system, res.kept, args.target, cs)
     assert best is not None
     doc = make_repro(best.run, args.target, best.summary())
-    name = f"{system.name}-{'-'.join(best.run.mutants) or 'none'}-{args.target}-seed{best.run.seed}.json"
+    # The variant spec stays out of the file name, like the plan details.
+    what = "variant" if system.variant else "-".join(best.run.mutants) or "none"
+    name = f"{system.name}-{what}-{args.target}-seed{best.run.seed}.json"
     path = write_repro(doc, Path(args.out) / name)
     print(f"shrunk {args.target}: {best.faults_before} -> {best.faults_after} faults "
           f"(seed {best.run.seed}, {best.runs} runs) -> {path}")
@@ -66,7 +91,13 @@ def _search(args: argparse.Namespace) -> int:
 
 def _replay(args: argparse.Namespace) -> int:
     doc = read_repro(Path(args.repro))
-    r = replay(doc)
+    try:
+        r = replay(doc)
+    except ValueError as exc:  # unknown system, or a variant that cannot be loaded
+        print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    if r.variant_note:
+        print(f"note: {r.variant_note} (the digest decides whether the run is the same)")
     print(f"digest {'ok' if r.digest_ok else 'DIFFERENT'}, first violations "
           f"{'ok' if r.violations_ok else 'DIFFERENT'}, target {doc['target']} "
           f"{'violated' if r.target_ok else 'NOT violated'}")
@@ -117,7 +148,9 @@ def _rewind(args: argparse.Namespace) -> int:
 def _baseline(args: argparse.Namespace) -> int:
     if args.strategy == "hypothesis":
         return _baseline_hypothesis(args)
-    system = get_system(args.system)
+    system = _system(args)
+    if system is None:
+        return 2
     cs = system.contracts()
     first = None
     for i in range(args.budget):
@@ -126,7 +159,7 @@ def _baseline(args: argparse.Namespace) -> int:
             break
     where = f"first violation at run {first} ({first + 1} runs)" if first is not None else "no violation"
     print(f"random search, seeds {args.seed_base}..{args.seed_base + args.budget - 1}, "
-          f"mutants {args.mutant or 'none'}: {where}")
+          f"{_runs_what(args)}: {where}")
     return 0
 
 
@@ -136,12 +169,14 @@ def _baseline_hypothesis(args: argparse.Namespace) -> int:
     except ImportError:
         print('--strategy hypothesis needs the hypothesis package: pip install -e ".[hyp]"', file=sys.stderr)
         return 2
+    if _system(args) is None:
+        return 2
     seeds = range(args.hyp_seed_start, args.hyp_seed_start + args.hyp_seeds)
     print(f"hypothesis plans {HYPOTHESIS_VERSION}, seeds {args.seed_base}..{args.seed_base + args.budget - 1}, "
-          f"mutants {args.mutant or 'none'}, hypothesis seeds {seeds.start}..{seeds.stop - 1}")
+          f"{_runs_what(args)}, hypothesis seeds {seeds.start}..{seeds.stop - 1}")
     found = []
     for h in seeds:
-        r = hyp_search(args.mutant, args.seed_base, args.budget, h, args.system)
+        r = hyp_search(args.mutant, args.seed_base, args.budget, h, args.system, variant=args.variant)
         where = (f"first violation at run {r.first_violation_run} ({r.runs_to_first_violation} runs), "
                  f"violated {', '.join(r.violated)}" if r.first_violation_run is not None else "no violation")
         print(f"  hypothesis seed {h}: {where}; rejected {r.rejected}, "
@@ -182,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("search", help="random search, then shrink one target contract")
     s.add_argument("--system", default="lift.v0")
     s.add_argument("--mutant", action="append", default=[], help="repeatable, e.g. --mutant M4")
+    s.add_argument("--variant", metavar="SPEC",
+                   help="run this implementation of the system instead of the registered one: "
+                        "path/to/file.py:NAME or package.module:NAME (runs that code; trusted files only). "
+                        "Not with --mutant")
     s.add_argument("--seeds", type=int, default=1000)
     s.add_argument("--seed-start", type=int, default=0)
     s.add_argument("--target", help="contract to shrink, e.g. C3")
@@ -219,6 +258,10 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("baseline", help="random search over a session's seeds")
     b.add_argument("--system", default="lift.v0")
     b.add_argument("--mutant", action="append", default=[])
+    b.add_argument("--variant", metavar="SPEC",
+                   help="run this implementation of the system instead of the registered one: "
+                        "path/to/file.py:NAME or package.module:NAME (runs that code; trusted files only). "
+                        "Not with --mutant")
     b.add_argument("--seed-base", type=int, default=0)
     b.add_argument("--budget", type=int, default=100)
     b.add_argument("--strategy", choices=["random", "hypothesis"], default="random")

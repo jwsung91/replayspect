@@ -1,7 +1,9 @@
 """Running systems under test: random search, repro files and replay.
 
 A **system** couples a runnable integration with its contract file: the
-virtual lift (``lift.v0``) and the virtual turntable (``turntable.v0``).
+virtual lift (``lift.v0``) and the virtual turntable (``turntable.v0``). A
+system can also run an implementation variant loaded from outside the
+package (:mod:`replayspect.variant`).
 
 A **repro file** is everything needed to rerun a failure exactly: the
 system, seed, mutants, how long the run lasted, and the explicit fault plan.
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -31,6 +33,7 @@ from replayspect.contract import (
 )
 from replayspect.sim.link import ChannelProfile, FaultPlan, PlanReport, plan_report
 from replayspect.trace import Trace
+from replayspect.variant import VariantRef, load_variant, variant_run
 
 REPRO_FORMAT = "replayspect.repro/1"
 ROOT = Path(__file__).resolve().parents[2]
@@ -102,6 +105,8 @@ class System:
     protocol_path: Path | None = None
     #: Message keys for generated plans (the Hypothesis baseline).
     vocabulary: PlanVocabulary | None = None
+    #: Set when ``run`` is an implementation variant (see :func:`get_system`).
+    variant: VariantRef | None = None
 
     def contracts(self) -> ContractSet:
         return load_contracts(self.contracts_path)
@@ -145,11 +150,22 @@ SYSTEMS: dict[str, System] = {
 }
 
 
-def get_system(name: str) -> System:
+def get_system(name: str, variant: str | None = None) -> System:
+    """The registered system ``name``; with ``variant``, running that implementation instead.
+
+    Only the run function changes. Contracts, protocol description, link
+    profile and run length are the registered system's.
+    """
     try:
-        return SYSTEMS[name]
+        system = SYSTEMS[name]
     except KeyError:
         raise ValueError(f"unknown system {name!r}; known: {sorted(SYSTEMS)}") from None
+    if variant is None:
+        return system
+    v, ref = load_variant(variant)
+    if v.system != name:
+        raise ValueError(f"variant {variant} implements {v.system}, not {name}")
+    return replace(system, run=variant_run(v, system.profile), variant=ref)
 
 
 # -- single runs --------------------------------------------------------------------------
@@ -165,6 +181,7 @@ class Run:
     trace: Trace
     violations: list[Violation]
     plan_report: PlanReport | None = None  # set when a plan was given
+    variant: VariantRef | None = None  # set when the system ran a variant
 
     def violated(self) -> set[str]:
         return {v.contract for v in self.violations}
@@ -191,11 +208,13 @@ def run_once(
     until_us: int | None = None,
 ) -> Run:
     ms = tuple(sorted(mutants))
+    if ms and system.variant is not None:
+        raise ValueError("mutants and a variant cannot be combined")
     end = system.until_us if until_us is None else until_us
     trace = system.run(seed, plan, ms, end)
     cs = contracts if contracts is not None else system.contracts()
     report = plan_report(plan, trace) if plan is not None else None
-    return Run(system.name, seed, ms, end, plan, trace, judge(trace, cs, end), report)
+    return Run(system.name, seed, ms, end, plan, trace, judge(trace, cs, end), report, system.variant)
 
 
 # -- search -------------------------------------------------------------------------------------
@@ -303,6 +322,8 @@ def make_repro(run: Run, target: str, shrink: Mapping[str, Any] | None = None) -
         },
         "explain": explain(run, target),
     }
+    if run.variant is not None:
+        doc["variant"] = run.variant.to_dict()
     if shrink is not None:
         doc["shrink"] = dict(shrink)
     return doc
@@ -330,6 +351,9 @@ class ReplayResult:
     digest_ok: bool
     violations_ok: bool
     target_ok: bool
+    #: Set when the repro names a variant whose file changed since the repro was written.
+    #: Not a failure by itself: the digest decides whether the run is the same.
+    variant_note: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -338,7 +362,11 @@ class ReplayResult:
 
 def replay(doc: Mapping[str, Any], contracts: ContractSet | None = None) -> ReplayResult:
     """Rerun a repro and check it produced exactly the recorded execution."""
-    system = get_system(doc["system"])
+    recorded = doc.get("variant")
+    system = get_system(doc["system"], recorded["spec"] if recorded else None)
+    note = None
+    if recorded and system.variant is not None and system.variant.sha256 != recorded.get("sha256"):
+        note = f"variant file changed since the repro was written: {recorded['spec']}"
     plan = FaultPlan.from_dict(doc["plan"])
     run = run_once(system, doc["seed"], doc["mutants"], plan, contracts, doc["until_us"])
     expect = doc["expect"]
@@ -347,6 +375,7 @@ def replay(doc: Mapping[str, Any], contracts: ContractSet | None = None) -> Repl
         digest_ok=run.trace.digest() == expect["digest"],
         violations_ok=[violation_dict(v) for v in run.first()] == expect["first_violations"],
         target_ok=doc["target"] in run.violated(),
+        variant_note=note,
     )
 
 
