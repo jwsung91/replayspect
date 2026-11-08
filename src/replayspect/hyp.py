@@ -147,9 +147,10 @@ def hyp_search(
     hyp_seed: int = 0,
     system: str = "lift.v0",
     max_faults: int = 20,
+    variant: str | None = None,
 ) -> HypResult:
     """Run Hypothesis-generated plans until the first violation or the budget runs out."""
-    s = Session(SessionConfig(system, tuple(mutants), seed_base, budget, max_faults), None)
+    s = Session(SessionConfig(system, tuple(mutants), seed_base, budget, max_faults, variant), None)
     res = HypResult(hyp_seed, seed_base, budget, 0, None, [], 0, 0, 0)
 
     @hyp_seed_decorator(hyp_seed)

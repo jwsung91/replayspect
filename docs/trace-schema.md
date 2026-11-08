@@ -31,8 +31,9 @@ listed under [Reading rules](#reading-rules).
 | `until_us` | integer ≥ 0 or null | End of the run, and the default end time for judging. Null when unknown; judging then ends at the last event. Never before the last event. |
 | `slice` | object or null | Set when the file is a cut of another trace: `{"window": [t0, t1] or null, "actors": [names] or null, "of": <digest of the full trace> or null}`. The window is inclusive and `t0 <= t1`. Null for a full trace. |
 
-Mutants are never in the header. They are the hidden answers of the WP4
-experiment. See [Output meant for planners](#output-meant-for-planners).
+Mutants and implementation variants (`--variant`) are never in the header.
+They are the hidden answers of the WP4 experiment. See
+[Output meant for planners](#output-meant-for-planners).
 
 Unknown header fields are ignored (minor additions). Unknown `schema` majors
 are rejected.
