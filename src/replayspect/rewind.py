@@ -1,14 +1,16 @@
 """Rewind: look at a recorded trace at a virtual time, step through it, slice it.
 
-Everything here reads a trace file and nothing else: canonical JSON Lines,
-one event per line, as written by :meth:`replayspect.trace.Trace.to_jsonl`
-(``replay --trace-out`` writes one). The reader does not know which system
+Everything here reads a trace file and nothing else (docs/trace-schema.md;
+``replay --trace-out`` writes one). The reader does not know which system
 produced the trace, so a trace written by a log adapter can be rewound the
-same way as one from the simulator.
+same way as one from the simulator. A header, when the file has one, gives
+the default contract file and end time; command-line values override it and
+the output says so.
 
 Output is short by default. A view lists at most ``limit`` events; the full
-selection goes to a file (``--full``), never to stdout, because tool output
-may land in someone's context window.
+selection goes to a file (``--full``, a trace file whose header records the
+cut), never to stdout, because tool output may land in someone's context
+window.
 
 Terms used below:
 
@@ -22,6 +24,7 @@ Terms used below:
   differ in time, actor, kind, name, req_id or data (seq is the position).
 * **judged until**: contracts are judged with an end time. Deadline contracts
   (for example "closed within 15 s") depend on it, so it is always printed.
+  It is ``--end``, else the header's ``until_us``, else the last event.
   At a rewind time ``t`` only the events up to ``t`` are judged, with end ``t``:
   what a judge watching the run would have known at that moment.
 """
@@ -34,75 +37,40 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from replayspect.contract import Contract, ContractSet, EventPattern, first_violation_details, judge
-from replayspect.trace import EVENT_KINDS, Event, Trace
+from replayspect.contract import (
+    Contract,
+    ContractSet,
+    EventPattern,
+    first_violation_details,
+    judge,
+    load_contracts,
+)
+from replayspect.trace import Event, Trace
+from replayspect.tracefile import (
+    TraceFile,
+    TraceFileError,  # noqa: F401  (re-exported: readers catch it from here)
+    core_trace,
+    file_sha256,
+    parse_trace_file,
+    read_trace_file,
+    slice_header,
+    write_trace_file,
+)
 
-_FIELDS = {"seq", "t_us", "actor", "kind", "name", "req_id", "data"}
-_REQUIRED = ("seq", "t_us", "actor", "kind", "name")
 _TIME = re.compile(r"^([0-9]+(?:\.[0-9]+)?)(s|ms|us)?$")
 _UNIT_US = {"s": 1_000_000, "ms": 1_000, "us": 1, None: 1}
-
-
-class TraceFileError(ValueError):
-    """A trace file that cannot be read; the message names the file and line."""
 
 
 # -- reading ---------------------------------------------------------------------------------
 
 
-def _check_event(d: Any, index: int, prev_t: int | None) -> Event:
-    if not isinstance(d, dict):
-        raise ValueError(f"expected a JSON object, got {type(d).__name__}")
-    missing = [k for k in _REQUIRED if k not in d]
-    if missing:
-        raise ValueError(f"missing field(s) {', '.join(missing)}")
-    for k in ("seq", "t_us"):
-        if type(d[k]) is not int or d[k] < 0:
-            raise ValueError(f"{k} must be a non-negative integer, got {d[k]!r}")
-    for k in ("actor", "kind", "name"):
-        if type(d[k]) is not str or not d[k]:
-            raise ValueError(f"{k} must be a non-empty string, got {d[k]!r}")
-    if d["kind"] not in EVENT_KINDS:
-        raise ValueError(f"unknown event kind {d['kind']!r}; expected one of {sorted(EVENT_KINDS)}")
-    if d.get("req_id") is not None and type(d["req_id"]) is not str:
-        raise ValueError(f"req_id must be a string, got {d['req_id']!r}")
-    if not isinstance(d.get("data", {}), dict):
-        raise ValueError(f"data must be an object, got {type(d['data']).__name__}")
-    if d["seq"] != index:
-        raise ValueError(f"seq {d['seq']} out of order; expected {index}")
-    if prev_t is not None and d["t_us"] < prev_t:
-        raise ValueError(f"time goes backwards: {d['t_us']}us after {prev_t}us")
-    return Event.from_dict(d)
-
-
 def parse_trace(text: str, name: str = "<trace>") -> Trace:
-    """Parse and check a trace file's text. Errors name the file and line number.
-
-    Events must be numbered 0, 1, 2... in file order with times that never
-    decrease. Blank lines are skipped. Fields other than the event fields are
-    ignored, so later additions to the schema do not break the reader.
-    """
-    events: list[Event] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            d = json.loads(line)
-            events.append(_check_event(d, len(events), events[-1].t_us if events else None))
-        except ValueError as exc:  # json.JSONDecodeError is a ValueError
-            raise TraceFileError(f"{name}:{lineno}: {exc}") from None
-    return Trace.from_events(events)
+    """The events of a trace file's text (see :func:`replayspect.tracefile.parse_trace_file`)."""
+    return parse_trace_file(text, name).trace
 
 
 def read_trace(path: Path | str) -> Trace:
-    p = Path(path)
-    try:
-        text = p.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise TraceFileError(f"{p}: {exc.strerror or exc}") from None
-    except UnicodeDecodeError:
-        raise TraceFileError(f"{p}: not UTF-8 text") from None
-    return parse_trace(text, str(p))
+    return read_trace_file(path).trace
 
 
 def parse_time_us(text: str) -> int:
@@ -190,13 +158,6 @@ def _compact(d: Any, limit: int = 120) -> str:
     return s if len(s) <= limit else s[: limit - 3] + "..."
 
 
-def full_line(ev: Event) -> str:
-    head = f"#{ev.seq} {fmt_t(ev.t_us)} {ev.actor} {ev.kind} {ev.name} {ev.req_id or '-'}"
-    if not ev.data:
-        return head
-    return head + " " + json.dumps(ev.data, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
 def _same(a: Event, b: Event) -> bool:
     return (a.t_us, a.actor, a.kind, a.name, a.req_id, dict(a.data)) == (
         b.t_us, b.actor, b.kind, b.name, b.req_id, dict(b.data))
@@ -252,8 +213,9 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
     events occurred; otherwise it is ``not exercised``: it could not have
     failed, which is not the same as holding.
     """
-    trace = Trace.from_events(events)
-    firsts = first_violation_details(judge(trace, cs, end_us))
+    # Judged renumbered 0, 1, 2...: a slice's seq has gaps. Violations point at
+    # positions in ``events``; status_lines prints the original seq.
+    firsts = first_violation_details(judge(core_trace(events), cs, end_us))
     violated = {v.contract for v in firsts}
     st = ContractStatus(end_us, end_why, firsts)
     for c in cs.contracts:
@@ -268,12 +230,66 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
 def status_lines(st: ContractStatus, events: Sequence[Event], label: str) -> list[str]:
     lines = [f"judged until t={fmt_t(st.end_us)} ({st.end_why})"]
     for v in st.violated:
-        where = f"#{v.seq} {fmt_t(events[v.seq].t_us)}" if v.seq < len(events) else "end of run"
+        where = f"#{events[v.seq].seq} {fmt_t(events[v.seq].t_us)}" if v.seq < len(events) else "end of run"
         lines.append(f"  {v.contract} violated at {where} {v.req_id or '-'}: {v.detail}")
     lines.append(f"{label}: {len(st.violated)} violated, {len(st.ok)} ok"
                  + (f" ({', '.join(st.ok)})" if st.ok else "")
                  + (f", not exercised: {', '.join(st.not_exercised)}" if st.not_exercised else ""))
     return lines
+
+
+# -- judging defaults from the header -------------------------------------------------------
+
+
+@dataclass
+class JudgeSetup:
+    """What to judge with: the contracts, the end time and why, and lines saying where they came from."""
+
+    contracts: ContractSet | None = None
+    end_us: int | None = None  # None: the last event
+    end_why: str | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+def judge_setup(tf: TraceFile, contracts_path: str | None = None, end_us: int | None = None) -> JudgeSetup:
+    """Command-line values first, then the header's; say which, and when they differ from the header."""
+    h = tf.header
+    st = JudgeSetup()
+    hc = h.contracts if h is not None else None
+    if contracts_path is not None:
+        st.contracts = load_contracts(Path(contracts_path))
+        if hc is None:
+            pass
+        elif file_sha256(contracts_path) == hc["sha256"]:
+            st.notes.append(f"contracts file: {contracts_path} (given; same file as the header's)")
+        else:
+            st.notes.append(f"contracts file: {contracts_path} (given; differs from header: {hc['path']})")
+    elif hc is not None:
+        p = Path(hc["path"])
+        if not p.is_file():
+            st.notes.append(f"contracts file: {hc['path']} (from header) not found; not judged; pass --contracts")
+        else:
+            st.contracts = load_contracts(p)
+            now = file_sha256(p)
+            if now == hc["sha256"]:
+                st.notes.append(f"contracts file: {hc['path']} (from header)")
+            else:
+                st.notes.append(f"contracts file: {hc['path']} (from header; changed since the trace was "
+                                f"written: sha256 {hc['sha256'][:12]} in header, {now[:12]} now)")
+    until = h.until_us if h is not None else None
+    if end_us is not None:
+        if st.contracts is None:
+            raise ValueError("--end is the end time for judging; it needs contracts (--contracts or the trace header)")
+        st.end_us = end_us
+        if until is None:
+            st.end_why = "given"
+        elif until == end_us:
+            st.end_why = "given; same as header"
+        else:
+            st.end_why = f"given; differs from header: {fmt_t(until)}"
+    elif until is not None:
+        st.end_us, st.end_why = until, "header until_us"
+    return st
 
 
 # -- the view --------------------------------------------------------------------------------
@@ -331,9 +347,14 @@ def view(
     ref: Trace | None = None,
     contracts: ContractSet | None = None,
     end_us: int | None = None,
+    end_why: str | None = None,
+    notes: Sequence[str] = (),
     limit: int = 50,
 ) -> View:
-    """Build the rewind output for ``trace``. Pure: the same arguments give the same lines."""
+    """Build the rewind output for ``trace``. Pure: the same arguments give the same lines.
+
+    ``notes`` (where the contracts came from) follow the contract status.
+    """
     events = trace.events
     selected = sel.apply(events)
     lines: list[str] = []
@@ -342,9 +363,10 @@ def view(
 
     if contracts is not None:
         # Always first: deadline contracts depend on the end time.
-        why = "given" if end_us is not None else "last event; pass --end to change"
+        why = end_why or ("given" if end_us is not None else "last event; pass --end to change")
         st = contract_status(events, contracts, end, why)
         lines += status_lines(st, events, f"contracts ({contracts.protocol or 'unnamed'})")
+    lines += notes
 
     span = f"{fmt_t(events[0].t_us)}..{fmt_t(last_t)}" if events else "empty"
     lines.append(f"trace: {len(events)} events, {span}; actors: {_counts(events, lambda e: e.actor)}")
@@ -378,13 +400,11 @@ def view(
     return View(lines, selected)
 
 
-def write_full(events: Iterable[Event], path: Path | str) -> int:
-    """Write every given event, one full line each, to a new file. Never overwrites."""
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    n = 0
-    with p.open("x", encoding="utf-8") as f:
-        for e in events:
-            f.write(full_line(e) + "\n")
-            n += 1
-    return n
+def write_full(tf: TraceFile, sel: Selection, path: Path | str) -> int:
+    """Write the selected events of ``tf`` as a trace file to a new path. Never overwrites.
+
+    The file reads back like any trace file. Its header is ``tf``'s with
+    ``slice`` set to the selection and the digest of the full trace.
+    """
+    header = slice_header(tf, sel.window, sorted(sel.actors))
+    return write_trace_file(path, sel.apply(tf.trace.events), header)

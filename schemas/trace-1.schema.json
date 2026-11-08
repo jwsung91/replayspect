@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jwsung91/replayspect/schemas/trace-1.schema.json",
+  "title": "replayspect trace file line, schema replayspect.trace/1",
+  "description": "One line of a trace file: the optional header (first line only) or an event. Rules across lines (seq order, time never decreasing, header only on line 1, until_us not before the last event) are checked by the reader; see docs/trace-schema.md.",
+  "oneOf": [
+    {"$ref": "#/$defs/header"},
+    {"$ref": "#/$defs/event"}
+  ],
+  "$defs": {
+    "nonneg": {"type": "integer", "minimum": 0},
+    "source": {"type": "string", "pattern": "^(sim|adapter:\\S+)$"},
+    "sha256": {"type": "string", "minLength": 1},
+    "header": {
+      "type": "object",
+      "required": ["type", "schema"],
+      "properties": {
+        "type": {"const": "header"},
+        "schema": {"const": "replayspect.trace/1"},
+        "system": {"type": ["string", "null"]},
+        "source": {"$ref": "#/$defs/source"},
+        "seed": {"oneOf": [{"$ref": "#/$defs/nonneg"}, {"type": "null"}]},
+        "plan": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["sha256"],
+              "properties": {
+                "sha256": {"type": "string"},
+                "repro": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        },
+        "contracts": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              }
+            }
+          ]
+        },
+        "until_us": {"oneOf": [{"$ref": "#/$defs/nonneg"}, {"type": "null"}]},
+        "slice": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "properties": {
+                "window": {
+                  "oneOf": [
+                    {"type": "null"},
+                    {"type": "array", "prefixItems": [{"$ref": "#/$defs/nonneg"}, {"$ref": "#/$defs/nonneg"}],
+                     "minItems": 2, "maxItems": 2}
+                  ]
+                },
+                "actors": {
+                  "oneOf": [
+                    {"type": "null"},
+                    {"type": "array", "items": {"type": "string", "minLength": 1}}
+                  ]
+                },
+                "of": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["seq", "t_us", "actor", "kind", "name"],
+      "not": {"required": ["type"]},
+      "properties": {
+        "seq": {"$ref": "#/$defs/nonneg"},
+        "t_us": {"$ref": "#/$defs/nonneg"},
+        "actor": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["send", "recv", "handle", "effect", "state", "fault"]},
+        "name": {"type": "string", "minLength": 1},
+        "req_id": {"type": ["string", "null"]},
+        "data": {"type": "object"},
+        "fidelity": {"enum": ["exact", "reconstructed"]},
+        "source": {"$ref": "#/$defs/source"}
+      }
+    }
+  }
+}

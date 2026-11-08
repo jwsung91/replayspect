@@ -72,6 +72,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v2 3차 시행: M9·M10·M11, 27회 중 26회 검출, 검출 시 모두 무작위보다 빠름. `docs/experiment-v2.md` "3차 시행 기록"
 - [x] 두 번째 시스템: 가상 턴테이블(`turntable.v0`, `src/replayspect/sut/turntable.py`), 뮤턴트 없음. `docs/design-v0.md` "가상 턴테이블"
 - [x] v3 WP1 되감기 뷰어: `rewind` 명령(`src/replayspect/rewind.py`), `replay --trace-out`. 트레이스 파일만 읽는다
+- [x] v3 WP2 트레이스 스키마: `docs/trace-schema.md`, `schemas/trace-1.schema.json`, `src/replayspect/tracefile.py`. 헤더(선택), 사건마다 fidelity·source, 다이제스트는 사건 핵심 필드만, `rewind --full`은 잘라낸 트레이스 파일
 - [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)

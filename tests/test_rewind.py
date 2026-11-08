@@ -254,7 +254,7 @@ def test_an_end_before_the_last_event_or_without_contracts_is_rejected(m4_file, 
     code, _, err = out_of(capsys, ["rewind", str(m4_file), "--contracts", LIFT_CONTRACTS, "--end", "1s"])
     assert code == 2 and "before the last event" in err
     code, _, err = out_of(capsys, ["rewind", str(m4_file), "--end", "90s"])
-    assert code == 2 and "needs --contracts" in err
+    assert code == 2 and "needs contracts (--contracts or the trace header)" in err
 
 
 def test_contracts_so_far_only_judge_events_up_to_the_rewind_time(m4_run):
@@ -292,16 +292,15 @@ def test_works_on_a_turntable_trace(tmp_path, capsys):
 
 
 def test_listings_are_capped_and_the_full_dump_goes_to_a_new_file(tmp_path, m4_run, m4_file, capsys):
-    full = tmp_path / "out" / "full.txt"
+    full = tmp_path / "out" / "full.jsonl"
     code, out, _ = out_of(capsys, ["rewind", str(m4_file), "--window", "0", "90s", "--limit", "5",
                                    "--full", str(full)])
     assert code == 0
     assert len([line for line in out.splitlines() if line.startswith("  #")]) == 5
     assert f"... {len(m4_run.trace) - 5} more" in out
     assert len(out.splitlines()) < 20
-    dumped = full.read_text(encoding="utf-8").splitlines()
-    assert len(dumped) == len(m4_run.trace)
-    assert dumped[0].startswith("#0 0.000000s device state DOWN")
+    dumped = read_trace(full)  # WP2: the dump is a trace file and reads back
+    assert dumped.events == m4_run.trace.events
     code, _, err = out_of(capsys, ["rewind", str(m4_file), "--full", str(full)])
     assert code == 2 and "not overwriting" in err
 

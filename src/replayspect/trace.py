@@ -9,6 +9,11 @@ A trace serialises to canonical JSON Lines (sorted keys, no extra whitespace)
 so that its SHA-256 digest is stable across processes and machines. If a
 replayed run produces a different digest, determinism is broken, and that is
 treated as a bug in itself.
+
+The digest covers the event core only (seq, time, actor, kind, name, req_id,
+data): what happened. ``fidelity`` and ``source`` say how we know it and are
+written to trace files (see :mod:`replayspect.tracefile`) but left out of the
+digest, so repro files keep their digests (docs/trace-schema.md).
 """
 
 from __future__ import annotations
@@ -25,6 +30,10 @@ from replayspect._json import plain_json_copy
 #: separate on purpose: some contracts allow receiving a late reply but forbid
 #: treating it as a completion.
 EVENT_KINDS = frozenset({"send", "recv", "handle", "effect", "state", "fault"})
+
+#: ``exact``: recorded by the simulator or read from a log. ``reconstructed``:
+#: filled in by a model.
+FIDELITIES = ("exact", "reconstructed")
 
 
 class TraceError(ValueError):
@@ -44,8 +53,11 @@ class Event:
     name: str
     req_id: str | None = None
     data: Mapping[str, Any] = field(default_factory=dict)
+    fidelity: str = "exact"
+    source: str = "sim"  # "sim" or "adapter:<name>"
 
     def to_dict(self) -> dict[str, Any]:
+        """The event core: what the digest covers (no fidelity or source)."""
         d: dict[str, Any] = {
             "seq": self.seq,
             "t_us": self.t_us,
@@ -69,7 +81,13 @@ class Event:
             name=d["name"],
             req_id=d.get("req_id"),
             data=d.get("data", {}),
+            fidelity=d.get("fidelity", "exact"),
+            source=d.get("source", "sim"),
         )
+
+    def to_record(self) -> dict[str, Any]:
+        """The event as a trace file line: the core plus fidelity and source."""
+        return {**self.to_dict(), "fidelity": self.fidelity, "source": self.source}
 
 
 class Trace:
@@ -144,7 +162,7 @@ class Trace:
         return "".join(_canonical(e.to_dict()) + "\n" for e in self._events)
 
     def digest(self) -> str:
-        """SHA-256 of the canonical JSONL form."""
+        """SHA-256 of the canonical JSONL form of the event cores."""
         return hashlib.sha256(self.to_jsonl().encode("utf-8")).hexdigest()
 
     @classmethod

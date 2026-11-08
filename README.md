@@ -43,6 +43,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] Work-mode MCP tools: search, shrink and replay from an MCP client
 - [x] Second system: virtual turntable (`turntable.v0`), no mutants yet (`docs/protocol-turntable.md`)
 - [x] v3 WP1: `rewind` viewer for trace files, `replay --trace-out` (`docs/work-order-v3.md`)
+- [x] v3 WP2: trace schema with header, fidelity and source (`docs/trace-schema.md`, `schemas/trace-1.schema.json`)
 
 ## Usage
 
@@ -63,24 +64,29 @@ python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json
 
 ### Rewind a trace
 
-`replay --trace-out` writes the reproduced run as a trace file (JSON Lines).
-`rewind` reads trace files only, so it does not need the system that made
-them. It prints a short summary; add `--at` to see the state at a virtual
-time, `--step N` for the next N events (negative: the previous ones),
-`--window T0 T1` and `--actor` to select events, `--ref` for the first
-divergence from another trace and `--contracts` to judge it. Times are
-microseconds or have a unit (`15.6s`, `500ms`). Listings stop at `--limit`
-(default 50); `--full PATH` writes every selected event to a new file.
+`replay --trace-out` writes the reproduced run as a trace file
+([docs/trace-schema.md](docs/trace-schema.md)): JSON Lines with a header
+naming the system, seed, plan, contract file and end time. `rewind` reads
+trace files only, so it does not need the system that made them. It prints a
+short summary; add `--at` to see the state at a virtual time, `--step N` for
+the next N events (negative: the previous ones), `--window T0 T1` and
+`--actor` to select events, and `--ref` for the first divergence from another
+trace. It judges the trace against the header's contract file until the
+header's end time; `--contracts` and `--end` override them and the output
+says so. Times are microseconds or have a unit (`15.6s`, `500ms`). Listings
+stop at `--limit` (default 50); `--full PATH` writes every selected event to
+a new trace file whose header records the cut.
 
 ```bash
 python3 -m replayspect replay repros/lift.v0-M4-C3-seed65.json --trace-out traces/m4.jsonl
 # digest ok, first violations ok, target C3 violated
 # trace: 431 events -> traces/m4.jsonl
 
-python3 -m replayspect rewind traces/m4.jsonl --contracts contracts/lift.v0.yaml --at 15.6s --step 4 --actor device
-# judged until t=90.000000s (last event; pass --end to change)
+python3 -m replayspect rewind traces/m4.jsonl --at 15.6s --step 4 --actor device
+# judged until t=90.000000s (header until_us)
 #   C3 violated at #88 15.677267s r-0003: MOVING_DOWN --MOVE_UP--> MOVING_UP is not declared
 # contracts (lift.v0): 1 violated, 7 ok (C1, C2, C4, C5, C6, C7, C8)
+# contracts file: contracts/lift.v0.yaml (from header)
 # trace: 431 events, 0.000000s..90.000000s; actors: client 206, device 222, link 3
 # selection (actor device): 222 events; kinds: effect 11, recv 97, send 102, state 12
 # at t=15.600000s: 85 of 431 events have happened; next #85 at 15.627267s
@@ -92,6 +98,11 @@ python3 -m replayspect rewind traces/m4.jsonl --contracts contracts/lift.v0.yaml
 #   #86 15.627267s device send ACK r-0003 k=0
 #   #87 15.677267s device effect motor_start r-0003 {"dir":"up"}
 #   #88 15.677267s device state MOVING_UP r-0003 {"from":"MOVING_DOWN","on":"MOVE_UP"}
+
+python3 -m replayspect rewind traces/m4.jsonl --end 95s --window 15s 16s --actor device --full traces/m4-device.jsonl
+# judged until t=95.000000s (given; differs from header: 90.000000s)
+# ...
+# full: 4 selected events -> traces/m4-device.jsonl
 ```
 
 Deadline contracts (C2: closed within 15 s) depend on the end time, so the
