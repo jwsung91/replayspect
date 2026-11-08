@@ -1,9 +1,15 @@
-"""Command line: ``python3 -m replayspect search|replay|baseline|session``.
+"""Command line: ``python3 -m replayspect search|replay|rewind|baseline|session``.
 
 search    Run random-fault seeds against a system, report which contracts
           failed, shrink the failures of one target contract and write the
           smallest one as a repro file.
 replay    Rerun a repro file and check it reproduces the recorded execution.
+          With --trace-out, also write the run's trace as a trace file.
+rewind    Look at a trace file: a summary by default; the state at a virtual
+          time (--at), events after or before it (--step), a time window
+          (--window), one participant (--actor), the first divergence from a
+          reference trace (--ref) and contract status (--contracts). Listings
+          are capped; --full writes the whole selection to a new file.
 baseline  Random search over the same seeds a planning session uses
           (seed_base, seed_base + 1, ...): how many runs until a violation.
           With --strategy hypothesis, Hypothesis writes the fault plans
@@ -17,6 +23,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from replayspect.contract import ContractError, load_contracts
+from replayspect.rewind import Selection, TraceFileError, parse_time_us, read_trace, view, write_full
 from replayspect.runner import get_system, make_repro, read_repro, replay, run_once, search, write_repro
 from replayspect.session import environment_diff, summarize_log, verify_log
 from replayspect.shrink import best_repro
@@ -58,7 +66,46 @@ def _replay(args: argparse.Namespace) -> int:
     print(f"digest {'ok' if r.digest_ok else 'DIFFERENT'}, first violations "
           f"{'ok' if r.violations_ok else 'DIFFERENT'}, target {doc['target']} "
           f"{'violated' if r.target_ok else 'NOT violated'}")
+    if args.trace_out:
+        out = Path(args.trace_out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with out.open("x", encoding="utf-8") as f:
+                f.write(r.run.trace.to_jsonl())
+        except FileExistsError:
+            print(f"{out} exists; not overwriting it", file=sys.stderr)
+            return 2
+        print(f"trace: {len(r.run.trace)} events -> {out}")
     return 0 if r.ok else 1
+
+
+def _rewind(args: argparse.Namespace) -> int:
+    try:
+        trace = read_trace(args.trace)
+        ref = read_trace(args.ref) if args.ref else None
+        at = parse_time_us(args.at) if args.at is not None else None
+        end = parse_time_us(args.end) if args.end is not None else None
+        window = (parse_time_us(args.window[0]), parse_time_us(args.window[1])) if args.window else None
+        sel = Selection(window, frozenset(args.actor))
+        contracts = load_contracts(Path(args.contracts)) if args.contracts else None
+        if end is not None and contracts is None:
+            raise ValueError("--end is the end time for judging; it needs --contracts")
+        if args.limit < 0:
+            raise ValueError("--limit must be >= 0")
+        v = view(trace, at_us=at, step_n=args.step, sel=sel, ref=ref, contracts=contracts, end_us=end,
+                 limit=args.limit)
+    except (TraceFileError, ContractError, ValueError, OSError) as exc:
+        print(f"rewind: {exc}", file=sys.stderr)
+        return 2
+    print("\n".join(v.lines))
+    if args.full:
+        try:
+            n = write_full(v.selected, args.full)
+        except FileExistsError:
+            print(f"rewind: {args.full} exists; not overwriting it", file=sys.stderr)
+            return 2
+        print(f"full: {n} selected events -> {args.full}")
+    return 0
 
 
 def _baseline(args: argparse.Namespace) -> int:
@@ -137,7 +184,27 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=_search)
     r = sub.add_parser("replay", help="rerun a repro file")
     r.add_argument("repro")
+    r.add_argument("--trace-out", metavar="PATH", help="also write the run's trace here (a new file)")
     r.set_defaults(fn=_replay)
+    rw = sub.add_parser(
+        "rewind", help="look at a trace file at a time, step through it, slice it",
+        description="Times are microseconds (1500000) or have a unit (1.5s, 1500ms, 1500000us). "
+                    "Output is a summary; listings are capped by --limit and --full writes the "
+                    "whole selection to a new file. Exit status 2 on unreadable input.")
+    rw.add_argument("trace", help="trace file (JSON Lines, e.g. from replay --trace-out)")
+    rw.add_argument("--at", metavar="T", help="rewind to T: the state after every event with time <= T")
+    rw.add_argument("--step", type=int, metavar="N",
+                    help="list N selected events after the --at cursor (or the start); negative: before it")
+    rw.add_argument("--window", nargs=2, metavar=("T0", "T1"), help="select events with T0 <= time <= T1")
+    rw.add_argument("--actor", action="append", default=[], metavar="NAME",
+                    help="select one participant's events; repeatable")
+    rw.add_argument("--ref", metavar="TRACE", help="reference trace: report the first divergence")
+    rw.add_argument("--contracts", metavar="YAML", help="judge the trace against this contract file")
+    rw.add_argument("--end", metavar="T",
+                    help="end time for judging (default: the last event; always printed)")
+    rw.add_argument("--limit", type=int, default=50, help="most events to list (default 50)")
+    rw.add_argument("--full", metavar="PATH", help="write every selected event to this new file")
+    rw.set_defaults(fn=_rewind)
     b = sub.add_parser("baseline", help="random search over a session's seeds")
     b.add_argument("--system", default="lift.v0")
     b.add_argument("--mutant", action="append", default=[])
