@@ -203,6 +203,7 @@ Keep the subject concise, lowercase, imperative mood, no trailing period.
 
 - The Korean sections above are this repository's boundaries and take precedence: "절대 원칙" (determinism, integer microseconds, contracts as the only oracle, trace as the only observation path, same seed = same digest) and the summaries that follow.
 - Never put mutant or defect hints in planner-visible files (`docs/protocol-lift.md`, `docs/plan-format.md`, contract YAML), and never mix work-mode tools into the planning-session server.
+- Work follows docs/work-order-v3.md. One WP per branch; stop and report after each WP.
 
 ## Validation
 
