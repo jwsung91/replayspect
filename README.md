@@ -41,6 +41,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] v1 baseline: Hypothesis writes fault plans in the planner's plan space (`docs/design-v0.md`)
 - [x] Third v2 trials on three new mutants that random search rarely finds (`docs/experiment-v2.md`)
 - [x] Work-mode MCP tools: search, shrink and replay from an MCP client
+- [x] Second system: virtual turntable (`turntable.v0`), no mutants yet (`docs/protocol-turntable.md`)
 
 ## Usage
 

@@ -1,7 +1,7 @@
 """Running systems under test: random search, repro files and replay.
 
-A **system** couples a runnable integration with its contract file. v0 has
-one, the virtual lift (``lift.v0``).
+A **system** couples a runnable integration with its contract file: the
+virtual lift (``lift.v0``) and the virtual turntable (``turntable.v0``).
 
 A **repro file** is everything needed to rerun a failure exactly: the
 system, seed, mutants, how long the run lasted, and the explicit fault plan.
@@ -74,6 +74,21 @@ def _lift_vocabulary() -> PlanVocabulary:
     )
 
 
+def _turntable_vocabulary() -> PlanVocabulary:
+    # protocol-turntable.md: 6 commands in a fixed order, ids r-0001...; at most two resends;
+    # STATUS every second over a 90 s run, ids s-0001...
+    from replayspect.sut.turntable import SEQUENCE
+
+    return PlanVocabulary(
+        commands=tuple((f"r-{n:04d}", cmd) for n, cmd in enumerate(SEQUENCE, start=1)),
+        command_replies=("ACK", "DONE", "ERROR"),
+        polls=tuple(f"s-{n:04d}" for n in range(1, 91)),
+        poll_request="STATUS",
+        poll_reply="STATUS_REPLY",
+        max_k=3,
+    )
+
+
 @dataclass(frozen=True)
 class System:
     name: str
@@ -104,11 +119,28 @@ def _lift_profile() -> ChannelProfile:
     return SEARCH_PROFILE
 
 
+def _run_turntable(seed: int, plan: FaultPlan | None, mutants: tuple[str, ...], until_us: int) -> Trace:
+    from replayspect.sut.turntable import run_turntable
+
+    return run_turntable(seed, plan=plan, mutants=mutants, until_us=until_us)
+
+
+def _turntable_profile() -> ChannelProfile:
+    from replayspect.sut.turntable import SEARCH_PROFILE
+
+    return SEARCH_PROFILE
+
+
 SYSTEMS: dict[str, System] = {
     "lift.v0": System(
         "lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000,
         _lift_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-lift.md",
         _lift_vocabulary(),
+    ),
+    "turntable.v0": System(
+        "turntable.v0", _run_turntable, ROOT / "contracts" / "turntable.v0.yaml", 90_000_000,
+        _turntable_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-turntable.md",
+        _turntable_vocabulary(),
     ),
 }
 

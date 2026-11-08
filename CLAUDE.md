@@ -70,7 +70,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v2 2차 시행: M8, 완료 3회, 기준선과 거의 같음(20 대 21). `docs/experiment-v2.md` "2차 시행 기록"
 - [x] v1 Hypothesis 기준선: 계획기와 같은 계획 공간의 생성 계획(`hyp.py`), 결과는 `docs/design-v0.md` "v1 기준선"
 - [x] v2 3차 시행: M9·M10·M11, 27회 중 26회 검출, 검출 시 모두 무작위보다 빠름. `docs/experiment-v2.md` "3차 시행 기록"
-- [ ] 다음: 미정
+- [x] 두 번째 시스템: 가상 턴테이블(`turntable.v0`, `src/replayspect/sut/turntable.py`), 뮤턴트 없음. `docs/design-v0.md` "가상 턴테이블"
+- [ ] 다음: 턴테이블 결함(사용자 설계) 구현과 선별
 
 ## 실행기와 축소 요약 (구현 완료)
 - `python3 -m replayspect search --mutant M4 --target C3`는 무작위 탐색 후 실패 시드 몇 개를 축소해
@@ -129,7 +130,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 
 ## 계획 세션과 MCP 요약 (구현 완료)
 - 계획기에게 보이는 문서는 `docs/protocol-lift.md`, `docs/plan-format.md`, 계약 YAML뿐이다.
-  이 세 파일에는 뮤턴트나 결함의 단서를 절대 쓰지 않는다. `tests/test_session.py`가 `describe` 결과를 검사한다.
+  턴테이블은 `docs/protocol-turntable.md`와 `contracts/turntable.v0.yaml`이다. 이 파일들에는 뮤턴트나 결함의 단서를 절대 쓰지 않는다. `tests/test_session.py`(턴테이블은 `tests/test_turntable.py`)가 `describe` 결과를 검사한다.
 - 세션 API에서 시드 배정·예산·범위·로그를 강제하고 도구 결과에 뮤턴트를 포함하지 않는다. 숨긴 설정의 파일·자동 문맥 노출 차단과 시행 등록은 운영 절차가 맡는다.
 - MCP 도구 래퍼는 비동기 함수로 두고 세션 호출 중 await하지 않는다. SDK 2의 작업 스레드로 세션 상태 변경이 분산되지 않게 한다.
 - 세션 로그에는 뮤턴트가 적힌다. 계획기가 읽을 수 있는 디렉터리에 두지 않는다. 기존 로그 경로는 재사용할 수 없으며 중단된 시행을 새 로그로 몰래 재시도하지 않는다.

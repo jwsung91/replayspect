@@ -52,7 +52,8 @@ class Violation:
     detail: str
 
 
-def check(trace: Trace, end_us: int) -> list[Violation]:
+def check(trace: Trace, end_us: int, moves=MOVES, transitions=TRANSITIONS) -> list[Violation]:
+    """``moves`` and ``transitions`` let another system with the same contracts reuse this oracle."""
     out: list[Violation] = []
     motor = Counter()
     first_send: dict[str, int] = {}
@@ -71,13 +72,13 @@ def check(trace: Trace, end_us: int) -> list[Violation]:
                 out.append(Violation("C1", r, e.seq, "second motor_start"))
 
         elif e.actor == "device" and e.kind == "state":
-            if (e.data.get("from"), e.data.get("on"), e.name) not in TRANSITIONS:
+            if (e.data.get("from"), e.data.get("on"), e.name) not in transitions:
                 out.append(Violation("C3", r, e.seq, f"{e.data.get('from')} --{e.data.get('on')}--> {e.name}"))
             elif e.data.get("from") != device_state:
                 out.append(Violation("C3", r, e.seq, f"from {e.data.get('from')} but state was {device_state}"))
             device_state = e.name
 
-        elif e.actor == "client" and e.kind == "send" and e.name in MOVES:
+        elif e.actor == "client" and e.kind == "send" and e.name in moves:
             first_send.setdefault(r, e.t_us)
             others = sorted(open_cmds - {r})
             if others:
@@ -100,7 +101,7 @@ def check(trace: Trace, end_us: int) -> list[Violation]:
             if e.data.get("state") != device_state:
                 out.append(Violation("C5", r, e.seq, f"reported {e.data.get('state')}, actual {device_state}"))
 
-        elif e.actor == "device" and e.kind == "recv" and e.name in MOVES:
+        elif e.actor == "device" and e.kind == "recv" and e.name in moves:
             received[r] += 1
 
         elif e.actor == "device" and e.kind == "send" and e.name in TERMINAL:
@@ -118,13 +119,13 @@ def check(trace: Trace, end_us: int) -> list[Violation]:
     return out
 
 
-def first_violations(trace: Trace, end_us: int) -> dict[str, int]:
+def first_violations(trace: Trace, end_us: int, **kw) -> dict[str, int]:
     """Map each violated contract to the seq of its earliest violation."""
     first: dict[str, int] = {}
-    for v in check(trace, end_us):
+    for v in check(trace, end_us, **kw):
         first[v.contract] = min(v.seq, first.get(v.contract, v.seq))
     return first
 
 
-def violated(trace: Trace, end_us: int) -> set[str]:
-    return {v.contract for v in check(trace, end_us)}
+def violated(trace: Trace, end_us: int, **kw) -> set[str]:
+    return {v.contract for v in check(trace, end_us, **kw)}

@@ -117,3 +117,20 @@ def test_cli_hypothesis_baseline(capsys):
 def test_cli_random_baseline_is_unchanged(capsys):
     assert main(["baseline", "--mutant", "M4", "--budget", "60"]) == 0
     assert "seeds 0..59, mutants ['M4']: first violation at run 58 (59 runs)" in capsys.readouterr().out
+
+
+TURNTABLE = get_system("turntable.v0")
+
+
+@settings(max_examples=100, deadline=None, database=None, suppress_health_check=list(HealthCheck))
+@given(plans(TURNTABLE))
+def test_generated_turntable_plans_pass_the_session_checks(plan):
+    parsed = FaultPlan.from_dict(plan)
+    check_plan_bounds(parsed, TURNTABLE.profile, TURNTABLE.until_us, 20)
+    assert {e["msg"] for e in plan["faults"] + plan["delays"]} <= {
+        "TURN_LEFT", "TURN_RIGHT", "STATUS", "ACK", "DONE", "ERROR", "STATUS_REPLY"}
+
+
+def test_correct_turntable_uses_the_whole_hypothesis_budget_without_violations():
+    r = hyp_search((), seed_base=1000, budget=60, hyp_seed=0, system="turntable.v0")
+    assert (r.runs, r.first_violation_run, r.rejected) == (60, None, 0)

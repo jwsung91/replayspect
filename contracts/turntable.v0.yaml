@@ -1,0 +1,67 @@
+# Behavioural contracts for the turntable protocol.
+
+protocol: turntable.v0
+
+# [from, on, to]. Triples, not mappings: YAML 1.1 reads an unquoted `on` key as true.
+transitions:
+  - [null, init, INITIAL]
+  - [INITIAL, TURN_LEFT, TURNING_TO_LEFT]
+  - [TURNING_TO_LEFT, arrived, LEFT]
+  - [INITIAL, TURN_RIGHT, TURNING_TO_RIGHT]
+  - [TURNING_TO_RIGHT, arrived, RIGHT]
+  - [LEFT, TURN_RIGHT, TURNING_TO_INITIAL]
+  - [RIGHT, TURN_LEFT, TURNING_TO_INITIAL]
+  - [TURNING_TO_INITIAL, arrived, INITIAL]
+
+contracts:
+  - id: C1
+    desc: motor starts at most once per req_id (safety contract)
+    kind: at_most_once
+    per: req_id
+    event: device.effect(motor_start)
+
+  - id: C2
+    desc: the client closes each turn command exactly once, within 15 s of first sending it
+    kind: exactly_once
+    per: req_id
+    start: client.send(TURN_LEFT|TURN_RIGHT)
+    event: client.handle(DONE|ERROR)
+    within: 15s
+
+  - id: C3
+    desc: device state changes only along declared transitions, starting from the previous state
+    kind: state_machine
+    event: device.state
+
+  - id: C4
+    desc: the client completes a command only with a DONE carrying that command's req_id
+    kind: forbid
+    event: client.handle(DONE)
+    when: data.msg_req_id != req_id
+
+  - id: C5
+    desc: STATUS_REPLY reports the device's current state
+    kind: consistent
+    event: device.send(STATUS_REPLY)
+    field: data.state
+    equals: last(device.state).name
+
+  - id: C6
+    desc: the client has at most one turn command open at a time
+    kind: at_most_one_open
+    per: req_id
+    opens: client.send(TURN_LEFT|TURN_RIGHT)
+    closes: client.handle(DONE|ERROR)
+
+  - id: C7
+    desc: the device sends no more DONE/ERROR for a req_id than requests it received with that req_id
+    kind: count_le
+    per: req_id
+    event: device.send(DONE|ERROR)
+    bound: device.recv(TURN_LEFT|TURN_RIGHT)
+
+  - id: C8
+    desc: the device never sends both DONE and ERROR for the same req_id
+    kind: mutually_exclusive
+    per: req_id
+    events: [device.send(DONE), device.send(ERROR)]
