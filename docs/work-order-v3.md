@@ -125,7 +125,7 @@ Model interpolation, listed here in v3, is now part of WP5b.
 Constraints (carried over from v3, with two additions):
 
 - Keep lift and turntable as examples under `examples/` or `sut/`; they are not the product.
-- Do not rewrite the README purpose statement or Status without an instruction.
+- Do not rewrite the README purpose statement without an instruction. Status lines are updated in the PR of the WP that changes them, and say only what is implemented.
 - One WP per branch and PR. Stop and report after each WP. Do not start the next one without an instruction.
 - The operator merges every PR. Never merge without an explicit instruction that names the PR; if the number is missing, ask.
 - Do not change the documents the planner reads (protocol, contracts, plan format) while an experiment is registered or running; the inputs of earlier rounds must stay comparable.
