@@ -4,6 +4,8 @@
 
 This revision replaces v3 in full. The goal, principles, architecture, and standing constraints are carried over from v3; WP1–WP4 are recorded as done; WP5 onward is rewritten from the experiment results. Replace `docs/work-order-v3.md` with this text in one PR; the planner never reads this file, so past experiments stay comparable.
 
+Everything that lands in the repository (code, docs, contracts, commit messages) is written in English.
+
 ## Goal, non-goals, principles
 
 replayspect records an execution as a trace, replays it deterministically with rewind, judges it against behavioral contracts, and shows "what if" by changing one thing and replaying. Where no record exists, models and an LLM fill in possible scenarios, but fact and reconstruction are always kept apart.
@@ -55,7 +57,7 @@ The experiments confirmed two claims and corrected four. The rest of this docume
 
 - Deliverable: `replayspect ingest <log> --rules <rules.yaml>` writes a trace file with a header (`source: adapter:text`). Rules map regex captures to trace events (kind, actor, time, name, req_id, data). No LLM in this path.
 - Every ingested event is `fidelity: exact`. Lines no rule matches are counted and listed, never silently dropped.
-- Clock fields in the rules file: timestamp format, timezone, and a per-source tolerance. Ingest does no clock correction; that belongs to WP5b.
+- Clock fields in the rules file: timestamp format, timezone, and a per-source tolerance. Events that are out of order or outside the tolerance are flagged, not dropped. Ingest does no clock correction; that belongs to WP5b.
 - Done when: a sample log round-trips into a trace that `rewind` reads unchanged; a bad rules file fails with the rule name and log line number; the unmatched-line report is in the summary.
 
 ## WP5b — Driven replay (seed-blind reproduction)
@@ -76,27 +78,34 @@ Ingest gives a trace that can be rewound but not reproduced. This package makes 
 
 v3 had the symptom oracle (WP6) and contract provenance (WP7) as separate packages. They are merged because the open design task from the experiments spans both: a defect description must arrive in a form the engine can check.
 
-- Symptom oracle: a small YAML with the required events in order and a time tolerance; anything not listed is free. A human writes the symptom at outcome level (what was seen on the floor), with no mechanism and no contract vocabulary. It replaces the "same violated contract set" condition of the WP4 match.
+- Symptom oracle: a small YAML with the required events in order and a time tolerance; anything not listed is free. The LLM may draft a symptom from a log; a human confirms it before use and keeps it at outcome level (what was seen on the floor), with no mechanism and no contract vocabulary. The engine evaluates it; the LLM never does. It replaces the "same violated contract set" condition of the WP4 match.
+- `judge` reports both results: the contract result and the symptom match (n/m lines matched, first mismatch).
 - Defect claim: the LLM states a defect as trigger and effect, and also drafts it as a contract candidate in the existing DSL. Prose alone is not accepted as a result.
 - Engine check of a claim, automatic on submission: the candidate must be violated by the incident trace and must hold on N normal traces. The engine also removes each item of the minimized reproducing plan in turn and reports which ones are necessary. Neither step is a tool the planner chooses to call.
 - Promotion: a claim that passes both checks goes to a human, who confirms or drops it. Confirmed candidates become contracts; contracts are frozen within a round and versioned between rounds.
-- Provenance: `grade` (`stated` | `mined` | `generic` | `symptom`) and `source` on every contract; the violation report's first line prints id, grade, and source.
-- Generic library in `contracts/generic/`; module contracts in `contracts/<module>/`; interaction rules only in `contracts/system/`.
+- Provenance: `grade` (`stated` | `mined` | `generic` | `symptom`) and `source` (doc line, trace count, or log id) on every contract; the violation report's first line prints contract id, grade, and source.
+- Generic library in `contracts/generic/`: one response per request at most; one effect per retried req_id at most; no state transition never observed in normal runs; no effect from a response arriving after timeout.
+- Module contracts in `contracts/<module>/`; interaction rules ("no top-module motion while driving") live only in `contracts/system/`.
 - First candidate for the loop: the contract gap recorded in the operator's private WP3 notes. It is not described in the repository.
-- Done when: one bridge incident runs log → symptom → reproduction → claim → both engine checks → human confirmation, and the confirmed contract catches the same incident on replay.
+- Done when, all three: the lift's existing contracts carry `grade: stated`; the generic set runs on both SUTs with no false positives on 1,000 normal seeds; one bridge incident runs log → symptom → reproduction → claim → both engine checks → human confirmation, and the confirmed contract catches the same incident on replay.
 
 ## WP8 — Provider interface and a task description in pieces
 
-- One interface, three implementations: `api`, `mcp-tool` (first), `mcp-sampling` (stub until a host supports it). Same command vocabulary for all three.
-- Split the task description. No single tool result exceeds 20,000 characters. Protocol, contracts, plan format, and the log are separate reads; the log is read by window through `rewind`, not in one piece.
-- Session budget is server-side state. Report input and output tokens per session in every experiment table.
+- One interface, three implementations: `api` (replayspect calls the model; owns the loop and the round cap), `mcp-tool` (an MCP server that wraps the CLI; the host's model calls replayspect; built first), `mcp-sampling` (server asks the host's model via `sampling/createMessage`; stub only until a host supports it). Same command vocabulary for all three.
+- Build order: engine → CLI → MCP server (thin wrapper) → api adapter → sampling stub.
+- Never send a raw log file to a model. The model's inputs are the diff from a normal run, a time window read through `rewind`, and the summary line from `judge`. The bridge experiments handed the planner a whole one-sided log in one piece; this package replaces that.
+- Split the task description. No single tool result exceeds 20,000 characters. Protocol, contracts, and plan format are separate reads.
+- Session budget lives server-side as state ("N rewinds per session") so it holds even when the host owns the loop. Report input and output tokens per session in every experiment table.
 - Skill file `skills/replayspect-rewind.md` gives the call order: ingest → symptom → reader → (LLM if stuck) → minimize → claim → engine checks → candidate. The engine works with the skill absent.
-- Done when: a bridge incident runs through `mcp-tool` with every tool result under the size limit, and the input tokens per session are reported against the WP4 figures.
+- Done when: a bridge incident runs through `mcp-tool` with every tool result under the size limit and the input tokens per session reported against the WP4 figures; the same incident through `api` gives identical engine results.
 
 ## WP9 — Candidate ranking
 
-- Unchanged from v3: confidence tier first, severity tier second, both from engine facts only.
-- It depends on WP6/7: the confidence inputs are the two automatic checks.
+- When several candidates survive, sort by confidence tier first, severity tier second. Both are computed from engine facts only; a model's self-reported confidence is never an input.
+- Confidence inputs: both engine checks of WP6/7 passed (top tier), fraction of log lines matched, fraction of reconstructed events (lower is better), and for simulator incidents the number of seeds reproducing the same outcome.
+- Severity inputs: grade of the violated contract (generic > stated > mined > symptom), a human-set `severity` attribute on the contract, effect kind (motor action > state transition > wrong reject reason).
+- Report line format: `candidate id · confidence tier · severity tier · matched log lines · unconstrained parts · counterfactual result`.
+- It depends on WP6/7: the top confidence tier is the two automatic checks.
 - Done when: ranked candidates appear in an experiment table and the ranking is reproducible from the trace alone.
 
 ## Later work
@@ -119,7 +128,7 @@ Constraints (carried over from v3, with two additions):
 - Do not rewrite the README purpose statement or Status without an instruction.
 - One WP per branch and PR. Stop and report after each WP. Do not start the next one without an instruction.
 - The operator merges every PR. Never merge without an explicit instruction that names the PR; if the number is missing, ask.
-- Do not change the documents the planner reads while an experiment is registered or running.
+- Do not change the documents the planner reads (protocol, contracts, plan format) while an experiment is registered or running; the inputs of earlier rounds must stay comparable.
 - Hidden variants, incident files, seeds, defect forms, and scoring keys stay outside the repository until the experiment is published.
 - Experiments are preregistered. Anything that differs from the registration, however small, goes into "Departures from the registration" with session IDs.
 - Tool output is short by default; detail goes to files. Added: no tool result above 20,000 characters.
