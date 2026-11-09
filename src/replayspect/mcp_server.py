@@ -102,7 +102,7 @@ def build_bridge_server(session: BridgeSession):
     mode = session.config.mode
     server = _server_class()("replayspect", instructions=BRIDGE_INSTRUCTIONS[mode])
 
-    @server.tool()
+    @server.tool(meta={"anthropic/maxResultSizeChars": 200000})
     async def describe() -> dict[str, Any]:
         """The task and everything you get about the recorded failing run, the protocol and contracts
         (YAML), and what this session allows. Call this first."""
