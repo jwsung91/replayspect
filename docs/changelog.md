@@ -87,3 +87,12 @@ defect; `symptom_only`, with no log, the chance level of the answer (`mcp_server
 keeping its link data, and violations without details. `check_cause` no longer ends the session;
 the defect answer or `finish` does, and a used-up budget leaves the answer open. With `--incident`
 the MCP server's budget defaults to 120.
+
+Main trial (`docs/experiments/bridge-02.md`), 35 LLM sessions on 16 logs. Condition A (lift,
+published defects): LLM alone named a right defect on 8 of 8 logs, but the symptom sentence alone
+did on 6 of 8, so the log decided only two. Condition B (turntable, blind scoring): the symptom
+alone gave partly right answers on every run, and the answers that saw the log were right on 11 of
+12. The LLM reproduced 11 of 16 logs in 1 to 6 runs, the rule-based reader 8 in 6 to 114, and the
+two overlap on 6. `check_cause` was called once in 16 sessions. The bridge `describe` tool now
+declares a 200,000-character result size, because the client cut off one session's input at
+50,000 characters.
