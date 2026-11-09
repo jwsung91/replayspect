@@ -107,6 +107,9 @@ class System:
     vocabulary: PlanVocabulary | None = None
     #: Set when ``run`` is an implementation variant (see :func:`get_system`).
     variant: VariantRef | None = None
+    #: Published defects ``(id, description)``: the mutant list a planner may choose from
+    #: (WP4 condition A). Empty when the system's defects are not published.
+    published_defects: tuple[tuple[str, str], ...] = ()
 
     def contracts(self) -> ContractSet:
         return load_contracts(self.contracts_path)
@@ -116,6 +119,12 @@ def _run_lift(seed: int, plan: FaultPlan | None, mutants: tuple[str, ...], until
     from replayspect.sut.lift import run_lift
 
     return run_lift(seed, plan=plan, mutants=mutants, until_us=until_us)
+
+
+def _lift_defects() -> tuple[tuple[str, str], ...]:
+    from replayspect.sut.lift import MUTANTS
+
+    return tuple(MUTANTS.items())
 
 
 def _lift_profile() -> ChannelProfile:
@@ -140,7 +149,7 @@ SYSTEMS: dict[str, System] = {
     "lift.v0": System(
         "lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000,
         _lift_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-lift.md",
-        _lift_vocabulary(),
+        _lift_vocabulary(), published_defects=_lift_defects(),
     ),
     "turntable.v0": System(
         "turntable.v0", _run_turntable, ROOT / "contracts" / "turntable.v0.yaml", 90_000_000,

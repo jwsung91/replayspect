@@ -75,7 +75,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v3 WP2 트레이스 스키마: `docs/trace-schema.md`, `schemas/trace-1.schema.json`, `src/replayspect/tracefile.py`. 헤더(선택), 사건마다 fidelity·source, 다이제스트는 사건 핵심 필드만, `rewind --full`은 잘라낸 트레이스 파일
 - [x] v3 WP3 구현 변형: `--variant 파일.py:이름`으로 패키지 밖 구현을 실행(`src/replayspect/variant.py`). `System.run`만 바뀌고 repro·세션 로그에 spec과 파일 해시를 남김. 트레이스 헤더와 계획기 출력에는 없음
 - [x] v3 WP4 다리 실험: 하네스(`incident.py`, `bridge.py`, MCP `--incident`, `incident` 명령)와 최소 시행. LLM은 로그 4개를 모두 2~6회 만에 재현, 기준선 160세션은 0. 결과·사전 등록과 다른 점은 `docs/experiments/bridge-01.md`. 본 시행은 따로 등록
-- [ ] v3 WP4 본 시행 준비: 규칙 기반 로그 읽기 재현기(`reconstruct.py`, `incident baseline --strategy reconstruct`, 토큰 0)가 주 기준선. 결함 질문·증상 입력·타임라인 제한은 다음 PR
+- [ ] v3 WP4 본 시행 준비: 규칙 기반 로그 읽기 재현기(`reconstruct.py`, `incident baseline --strategy reconstruct`, 토큰 0)가 주 기준선. 결함 질문(`name_defect`/`describe_defect`), 증상(`Incident.symptom`), 모드(full/answer_only/symptom_only), 실행 타임라인은 보이는 쪽만. 설계는 `docs/experiments/bridge-02.md`. 사전 등록·시행은 남음
 - [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)

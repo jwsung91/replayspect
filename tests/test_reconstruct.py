@@ -109,7 +109,7 @@ def test_budget_ends_the_search(tmp_path):
     f = write(tmp_path, DROP_DELAY)
     s, r = reconstruct_baseline(BridgeConfig(f, budget=2), tmp_path / "log.jsonl")
     assert r.status == "budget" and r.runs == 3  # the third call is refused
-    assert s.ended == "budget used up"
+    assert not s.can_run() and s.ended == "finished by the planner"
 
 
 def test_not_reproducing_finishes_the_session_with_the_reason(tmp_path):

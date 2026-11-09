@@ -158,13 +158,15 @@ def test_preconditions_catch_a_defect_only_the_poll_replies_show():
 # -- bridge sessions -------------------------------------------------------------------------------
 
 
-def test_reproduce_then_confirm_the_cause(inc_file, tmp_path):
+def test_reproduce_confirm_the_cause_then_name_the_defect(inc_file, tmp_path):
     log = tmp_path / "log.jsonl"
     s = BridgeSession(BridgeConfig(inc_file, budget=10), log)
     out = s.run_plan(PLAN)
     assert out["status"] == "ok" and out["reproduction"]["reproduced"]
     assert s.check_cause(0, "faults[0]") == {"status": "ok", "run": 1, "confirmed": True, "violations": [],
                                              "budget": {"total": 10, "used": 2, "left": 8}}
+    assert s.ended is None  # a confirmed cause no longer ends the session; the defect answer does
+    assert s.name_defect("M1") == {"status": "ok", "recorded": "M1", "session": "ended"}
     assert s.run_plan(PLAN)["status"] == "session_ended" and s.used == 2
     assert verify_log(log) == []
     summary = summarize_log(log)
@@ -172,6 +174,9 @@ def test_reproduce_then_confirm_the_cause(inc_file, tmp_path):
     assert summary["candidates"] == 1 and summary["candidate_entries"] == ["faults[0]"]
     assert (summary["nominations"], summary["confirmed"], summary["nominated_hidden_fault"]) == (1, 1, 1)
     assert summary["exact_reproduction"]
+    assert summary["defect"]["answer"] == "M1" and summary["defect"]["correct"]
+    assert "M1" in summary["defect"]["equivalent"]
+    assert summary["defect"]["chance"] == len(summary["defect"]["equivalent"]) / 11
 
 
 def test_cause_checks_are_counted_and_need_a_reproducing_run(inc_file):
@@ -182,8 +187,9 @@ def test_cause_checks_are_counted_and_need_a_reproducing_run(inc_file):
     s.run_plan(PLAN)  # run 3: reproduces
     assert s.check_cause(3, "faults[3]")["status"] == "rejected"
     assert s.check_cause(3, "bogus")["status"] == "rejected"
-    assert s.used == 6 and s.ended == "budget used up"
-    assert s.check_cause(3, "faults[0]")["status"] == "session_ended" and s.used == 6
+    assert s.used == 6 and not s.can_run() and s.ended is None
+    assert s.check_cause(3, "faults[0]")["status"] == "budget_exhausted" and s.used == 6
+    assert s.name_defect("M1")["status"] == "ok"  # out of runs, the answer is still open
 
 
 def test_unconfirmed_cause_keeps_the_session_open(inc_file):
@@ -195,7 +201,7 @@ def test_unconfirmed_cause_keeps_the_session_open(inc_file):
     out = s.check_cause(0, "disconnects[0]")
     assert out["status"] == "ok" and not out["confirmed"] and out["violations"] == ["C8"]
     assert s.ended is None
-    assert s.check_cause(0, "faults[0]")["confirmed"] and s.ended == "cause confirmed"
+    assert s.check_cause(0, "faults[0]")["confirmed"] and s.ended is None
 
 
 def test_rejected_plans_and_refusals(inc_file):
@@ -286,7 +292,7 @@ def test_random_baseline_is_deterministic_and_follows_the_rules(inc_file, tmp_pa
     a = random_baseline(BridgeConfig(inc_file, budget=8), 0, tmp_path / "a.jsonl")
     b = random_baseline(BridgeConfig(inc_file, budget=8), 0, tmp_path / "b.jsonl")
     ra, rb = read_log(tmp_path / "a.jsonl")[1:], read_log(tmp_path / "b.jsonl")[1:]
-    assert ra == rb and a.used == b.used <= 8 and a.ended is not None
+    assert ra == rb and a.used == b.used <= 8 and not a.can_run()
     assert all(r["status"] == "ok" for r in ra)  # random plans always pass the session's checks
     assert verify_log(tmp_path / "a.jsonl") == []
 
@@ -320,7 +326,7 @@ def test_cli_incident_commands(inc_file, tmp_path, capsys):
     assert main(["incident", "verify", log]) == 0 and "replay ok" in capsys.readouterr().out
 
 
-def test_mcp_bridge_server_exposes_four_tools(inc_file, tmp_path):
+def test_mcp_bridge_server_tools_for_a_published_defect_list(inc_file, tmp_path):
     pytest.importorskip("mcp")
     import asyncio
 
@@ -328,4 +334,4 @@ def test_mcp_bridge_server_exposes_four_tools(inc_file, tmp_path):
 
     server = build_bridge_server(BridgeSession(BridgeConfig(inc_file, budget=3), tmp_path / "log.jsonl"))
     tools = asyncio.run(server.list_tools())
-    assert sorted(t.name for t in tools) == ["check_cause", "describe", "finish", "run_plan"]
+    assert sorted(t.name for t in tools) == ["check_cause", "describe", "finish", "name_defect", "run_plan"]

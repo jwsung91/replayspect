@@ -8,15 +8,32 @@ checked against the incident with :func:`~replayspect.incident.wp4_match`.
 Once a run reproduces the incident, the planner can name one entry of its
 plan as the cause: the engine reruns the plan without that entry and the
 cause is **confirmed** when none of the contracts the incident violated is
-violated any more.
+violated any more. The question that counts is the **defect**: with a
+published defect list (condition A) the planner names one id with
+``name_defect``; without one (condition B) it describes the faulty behaviour
+with ``describe_defect``. One answer, recorded and not judged here.
+
+Modes (:data:`MODES`):
+
+* ``full``: log, symptom, runs, cause checks, defect answer.
+* ``answer_only``: log, symptom and a reproducing plan given by the operator
+  (e.g. the rule-based reader's) with the logged side of its run; defect
+  answer only. Measures "reproduce deterministically, infer the defect with
+  a model".
+* ``symptom_only``: the symptom and no log; defect answer only. The chance
+  level of the defect answer.
 
 Rules enforced here, as in :mod:`replayspect.session`:
 
 * **Budget.** ``run_plan`` and ``check_cause`` each use one run, rejected
   calls included. When the budget is used up, calls are refused without
   counting.
-* **End.** The session ends at the first confirmed cause, at ``finish``, or
-  when the budget runs out. Later calls are refused without counting.
+* **End.** The session ends at the defect answer or at ``finish``. A used-up
+  budget refuses further runs and cause checks but leaves the defect answer
+  open. Calls after the end are refused without counting.
+* **Own runs.** ``run_plan`` shows only the logged participant's side of the
+  planner's run (:func:`~replayspect.incident.run_view`: the run's own link
+  data kept) and the contracts it violated, without their details.
 * **Hidden.** Seed, plan, mutants or variant, the incident's contracts and
   digest, the clock offset and every path stay out of what the planner gets.
 * **Log.** Every call is appended to a JSON Lines log opened by exclusive
@@ -41,12 +58,13 @@ from replayspect.incident import (
     Incident,
     Match,
     read_incident,
+    defect_class,
     run_incident,
     run_view,
     view_text,
     wp4_match,
 )
-from replayspect.runner import harness_version, run_once, run_summary
+from replayspect.runner import get_system, harness_version, run_once, summary_line
 from replayspect.session import PLAN_FORMAT_PATH
 from replayspect.sim.link import Disconnect, FaultPlan, LinkError, check_plan_bounds
 from replayspect.tracefile import canonical
@@ -54,14 +72,35 @@ from replayspect.tracefile import canonical
 LOG_FORMAT = "replayspect.bridge/1"
 SECTIONS = ("delays", "faults", "disconnects")
 
-TASK = (
-    "A failing run of this system was recorded, but you only get the log below. Find a fault plan that "
-    "reproduces it: run_plan reports whether your run matches the log line by line. Every run uses the "
-    "same environment as the recorded one, so only the faults you choose differ. Once a run reproduces "
-    "the log, name the plan entry you think caused the failure with check_cause: the run is repeated "
-    "without that entry, and the cause is confirmed if the failure goes away. The session ends at the "
-    "first confirmed cause, when you call finish, or when the budget runs out."
-)
+MODES = ("full", "answer_only", "symptom_only")
+#: Longest accepted describe_defect answer.
+MAX_DESCRIPTION = 2000
+QUESTION = {
+    "name": "which defect in the implementation caused the failure: call name_defect with one id from the "
+            "defect list. One answer.",
+    "describe": "what defect in the implementation caused the failure: call describe_defect with a short "
+                "description of the faulty behaviour. One answer.",
+}
+TASKS = {
+    "full": (
+        "A failing run of this system was recorded. You get one participant's log of it and a one-line symptom "
+        "report. Find a fault plan that reproduces the log: run_plan reports whether your run matches the log "
+        "line by line, and shows you only the logged participant's side of your run. Every run uses the same "
+        "environment as the recorded one, so only the faults you choose differ. Then answer {question} Your "
+        "answer ends the session. You may name the plan entry you think triggered the failure with check_cause: "
+        "the run is repeated without that entry, and it is confirmed if the failure goes away. The session ends "
+        "at your answer or when you call finish; when the budget runs out you can still answer."
+    ),
+    "answer_only": (
+        "A failing run of this system was recorded. You get one participant's log of it, a one-line symptom "
+        "report, and a fault plan that reproduces the log, with the logged participant's side of that run. "
+        "Answer {question} Your answer ends the session."
+    ),
+    "symptom_only": (
+        "A failing run of this system was reported with the one-line symptom below. There is no log. "
+        "Answer {question} Your answer ends the session."
+    ),
+}
 VIEW_NOTES = {
     0: "The log is {actor}-side only; its clock is the simulator's.",
     1: "The log is {actor}-side only; its clock is off from the simulator's by an unknown constant.",
@@ -98,15 +137,31 @@ class BridgeConfig:
     incident: str  # path of the incident file
     budget: int = 120
     max_faults: int = 20
+    mode: str = "full"
+    #: answer_only: the reproducing plan given to the planner.
+    given_plan: Mapping[str, Any] | None = None
+
+    @classmethod
+    def from_log(cls, cfg: Mapping[str, Any]) -> "BridgeConfig":
+        return cls(cfg["incident"], cfg["budget"], cfg["max_faults"], cfg.get("mode", "full"), cfg.get("given_plan"))
 
 
 class BridgeSession:
     def __init__(self, config: BridgeConfig, log_path: Path | None = None) -> None:
         self.config, self.log_path = config, log_path
+        if config.mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}, got {config.mode!r}")
+        if (config.mode == "answer_only") != (config.given_plan is not None):
+            raise ValueError("a given plan goes with mode answer_only, and only with it")
         self.incident: Incident = read_incident(config.incident)
         self.system = self.incident.system_obj()
         if self.system.protocol_path is None:
             raise ValueError(f"system {self.system.name} has no protocol description for planners")
+        if config.mode != "full" and self.incident.symptom is None:
+            raise ValueError(f"mode {config.mode} needs an incident with a symptom")
+        published = get_system(self.incident.system).published_defects
+        self.defects: dict[str, str] = dict(published) if published and self.incident.variant is None else {}
+        self.question = "name" if self.defects else "describe"
         self.hidden = run_incident(self.incident, self.system)
         if self.incident.expect and self.hidden.trace.digest() != self.incident.expect.get("digest"):
             raise ValueError("the incident's hidden run no longer has its recorded digest")
@@ -115,14 +170,24 @@ class BridgeSession:
         self.runs: dict[int, dict[str, Any]] = {}  # run index -> {"plan": dict, "reproduced": bool}
         self.last_record: dict[str, Any] | None = None
         self.last_run = None  # the Run of the last accepted run_plan (baselines read its own view)
+        self.given: dict[str, Any] | None = None
+        if config.given_plan is not None:
+            raw, parsed = self._parse(config.given_plan)
+            run = self._run(parsed)
+            m = wp4_match(self.incident, self.hidden, run, self.system)
+            if not m.reproduced:
+                raise ValueError("the given plan does not reproduce the incident")
+            self.given = {"plan": raw, **self._own_report(run, m)}
         self._texts = {
             "protocol": self.system.protocol_path.read_text(encoding="utf-8"),
             "contracts": self.system.contracts_path.read_text(encoding="utf-8"),
             "plan_format": PLAN_FORMAT_PATH.read_text(encoding="utf-8"),
             "log": view_text(self.incident, self.hidden),
         }
+        if self.incident.symptom is not None:
+            self._texts["symptom"] = self.incident.symptom
         head: dict[str, Any] = {
-            "type": "session", "format": LOG_FORMAT, "config": {**vars_of(config)},
+            "type": "session", "format": LOG_FORMAT, "config": {**vars_of(config)}, "question": self.question,
             "incident_sha256": hashlib.sha256(Path(config.incident).read_bytes()).hexdigest(),
             "hashes": {**{k: _sha(v) for k, v in self._texts.items()}, "describe": self.describe_sha256()},
             "harness": harness_version(), "python": platform.python_version(),
@@ -147,18 +212,27 @@ class BridgeSession:
         return {"total": self.config.budget, "used": self.used, "left": self.config.budget - self.used}
 
     def _describe(self, budget: dict[str, int]) -> dict[str, Any]:
-        note = VIEW_NOTES[1 if self.incident.clock_offset_us else 0].format(actor=self.incident.actor)
-        return {
-            "system": self.system.name,
-            "task": TASK,
-            "log_note": note,
-            "log": self._texts["log"],
-            "protocol": self._texts["protocol"],
-            "contracts": self._texts["contracts"],
-            "plan_format": self._texts["plan_format"],
-            "limits": self.limits(),
-            "budget": budget,
-        }
+        mode = self.config.mode
+        d: dict[str, Any] = {"system": self.system.name,
+                             "task": TASKS[mode].format(question=QUESTION[self.question])}
+        if self.incident.symptom is not None:
+            d["symptom"] = self.incident.symptom
+        if mode != "symptom_only":
+            d["log_note"] = VIEW_NOTES[1 if self.incident.clock_offset_us else 0].format(actor=self.incident.actor)
+            d["log"] = self._texts["log"]
+        d["protocol"] = self._texts["protocol"]
+        d["contracts"] = self._texts["contracts"]
+        if self.defects:
+            d["defects"] = dict(self.defects)
+        if mode != "symptom_only":
+            d["plan_format"] = self._texts["plan_format"]
+        if mode == "full":
+            d["limits"] = self.limits()
+            d["budget"] = budget
+        if mode == "answer_only":
+            d["reproducing_plan"] = self.given["plan"]
+            d["reproducing_run"] = {k: v for k, v in self.given.items() if k != "plan"}
+        return d
 
     def describe(self) -> dict[str, Any]:
         """Everything a planner gets, and nothing about the hidden run."""
@@ -174,9 +248,37 @@ class BridgeSession:
     def _refuse(self) -> dict[str, Any] | None:
         if self.ended is not None:
             return {"status": "session_ended", "reason": self.ended, "budget": self.budget()}
+        if self.config.mode != "full":
+            return {"status": "not_available", "error": f"no runs in mode {self.config.mode}"}
         if self.used >= self.config.budget:
             return {"status": "budget_exhausted", "budget": self.budget()}
         return None
+
+    def can_run(self) -> bool:
+        """Runs are still accepted (baseline loops stop when this turns false)."""
+        return self.ended is None and self.config.mode == "full" and self.used < self.config.budget
+
+    def own_timeline(self, run) -> list[str]:
+        """The logged participant's side of a planner's run, polls left out, in the run's clock."""
+        lines = []
+        for ev in run_view(run.trace, self.incident.actor):
+            if ev.name in self.system.quiet_messages:
+                continue
+            link = ev.data.get("link", {})
+            line = summary_line(ev)
+            if ev.kind == "recv" and "sent_us" in link:
+                line += f" sent={link['sent_us'] / 1e6:.3f}s delay={link['delay_us'] / 1e6:.3f}s"
+            lines.append(line)
+        return lines
+
+    def _own_report(self, run, m: Match) -> dict[str, Any]:
+        return {
+            "reproduction": m.for_planner(self.incident.clock_offset_us),
+            "violations": [{"contract": v.contract, "req_id": v.req_id,
+                            "at_s": round(run.trace[v.seq].t_us / 1e6, 3) if v.seq < len(run.trace) else None}
+                           for v in run.first()],
+            "timeline": self.own_timeline(run),
+        }
 
     def _parse(self, plan: Mapping[str, Any] | str) -> tuple[dict[str, Any], FaultPlan]:
         if isinstance(plan, str):
@@ -217,14 +319,13 @@ class BridgeSession:
         record.update(status="ok", violated=sorted(run.violated()), digest=run.trace.digest(),
                       no_effect={k: len(v) for k, v in report.items()}, match=match_record(m))
         self._log(record)
+        own = self._own_report(run, m)
         return {
             "status": "ok", "run": idx,
-            "reproduction": m.for_planner(self.incident.clock_offset_us),
-            "violations": [{"contract": v.contract, "req_id": v.req_id, "detail": v.detail,
-                            "at_s": round(run.trace[v.seq].t_us / 1e6, 3) if v.seq < len(run.trace) else None}
-                           for v in run.first()],
+            "reproduction": own["reproduction"],
+            "violations": own["violations"],
             "no_effect": report,
-            "timeline": run_summary(run, self.system),
+            "timeline": own["timeline"],
             "budget": self._after(),
         }
 
@@ -250,11 +351,34 @@ class BridgeSession:
         cf = self._run(parsed)
         confirmed = not (self.hidden.violated() & cf.violated())
         record.update(status="ok", confirmed=confirmed, violated=sorted(cf.violated()), digest=cf.trace.digest())
-        if confirmed:
-            self.ended = "cause confirmed"
         self._log(record)
         return {"status": "ok", "run": idx, "confirmed": confirmed,
                 "violations": sorted(cf.violated()), "budget": self._after()}
+
+    def _answer(self, question: str, answer: str) -> dict[str, Any]:
+        if self.ended is not None:
+            return {"status": "session_ended", "reason": self.ended, "budget": self.budget()}
+        if question != self.question:
+            other = "name_defect" if self.question == "name" else "describe_defect"
+            return {"status": "rejected", "error": f"this session asks for {other}"}
+        self.ended = "defect answered"
+        self._log({"type": "defect", "question": question, "answer": answer, "after_runs": self.used})
+        return {"status": "ok", "recorded": answer, "session": "ended"}
+
+    def name_defect(self, defect_id: str) -> dict[str, Any]:
+        """Condition A: the answer is one id from the published defect list. Ends the session."""
+        if self.question == "name" and self.ended is None and defect_id not in self.defects:
+            return {"status": "rejected", "error": f"not an id from the defect list: {defect_id!r}"}
+        return self._answer("name", defect_id)
+
+    def describe_defect(self, text: str) -> dict[str, Any]:
+        """Condition B: the answer is a short description of the faulty behaviour. Ends the session."""
+        if self.question == "describe" and self.ended is None:
+            if not isinstance(text, str) or not text.strip():
+                return {"status": "rejected", "error": "the description is empty"}
+            if len(text) > MAX_DESCRIPTION:
+                return {"status": "rejected", "error": f"keep the description under {MAX_DESCRIPTION} characters"}
+        return self._answer("describe", text.strip() if isinstance(text, str) else text)
 
     def finish(self, note: str = "") -> dict[str, Any]:
         """End the session. Does not use the budget."""
@@ -264,8 +388,6 @@ class BridgeSession:
         return {"status": "session_ended", "reason": self.ended, "budget": self.budget()}
 
     def _after(self) -> dict[str, int]:
-        if self.ended is None and self.used >= self.config.budget:
-            self.ended = "budget used up"
         return self.budget()
 
     def _log(self, record: dict[str, Any]) -> None:
@@ -280,7 +402,10 @@ class BridgeSession:
 
 
 def vars_of(config: BridgeConfig) -> dict[str, Any]:
-    return {"incident": config.incident, "budget": config.budget, "max_faults": config.max_faults}
+    d = {"incident": config.incident, "budget": config.budget, "max_faults": config.max_faults, "mode": config.mode}
+    if config.given_plan is not None:
+        d["given_plan"] = dict(config.given_plan)
+    return d
 
 
 def match_record(m: Match) -> dict[str, Any]:
@@ -302,14 +427,16 @@ def read_log(path: Path) -> list[dict[str, Any]]:
 def verify_log(path: Path) -> list[int]:
     """Rerun every call of a log; return the run numbers that came out different."""
     records = read_log(path)
-    cfg = records[0]["config"]
-    s = BridgeSession(BridgeConfig(cfg["incident"], cfg["budget"], cfg["max_faults"]))
+    s = BridgeSession(BridgeConfig.from_log(records[0]["config"]))
     bad = []
     for r in records[1:]:
         if r["type"] == "run":
             s.run_plan(r["plan"])
         elif r["type"] == "cause":
             s.check_cause(r["of_run"], r["entry"])
+        elif r["type"] == "defect":
+            (s.name_defect if r["question"] == "name" else s.describe_defect)(r["answer"])
+            continue
         else:
             s.finish(r.get("note", ""))
             continue
@@ -345,8 +472,7 @@ def necessary_entries(session: BridgeSession, plan: Mapping[str, Any]) -> list[s
 def summarize_log(path: Path) -> dict[str, Any]:
     """The four WP4 metrics of one session, plus diagnostics. Operator-only (reads the incident)."""
     records = read_log(path)
-    cfg = records[0]["config"]
-    s = BridgeSession(BridgeConfig(cfg["incident"], cfg["budget"], cfg["max_faults"]))
+    s = BridgeSession(BridgeConfig.from_log(records[0]["config"]))
     runs = [r for r in records[1:] if r["type"] == "run" and r["status"] == "ok"]
     causes = [r for r in records[1:] if r["type"] == "cause" and r["status"] == "ok"]
     first = next((r for r in runs if r["match"]["reproduced"]), None)
@@ -362,12 +488,21 @@ def summarize_log(path: Path) -> dict[str, Any]:
     for t in DIAGNOSTIC_TOLERANCES_US:
         hit = next((r["run"] for r in runs if r["match"]["within"][str(t)]), None)
         by_tol[t] = None if hit is None else hit + 1
+    answer = next((r for r in records[1:] if r["type"] == "defect"), None)
+    defect: dict[str, Any] = {"question": s.question, "answer": None if answer is None else answer["answer"]}
+    if s.question == "name":
+        cls = defect_class(s.incident) or []
+        defect.update(equivalent=cls, chance=len(cls) / len(s.defects),
+                      correct=None if answer is None else answer["answer"] in cls)
     return {
+        "mode": s.config.mode,
+        "defect": defect,
         "calls": len(records) - 1,
         "reproduced": first is not None,
         "runs_to_reproduction": None if first is None else first["run"] + 1,
         "candidates": len(candidates),
         "candidate_entries": candidates,
+        "plan_entries": 0 if first is None else len(plan_entries(plans[first["run"]])),
         "nominations": len(causes),
         "confirmed": sum(1 for c in causes if c["confirmed"]),
         "nominated_hidden_fault": sum(hit_hidden),
@@ -444,7 +579,7 @@ def name_causes(session: BridgeSession, rng: random.Random, run: int) -> None:
     entries = plan_entries(session.runs[run]["plan"])
     rng.shuffle(entries)
     for e in entries:
-        if session.ended is not None:
+        if not session.can_run():
             return
         if session.check_cause(run, e).get("confirmed"):
             return
@@ -454,7 +589,7 @@ def random_baseline(config: BridgeConfig, seed: int, log_path: Path | None = Non
     """Random plans until a run reproduces, then random cause naming; same budget and end rules."""
     s = BridgeSession(config, log_path)
     rng = random.Random(f"bridge-random-{seed}")
-    while s.ended is None:
+    while s.can_run():
         out = s.run_plan(random_plan(rng, s))
         if out.get("reproduction", {}).get("reproduced"):
             name_causes(s, rng, out["run"])
@@ -476,7 +611,7 @@ def hypothesis_baseline(config: BridgeConfig, hyp_seed: int, log_path: Path | No
               suppress_health_check=list(HealthCheck))
     @given(plans(s.system, config.max_faults))
     def run(plan: dict[str, Any]) -> None:
-        if s.ended is not None:
+        if not s.can_run():
             return
         out = s.run_plan(plan)
         if out.get("reproduction", {}).get("reproduced"):
@@ -523,7 +658,7 @@ def reconstruct_baseline(config: BridgeConfig, log_path: Path | None = None, **s
     result = reconstruct(log, actor, s.system.quiet_messages, (vocab.poll_request, vocab.poll_reply),
                          Limits.from_describe(d["limits"]), oracle,
                          clock_known="off from the simulator's" not in d["log_note"], **search)
-    if reproducing and s.ended is None:
+    if reproducing and s.can_run():
         name_causes(s, random.Random("bridge-reconstruct"), reproducing[0])
     if s.ended is None:
         s.finish(f"reconstruct: {result.status}: {result.reason}")

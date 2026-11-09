@@ -33,6 +33,7 @@ variant records it, and replay loads it again.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -218,17 +219,20 @@ def _session(args: argparse.Namespace) -> int:
 
 def _incident(args: argparse.Namespace) -> int:
     from replayspect import bridge
-    from replayspect.incident import check_preconditions, read_incident, view_text
+    from replayspect.incident import check_preconditions, defect_class, read_incident, view_text
 
     if args.action == "check":
         bad = 0
         for f in args.files:
-            p = check_preconditions(read_incident(f))
+            inc = read_incident(f)
+            p = check_preconditions(inc)
             cm = p.correct_match
+            cls = defect_class(inc)
+            eq = "" if cls is None else f"; equivalent published defects {', '.join(cls) or 'none'}"
             print(f"{f}: {'ok' if p.ok else 'FAILS'}; matches itself {'yes' if p.self_match else 'NO'}; "
                   f"correct implementation reproduces it {'no' if p.correct_differs else 'YES'}, "
                   f"told apart by the log {'yes' if p.correct_log_differs else 'NO'} "
-                  f"(lines {cm.matched}/{cm.total})")
+                  f"(lines {cm.matched}/{cm.total}){eq}")
             bad += not p.ok
         return 1 if bad else 0
     if args.action == "view":
@@ -265,6 +269,22 @@ def _incident(args: argparse.Namespace) -> int:
             else:
                 bridge.hypothesis_baseline(cfg, i, log)
             print(f"{args.strategy} {i}: {_bridge_line(bridge.summarize_log(log))} -> {log}")
+        return 0
+    if args.action == "plan":
+        (f,) = args.files
+        recs = bridge.read_log(Path(f))
+        first = next((r for r in recs[1:] if r["type"] == "run" and r.get("match", {}).get("reproduced")), None)
+        if first is None:
+            print(f"{f}: no run reproduced the incident", file=sys.stderr)
+            return 1
+        plan = json.loads(first["plan"]) if isinstance(first["plan"], str) else first["plan"]
+        try:
+            with Path(args.out).open("x", encoding="utf-8") as fh:
+                fh.write(json.dumps(plan, indent=2, sort_keys=True) + "\n")
+        except FileExistsError:
+            print(f"{args.out} exists; not overwriting it", file=sys.stderr)
+            return 2
+        print(f"plan of run {first['run']} (first reproducing run) -> {args.out}")
         return 0
     if args.action == "summary":
         for f in args.files:
@@ -349,12 +369,13 @@ def main(argv: list[str] | None = None) -> int:
         description="check: preconditions of incident files. view: write the partial log a planner gets "
                     "(new file; its name must not mention the mutant or variant). baseline: run random or "
                     "Hypothesis plans, or the rule-based log reader (reconstruct), through the bridge loop, "
-                    "one log per run. summary: the WP4 metrics "
+                    "one log per run. plan: write the first reproducing plan of a session log (for --mode "
+                    "answer-only). summary: the WP4 metrics "
                     "of bridge-session logs. verify: rerun bridge-session logs. Incident files and logs "
                     "hold the answer; keep them away from planners.")
-    inc.add_argument("action", choices=["check", "view", "baseline", "summary", "verify"])
+    inc.add_argument("action", choices=["check", "view", "baseline", "plan", "summary", "verify"])
     inc.add_argument("files", nargs="+", help="incident files (check, view, baseline) or session logs")
-    inc.add_argument("--out", help="view: output path")
+    inc.add_argument("--out", help="view, plan: output path (new file)")
     inc.add_argument("--strategy", choices=["random", "hypothesis", "reconstruct"], default="random",
                      help="baseline: random or Hypothesis plans, or the rule-based log reader (deterministic, "
                           "one session, no model)")
@@ -366,8 +387,8 @@ def main(argv: list[str] | None = None) -> int:
     inc.add_argument("--log-dir", default=".", help="baseline: directory for the session logs")
     inc.set_defaults(fn=_incident)
     args = ap.parse_args(argv)
-    if args.cmd == "incident" and args.action == "view" and not args.out:
-        ap.error("incident view needs --out")
+    if args.cmd == "incident" and args.action in ("view", "plan") and not args.out:
+        ap.error(f"incident {args.action} needs --out")
     return args.fn(args)
 
 

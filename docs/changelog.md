@@ -73,3 +73,17 @@ duplicate a message, or a disconnect from a gap in the polls or ending at an une
 earliest cause first. It never runs a plan twice and keeps only improvements, so it cannot loop;
 it ends reproduced, stuck (no improving edit left; the furthest mismatch is reported), at the edit
 cap, or out of budget. No model and no tokens.
+
+Defect questions for the main trial (`docs/experiments/bridge-02.md`). A bridge session now asks
+which defect caused the failure: with a published defect list the planner names one id
+(`name_defect`, condition A), otherwise it describes the faulty behaviour (`describe_defect`,
+condition B). One answer, recorded and not judged in the session. `summary` scores condition A
+against the defects that reproduce the incident with its seed and plan (`incident.defect_class`,
+also printed by `incident check`), with that class's share of the list as the chance level. An
+incident can carry a one-line `symptom`, given in `describe` and hashed in the log. Modes: `full`;
+`answer_only`, which gives a reproducing plan (`incident plan LOG --out FILE`) and asks only for the
+defect; `symptom_only`, with no log, the chance level of the answer (`mcp_server --mode`,
+`--given-plan`). `run_plan` now shows only the logged participant's side of the planner's own run,
+keeping its link data, and violations without details. `check_cause` no longer ends the session;
+the defect answer or `finish` does, and a used-up budget leaves the answer open. With `--incident`
+the MCP server's budget defaults to 120.
