@@ -4,7 +4,7 @@ Each one is built the way a variant must be: from the package's Scheduler,
 Channel and Trace, with the link profile it is given. ``SAME_*`` wire up the
 registered implementation exactly, so they must give the registered digest.
 ``FEWER_COMMANDS`` changes only how many commands the client sends: the run
-differs but stays correct. ``LIFT_PUBLIC_M5`` switches on a mutant the lift
+differs but stays correct. ``LIFT_PUBLIC_FAILING`` switches on a mutant the lift
 already publishes (``replayspect.sut.lift.MUTANTS``), so a variant run can fail
 without this file adding a defect of its own.
 """
@@ -36,7 +36,7 @@ SAME_TURNTABLE = Variant(
     "turntable.v0", _wire(turntable.TurntableDevice, turntable.TurntableClient, len(turntable.SEQUENCE))
 )
 FEWER_COMMANDS = Variant("turntable.v0", _wire(turntable.TurntableDevice, turntable.TurntableClient, 3))
-LIFT_PUBLIC_M5 = Variant("lift.v0", _wire(lift.LiftDevice, lift.LiftClient, 6, frozenset({"M5"})))
+LIFT_PUBLIC_FAILING = Variant("lift.v0", _wire(lift.LiftDevice, lift.LiftClient, 6, frozenset({"M5"})))
 
 
 class _Recorder(Trace):
