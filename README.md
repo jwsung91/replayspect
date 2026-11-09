@@ -46,7 +46,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] v3 WP2: trace schema with header, fidelity and source (`docs/trace-schema.md`, `schemas/trace-1.schema.json`)
 - [x] v3 WP3: run an implementation variant loaded from outside the package (`--variant`)
 - [x] v3 WP4: bridge experiment, reproduce a hidden run from a partial log (minimal trial done; main trial registered separately, `docs/experiments/bridge-01.md`)
-- [ ] v3 WP4 main trial: from a partial log to the defect, with a rule-based log reader as the baseline (harness done; registration and trial pending, `docs/experiments/bridge-02.md`)
+- [x] v3 WP4 main trial: from a partial log to the defect, with a rule-based log reader as the baseline (results, departures and limits in `docs/experiments/bridge-02.md`)
 
 ## Usage
 
