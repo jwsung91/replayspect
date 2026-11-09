@@ -56,12 +56,16 @@ class Incident:
     tolerance_us: int = TOLERANCE_US
     #: What the hidden run produced: ``{"digest": ..., "violated": [...]}``.
     expect: Mapping[str, Any] = field(default_factory=dict)
+    #: One line a person on site would report, written by the operator; given to planners.
+    symptom: str | None = None
 
     def __post_init__(self) -> None:
         if self.mutants and self.variant is not None:
             raise ValueError("mutants and a variant cannot be combined")
         if self.clock_offset_us < 0:
             raise ValueError("clock_offset_us must be >= 0 (trace times are never negative)")
+        if self.symptom is not None and (not self.symptom.strip() or "\n" in self.symptom):
+            raise ValueError("symptom must be one non-empty line")
 
     def system_obj(self) -> System:
         return get_system(self.system, self.variant)
@@ -72,6 +76,7 @@ class Incident:
             "until_us": self.until_us, "actor": self.actor, "clock_offset_us": self.clock_offset_us,
             "mutants": list(self.mutants), "variant": self.variant, "status_rule": self.status_rule,
             "tolerance_us": self.tolerance_us, "expect": dict(self.expect),
+            **({"symptom": self.symptom} if self.symptom is not None else {}),
         }
 
     @classmethod
@@ -82,6 +87,7 @@ class Incident:
             d["system"], d["seed"], FaultPlan.from_dict(d["plan"]), d["until_us"], d["actor"],
             d.get("clock_offset_us", 0), tuple(d.get("mutants", ())), d.get("variant"),
             d.get("status_rule", False), d.get("tolerance_us", TOLERANCE_US), d.get("expect", {}),
+            d.get("symptom"),
         )
 
 
@@ -301,3 +307,26 @@ def check_preconditions(inc: Incident) -> Preconditions:
     cm = wp4_match(inc, hidden, correct, correct_system)
     log_differs = not cm.lines_same or cm.status_same is False or (cm.max_dt_us or 0) > inc.tolerance_us
     return Preconditions(me.reproduced, not cm.reproduced, log_differs, cm)
+
+
+# -- defect answers (operator side) ----------------------------------------------------------
+
+
+def defect_class(inc: Incident) -> list[str] | None:
+    """Published defects that reproduce the incident with its seed and plan.
+
+    Any of them is a right answer to "which defect": the log cannot tell them
+    apart. The chance of a right guess is ``len(class) / len(published)``.
+    None when the system's defects are not published or the incident runs a
+    variant.
+    """
+    system = get_system(inc.system)
+    if not system.published_defects or inc.variant is not None:
+        return None
+    hidden = run_incident(inc)
+    out = []
+    for m, _ in system.published_defects:
+        run = run_once(system, inc.seed, (m,), inc.plan, None, inc.until_us)
+        if wp4_match(inc, hidden, run, system).reproduced:
+            out.append(m)
+    return out

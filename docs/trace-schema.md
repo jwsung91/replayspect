@@ -141,6 +141,16 @@ A planner view also differs from an ordinary slice in four ways:
 variant. Tests check both header rules and that no hidden value reaches the
 planner.
 
+The planner's **own runs** are shown by the same participant rule
+(`incident.run_view`): only the logged participant's events, polls left out,
+in the run's own clock. Here `data.link` is kept (shown as `k`, and on a
+received message `sent` and `delay`), because it describes the planner's own
+run, not the hidden one, and it is what turns "this line came 0.3 s early"
+into a plan entry. The other participant's events and the link's fault events
+are not shown, and violations are given as contract, `req_id` and time
+without their details: otherwise the other side's behaviour, and with it the
+defect, would be read off the planner's own runs.
+
 ## Versioning
 
 Adding an optional field is a minor change (same major). Changing or removing
