@@ -163,11 +163,63 @@ separately and never pooled.
 
 | Incident | Log | Strategy | Reproduced (runs to first) | Candidates | Confirmed / named | Tokens in/out, USD | Named a hidden fault | Exact | Reproduced at 100 / 500 / 1000 ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| A-1 | device | LLM | yes (3) | 3 of 3 | 1 / 1 | 190k / 6.7k, 0.48 | yes | no | yes / yes / yes |
+| A-1 | device | random ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+| A-1 | device | Hypothesis ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+| A-2 | client | LLM | yes (6) | 4 of 5 | 1 / 1 | 373k / 20.0k, 0.93 | yes | no | yes / yes / yes |
+| A-2 | client | random ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+| A-2 | client | Hypothesis ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
 
 ### Condition B: turntable (unpublished defects)
 
 | Incident | Log | Strategy | Reproduced (runs to first) | Candidates | Confirmed / named | Tokens in/out, USD | Named a hidden fault | Exact | Reproduced at 100 / 500 / 1000 ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| B-1 | device | LLM | yes (3) | 4 of 5 | 1 / 1 | 194k / 4.7k, 0.44 | yes | no | yes / yes / yes |
+| B-1 | device | random ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+| B-1 | device | Hypothesis ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+| B-2 | client | LLM | yes (2) | 4 of 8 | 1 / 2 | 196k / 8.3k, 0.52 | yes | no | yes / yes / yes |
+| B-2 | client | random ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+| B-2 | client | Hypothesis ×20 | 0 of 20 sessions | – | 0 / 0 | 0 | – | 0 | 0 / 0 / 0 |
+
+Run on harness commit `6ac2191` (main after the WP4 merge), Claude Code 2.1.319, model
+`claude-opus-5-5`, Python 3.14.4, mcp 2.3.0. Every LLM session passed the transcript audit (the four
+bridge tools and one MCP server only, no skills, no hidden words) and `incident verify` (every
+call replays). A separate isolation check session ran first and is not counted.
+
+How to read the columns:
+
+- **Candidates** "k of n": k entries of the first reproducing plan clear the failure when removed
+  alone, out of n entries in that plan. k/n is the chance of confirming by naming an entry at
+  random. Here it is 3/3, 4/5, 4/5 and 4/8, so a confirmed cause says little beyond the
+  reproduction itself.
+- **Tokens:** input counts cache reads and writes; the result event of the transcript.
+- **Exact:** no session reproduced the trace digest. Every reproducing run matched the log's lines
+  within 1 ms, so the tolerance did not decide any verdict (all four columns agree).
+
+Where each LLM session falls in the baseline distribution. No baseline session reproduced any
+incident within 120 runs (160 sessions, 19,200 runs), so every LLM session (2 to 6 runs) lies
+outside the baseline distribution. As a measure of closeness, the best `n/m` a baseline session
+reached (lines matched from the start, before the first mismatch):
+
+| Incident | Random: best n/m, median (max) | Hypothesis: best n/m, median (max) | LLM: n/m per run |
+| --- | --- | --- | --- |
+| A-1 | 15 (33) / 40 | 15 (15) / 40 | 15, 15, **40** |
+| A-2 | 11 (12) / 26 | 9 (10) / 26 | 9, 12, 26†, 12, 16, **26** |
+| B-1 | 15 (15) / 44 | 8 (15) / 44 | 8, 15, **44** |
+| B-2 | 10 (12) / 29 | 5 (10) / 29 | 12, **29** |
+
+Bold: reproduced. †: every line matched but the run's contracts differed, and the planner was
+told so ("the run differs in what the log does not show"). This is the indirect contract leak in
+Limits; the session used it.
+
+### Departures from the registration
+
+- **LLM budget 100, not 120.** The MCP server's `--budget` default is 100, and the trial's server
+  configuration did not set it. The baselines ran with 120. The `describe` text differs from the
+  registered digest only in the budget field (checked for all four incidents). No LLM session came
+  close to either limit: the most calls used was 7.
+- **Cost:** the four sessions cost 2.38 USD (2.66 USD with the isolation check), far below the
+  100 USD cap.
 
 ## Limits
 
@@ -179,6 +231,12 @@ separately and never pooled.
   off the client-side log alone. The client-side log hides the device but does not make timing hard.
   Kept as is for this trial: cutting the log's start would change the design and the preconditions.
   Clock drift and irregular polling belong to WP5 (text log adapter).
+- **What the logs give away.** Every message attempt is a line with its time: the device log shows
+  when each resend arrived, the client log when each was sent and answered. With the protocol's
+  fixed retry schedule, a missing or late attempt points to a drop, a delay or a disconnect
+  directly. The LLM sessions read the plan off the log this way. Random and Hypothesis plans do
+  not read the log, and matching 26 to 44 lines by chance is hopeless, so the gap measures reading
+  the log, not reasoning about the defect.
 - **Candidates** count single removals in the first reproducing plan only. Other fault combinations
   that give the same log are not explored.
 - **Small samples.** One incident per system and one LLM session per log: this shows the loop

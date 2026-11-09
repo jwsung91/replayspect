@@ -56,4 +56,10 @@ plans run the same loop (`incident baseline`). `incident check` runs the two pre
 incident must pass: it matches itself, and the correct implementation is told apart by the log
 alone. `incident summary` reports reproduction, candidates (entries whose single removal clears
 the failure), the counterfactual confirmation rate and diagnostics; `incident verify` reruns a log.
-The trial design is in `docs/experiments/bridge-01.md`, and its results follow in a separate change.
+The trial design is in `docs/experiments/bridge-01.md`.
+
+Minimal trial (one incident per system, device and client logs): the LLM reproduced all four
+logs in 2 to 6 runs and confirmed a cause in each; no random or Hypothesis session (20 each per
+log, 120 runs) reproduced any. Single removals clear the failure for most entries of a
+reproducing plan, so the confirmation adds little to the reproduction. Results and departures
+from the registration are in `docs/experiments/bridge-01.md`.
