@@ -224,8 +224,9 @@ The operator's record lists each one in full; in short:
    except the invalid one. The seed, digest, defect id and file name checks did not change.
 8. The blinding script was fixed before use (it now leaves out the invalid session; a helper was
    defined after its first use). The procedure did not change.
-9. **Who scored condition B.** The scores the operator returned are a second blind scorer's,
-   adopted unchanged; that scorer also saw only the blinded answers and the criteria.
+9. **Who scored condition B.** The design says the operator scores. The scores are by the
+   operator's AI advisor, who did not know the conditions or the mapping and saw only the blinded
+   answers and the criteria. The operator reviewed all 16 scores and adopted them.
 
 ## Limits
 
@@ -236,6 +237,8 @@ The operator's record lists each one in full; in short:
   specific, which is part of it. The defect result in condition A rests on two logs.
 - **Symptom sentences group by defect.** The two runs of a defect read alike, so the symptom-only
   answers reflect that grouping, not eight independent guesses.
+- **The defect descriptions were scored by an AI.** The condition B scores are the AI advisor's
+  blind scores, adopted by the operator after review: one model's answers judged by another.
 - **Condition B scoring is a judgement** against the defect record, by registered criteria. Two
   scores sit on a boundary, both symptom-only answers. R09: one sentence meets both elements, but
   the answer's first claim contradicts the trigger; scored partly right by the first-candidate rule.
