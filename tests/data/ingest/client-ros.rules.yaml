@@ -1,0 +1,33 @@
+# ROS 2 style lines: [LEVEL] [epoch seconds] [module]: message
+schema: replayspect.rules/1
+name: lift-client-ros
+system: lift.v0
+actor: client
+clock:
+  format: epoch
+  unit: s
+  timezone: "+09:00"          # only for showing times; epoch times carry no zone
+  tolerance: 5ms
+entry:
+  pattern: '^\[(?P<level>[A-Z]+)\] \[(?P<time>[0-9.]+)\] \[(?P<module>[^\]]+)\]: (?P<text>.*)$'
+  continuation: '^\s'         # indented lines (tracebacks) belong to the entry above
+rules:
+  - name: heartbeat
+    match: '^heartbeat'
+    ignore: true
+  - name: send
+    where: {module: lift_client}
+    match: '^TX (?P<msg>[A-Z_]+) req=(?P<req>\S+)$'
+    event: {kind: send, name: '{msg}', req_id: '{req}'}
+  - name: recv
+    where: {module: lift_client}
+    match: '^RX (?P<msg>[A-Z_]+)(?: req=(?P<req>\S+))?(?: state=(?P<state>[A-Z_]+))?(?: reason=(?P<reason>\w+))?$'
+    event:
+      kind: recv
+      name: '{msg}'
+      req_id: '{req?}'
+      data: {state: '{state?}', reason: '{reason?}'}
+  - name: result
+    where: {module: lift_client}
+    match: '^result (?P<req>\S+) (?P<res>DONE|ERROR) cause=(?P<cause>\w+)$'
+    event: {kind: handle, name: '{res}', req_id: '{req}', data: {cause: '{cause}'}}

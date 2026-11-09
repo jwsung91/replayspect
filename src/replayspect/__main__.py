@@ -1,4 +1,4 @@
-"""Command line: ``python3 -m replayspect search|replay|rewind|baseline|session``.
+"""Command line: ``python3 -m replayspect search|replay|rewind|ingest|baseline|session|incident``.
 
 search    Run random-fault seeds against a system, report which contracts
           failed, shrink the failures of one target contract and write the
@@ -18,6 +18,11 @@ baseline  Random search over the same seeds a planning session uses
           With --strategy hypothesis, Hypothesis writes the fault plans
           instead (needs the hyp extra), once per Hypothesis seed.
 session   Summarize a planning-session log and rerun it to check it replays.
+ingest    Read a text log with a rules file (docs/rules-schema.md) and write
+          a trace file (source adapter:text, every event exact, with the log
+          line it came from). Entries no rule matches are counted and listed
+          in a file; events logged out of time order are sorted and flagged,
+          never dropped or corrected.
 incident  WP4 bridge experiment, operator side: check an incident's
           preconditions, write the partial log a planner gets, run the random
           and Hypothesis baselines and the rule-based log reader
@@ -121,6 +126,35 @@ def _replay(args: argparse.Namespace) -> int:
     return 0 if r.ok else 1
 
 
+def _ingest(args: argparse.Namespace) -> int:
+    from replayspect.ingest import IngestError, RulesError, ingest_text, read_rules, unmatched_text
+
+    out = Path(args.out)
+    unmatched_path = Path(args.unmatched) if args.unmatched else Path(f"{out}.unmatched.txt")
+    for p in (out, unmatched_path):
+        if p.exists():
+            print(f"ingest: {p} exists; not overwriting it", file=sys.stderr)
+            return 2
+    try:
+        rules = read_rules(args.rules)
+        data = Path(args.log).read_bytes()
+        contracts = contracts_ref(args.contracts) if args.contracts else None
+        res = ingest_text(data, rules, args.log, contracts)
+    except (RulesError, IngestError) as exc:
+        print(f"ingest: {exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"ingest: {exc.filename or ''}: {exc.strerror or exc}", file=sys.stderr)
+        return 2
+    write_trace_file(out, res.events, res.header)
+    if res.unmatched:
+        unmatched_path.parent.mkdir(parents=True, exist_ok=True)
+        with unmatched_path.open("x", encoding="utf-8") as f:
+            f.write(unmatched_text(res.unmatched))
+    print("\n".join(res.summary(args.log, str(out), str(unmatched_path))))
+    return 0
+
+
 def _rewind(args: argparse.Namespace) -> int:
     try:
         tf = read_trace_file(args.trace)
@@ -132,8 +166,11 @@ def _rewind(args: argparse.Namespace) -> int:
         js = judge_setup(tf, args.contracts, end)
         if args.limit < 0:
             raise ValueError("--limit must be >= 0")
+        notes = list(js.notes)
+        if tf.header is not None and tf.header.origin is not None:
+            notes.append(f"time 0 is {tf.header.origin} (header origin)")
         v = view(tf.trace, at_us=at, step_n=args.step, sel=sel, ref=ref, contracts=js.contracts,
-                 end_us=js.end_us, end_why=js.end_why, notes=js.notes, limit=args.limit)
+                 end_us=js.end_us, end_why=js.end_why, notes=notes, limit=args.limit)
     except (TraceFileError, ContractError, ValueError, OSError) as exc:
         print(f"rewind: {exc}", file=sys.stderr)
         return 2
@@ -347,6 +384,25 @@ def main(argv: list[str] | None = None) -> int:
     rw.add_argument("--full", metavar="PATH",
                     help="write every selected event to this new trace file; its header records the cut")
     rw.set_defaults(fn=_rewind)
+    ig = sub.add_parser(
+        "ingest", help="read a text log with a rules file and write a trace file",
+        description="The rules file (docs/rules-schema.md) splits each log entry, reads its timestamp and "
+                    "maps entries to trace events; the first matching rule wins. Every event is exact, "
+                    "with source adapter:text and the log line it came from. Entries no rule matches are "
+                    "counted in the summary and listed in a file. Events logged out of time order are "
+                    "sorted by time and flagged (out_of_order within clock.tolerance, out_of_tolerance "
+                    "beyond it; runs of out_of_tolerance are reported as a suspected clock step); nothing "
+                    "is dropped or corrected. Exit status 2 on a bad rules file or log line, which the "
+                    "message names.")
+    ig.add_argument("log", help="text log (UTF-8; CRLF line ends are accepted)")
+    ig.add_argument("--rules", required=True, metavar="YAML", help="rules file (replayspect.rules/1)")
+    ig.add_argument("--out", required=True, metavar="PATH", help="trace file to write (a new file)")
+    ig.add_argument("--unmatched", metavar="PATH",
+                    help="where to list unmatched entries (new file; default OUT.unmatched.txt; "
+                         "written only when there are any)")
+    ig.add_argument("--contracts", metavar="YAML",
+                    help="contract file to record in the trace header, the default for rewind")
+    ig.set_defaults(fn=_ingest)
     b = sub.add_parser("baseline", help="random search over a session's seeds")
     b.add_argument("--system", default="lift.v0")
     b.add_argument("--mutant", action="append", default=[])

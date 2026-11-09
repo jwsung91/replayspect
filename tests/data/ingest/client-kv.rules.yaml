@@ -1,0 +1,32 @@
+# key=value lines: ts=<ISO 8601> lvl=<level> mod=<module> ev=<what> ...
+schema: replayspect.rules/1
+name: lift-client-kv
+system: lift.v0
+actor: client
+clock:
+  format: iso8601
+  timezone: "+09:00"
+  tolerance: 5ms
+entry:
+  pattern: '^ts=(?P<time>\S+) lvl=(?P<level>\w+) mod=(?P<module>\S+) (?P<text>.*)$'
+  continuation: '^\t'
+rules:
+  - name: heartbeat
+    match: '^ev=heartbeat$'
+    ignore: true
+  - name: send
+    where: {module: lift_client}
+    match: '^ev=tx name=(?P<msg>\S+) req=(?P<req>\S+)$'
+    event: {kind: send, name: '{msg}', req_id: '{req}'}
+  - name: recv
+    where: {module: lift_client}
+    match: '^ev=rx name=(?P<msg>\S+)(?: req=(?P<req>\S+))?(?: state=(?P<state>\S+))?(?: reason=(?P<reason>\S+))?$'
+    event:
+      kind: recv
+      name: '{msg}'
+      req_id: '{req?}'
+      data: {state: '{state?}', reason: '{reason?}'}
+  - name: result
+    where: {module: lift_client}
+    match: '^ev=result req=(?P<req>\S+) res=(?P<res>DONE|ERROR) cause=(?P<cause>\S+)$'
+    event: {kind: handle, name: '{res}', req_id: '{req}', data: {cause: '{cause}'}}

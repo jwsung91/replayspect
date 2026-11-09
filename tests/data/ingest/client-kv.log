@@ -1,0 +1,12 @@
+ts=2026-11-10T08:00:00.000000+09:00 lvl=info mod=lift_client ev=tx name=MOVE_UP req=r-0001
+ts=2026-11-10T08:00:00.500000+09:00 lvl=debug mod=lift_client ev=heartbeat
+ts=2026-11-10T08:00:01.000000+09:00 lvl=debug mod=lift_client ev=tx name=STATUS req=s-0001
+ts=2026-11-10T08:00:02.342059+09:00 lvl=debug mod=lift_client ev=rx name=STATUS_REPLY req=s-0001 state=MOVING_UP
+ts=2026-11-10T08:00:02.338764+09:00 lvl=info mod=lift_client ev=rx name=ACK req=r-0001
+ts=2026-11-10T08:00:03.000000+09:00 lvl=warn mod=lift_client ev=rx name=ERROR reason=busy
+ts=2026-11-10T08:00:04.000000+09:00 lvl=info mod=ui ev=input name=STOP
+ts=2026-11-10T08:00:04.500000+09:00 lvl=error mod=lift_client ev=decode_error
+	Traceback (most recent call last):
+	  ValueError: bad frame
+
+ts=2026-11-10T08:00:05.021866+09:00 lvl=info mod=lift_client ev=result req=r-0001 res=DONE cause=reply
