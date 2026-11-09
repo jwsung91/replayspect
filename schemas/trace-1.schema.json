@@ -70,7 +70,8 @@
               }
             }
           ]
-        }
+        },
+        "origin": {"type": ["string", "null"], "description": "wall-clock time of t_us = 0, ISO 8601 with a UTC offset (log adapters)"}
       }
     },
     "event": {
@@ -86,7 +87,16 @@
         "req_id": {"type": ["string", "null"]},
         "data": {"type": "object"},
         "fidelity": {"enum": ["exact", "reconstructed"]},
-        "source": {"$ref": "#/$defs/source"}
+        "source": {"$ref": "#/$defs/source"},
+        "log": {
+          "type": "object",
+          "description": "where a log adapter read the event; not in the digest",
+          "required": ["line"],
+          "properties": {
+            "line": {"type": "integer", "minimum": 1},
+            "flags": {"type": "array", "items": {"enum": ["out_of_order", "out_of_tolerance"]}}
+          }
+        }
       }
     }
   }

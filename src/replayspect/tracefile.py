@@ -24,6 +24,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -78,9 +79,10 @@ class Header:
     until_us: int | None = None
     slice: Slice | None = None
     schema: str = SCHEMA
+    origin: str | None = None  # wall-clock time of t_us = 0 (ISO 8601 with offset); adapter output
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "type": "header",
             "schema": self.schema,
             "system": self.system,
@@ -91,6 +93,9 @@ class Header:
             "until_us": self.until_us,
             "slice": self.slice.to_dict() if self.slice is not None else None,
         }
+        if self.origin is not None:
+            d["origin"] = self.origin
+        return d
 
 
 def _opt(d: dict, key: str, kind: type, what: str) -> Any:
@@ -135,7 +140,20 @@ def _check_header(d: dict) -> Header:
             if not isinstance(contracts.get(k), str) or not contracts[k]:
                 raise ValueError(f"header contracts needs a non-empty {k} string")
     sl = _opt(d, "slice", dict, "an object")
-    return Header(system, source, seed, plan, contracts, until, _check_slice(sl) if sl is not None else None, schema)
+    origin = _opt(d, "origin", str, "a string")
+    if origin is not None:
+        _check_origin(origin)
+    return Header(system, source, seed, plan, contracts, until, _check_slice(sl) if sl is not None else None,
+                  schema, origin)
+
+
+def _check_origin(text: str) -> None:
+    try:
+        t = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(f"header origin must be an ISO 8601 time, got {text!r}") from None
+    if t.tzinfo is None:
+        raise ValueError(f"header origin needs a UTC offset, got {text!r}")
 
 
 def _check_slice(d: dict) -> Slice:
@@ -183,6 +201,9 @@ def _check_event(d: dict, prev: Event | None, index: int, sliced: bool, default_
     source = d.get("source", default_source)
     if not isinstance(source, str) or not _SOURCE_RE.match(source):
         raise ValueError(f"source must be 'sim' or 'adapter:<name>', got {source!r}")
+    log = d.get("log")
+    if log is not None:
+        _check_log(log)
     if sliced:
         if prev is not None and d["seq"] <= prev.seq:
             raise ValueError(f"seq {d['seq']} out of order; a slice's seq must increase (previous {prev.seq})")
@@ -191,6 +212,20 @@ def _check_event(d: dict, prev: Event | None, index: int, sliced: bool, default_
     if prev is not None and d["t_us"] < prev.t_us:
         raise ValueError(f"time goes backwards: {d['t_us']}us after {prev.t_us}us")
     return Event.from_dict({**d, "fidelity": fidelity, "source": source})
+
+
+LOG_FLAGS = ("out_of_order", "out_of_tolerance")
+
+
+def _check_log(log: Any) -> None:
+    if not isinstance(log, dict):
+        raise ValueError(f"log must be an object, got {type(log).__name__}")
+    line = log.get("line")
+    if type(line) is not int or line < 1:
+        raise ValueError(f"log line must be a positive integer, got {line!r}")
+    flags = log.get("flags", [])
+    if not isinstance(flags, list) or not all(f in LOG_FLAGS for f in flags):
+        raise ValueError(f"log flags must be a list of {', '.join(LOG_FLAGS)}, got {flags!r}")
 
 
 # -- reading ---------------------------------------------------------------------------------
@@ -325,7 +360,7 @@ def core_trace(events: Sequence[Event]) -> Trace:
 
 
 __all__ = [
-    "SCHEMA", "Header", "Slice", "TraceFile", "TraceFileError", "canonical", "contracts_ref", "core_trace",
+    "LOG_FLAGS", "SCHEMA", "Header", "Slice", "TraceFile", "TraceFileError", "canonical", "contracts_ref", "core_trace",
     "file_sha256", "parse_trace_file", "plan_ref", "read_trace_file", "sha256_text", "slice_header",
     "trace_file_text", "write_trace_file",
 ]

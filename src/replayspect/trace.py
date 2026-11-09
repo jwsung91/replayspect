@@ -55,6 +55,9 @@ class Event:
     data: Mapping[str, Any] = field(default_factory=dict)
     fidelity: str = "exact"
     source: str = "sim"  # "sim" or "adapter:<name>"
+    # Where a log adapter read the event: {"line": n} plus "flags" when it was out of order
+    # (docs/trace-schema.md). Like fidelity and source, it says how we know, so it is not in the digest.
+    log: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """The event core: what the digest covers (no fidelity or source)."""
@@ -83,11 +86,15 @@ class Event:
             data=d.get("data", {}),
             fidelity=d.get("fidelity", "exact"),
             source=d.get("source", "sim"),
+            log=d.get("log"),
         )
 
     def to_record(self) -> dict[str, Any]:
-        """The event as a trace file line: the core plus fidelity and source."""
-        return {**self.to_dict(), "fidelity": self.fidelity, "source": self.source}
+        """The event as a trace file line: the core plus fidelity, source and, from an adapter, log."""
+        rec = {**self.to_dict(), "fidelity": self.fidelity, "source": self.source}
+        if self.log is not None:
+            rec["log"] = dict(self.log)
+        return rec
 
 
 class Trace:
