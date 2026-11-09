@@ -47,6 +47,9 @@ Implemented:
 - Trace schema v1: header, fidelity and source per event
   ([docs/trace-schema.md](docs/trace-schema.md), `schemas/trace-1.schema.json`)
 - Variant loader: run an implementation loaded from outside the package (`--variant`)
+- Text log ingest: `ingest` reads a text log with a rules file
+  ([docs/rules-schema.md](docs/rules-schema.md)) into a trace file, which
+  `rewind` reads
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with
@@ -57,7 +60,8 @@ Implemented:
 
 Not yet:
 
-- Log adapter: turning a real text log into a trace
+- Reproducing an ingested log: an ingested trace can be rewound but not yet
+  reproduced (driven replay, WP5b)
 - Recorder for real code: a library that emits trace events from a running system
 - Symptom judge: matching a run against a stated symptom instead of a fixed check
 - Contract grades and a generic contract library
