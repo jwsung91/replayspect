@@ -1,18 +1,25 @@
 # replayspect
 
-**Replay protocol failures exactly, then inspect them against a contract.**
+**Record an execution, rewind it, judge it against a contract, and show what if.**
 
-Device integrations (a robot talking to a lift, a door, a charger) rarely break
-on the happy path. They break on the edges: a retry that arrives after the
-original, a late reply after a timeout, a duplicate after a reconnect. Those
-bugs are hard to trigger on real hardware, and what you cannot reproduce you
-cannot prove fixed.
+replayspect records an execution as a trace, replays it deterministically with
+rewind, judges it against behavioral contracts, and shows "what if" by changing
+one thing and replaying. Where no record exists, models and an LLM fill in
+possible scenarios, but fact and reconstruction are always kept apart.
 
-replayspect runs both sides of an integration in a deterministic simulation,
-injects network faults from a seed, and judges the resulting trace against a
-declared behavioural contract, such as *"a retried request id moves the motor at
-most once."* Any violation is shrunk to a minimal scenario that replays the
-same way every time.
+The examples are the upper modules mounted on a robot: a lift and a turntable.
+Each talks to the robot's main controller, the client, over a link that can
+delay, drop, duplicate and disconnect. Such integrations rarely break on the
+happy path. They break on the edges: a retry that arrives after the original,
+a late reply after a timeout, a duplicate after a reconnect. Those bugs are
+hard to trigger on real hardware, and what you cannot reproduce you cannot
+prove fixed.
+
+Today replayspect runs both sides of such an integration in a deterministic
+simulation, injects network faults from a seed, and judges the resulting trace
+against a declared behavioural contract, such as *"a retried request id moves
+the motor at most once."* Any violation is shrunk to a minimal scenario that
+replays the same way every time.
 
 ## Principles
 
@@ -27,26 +34,44 @@ same way every time.
 
 ## Status
 
-Pre-alpha. v0 is being built in this order:
+Pre-alpha. The goal above is only partly built.
 
-- [x] Virtual-time scheduler
-- [x] Trace event model and digest
-- [x] Link model: delay, loss, duplication, disconnects, replayable fault plans
-- [x] Virtual lift device and client, with seeded bugs (mutants)
-- [x] Contract YAML and checkers
-- [x] Scenario runner, repro files, shrinking
-- [x] Planning sessions, MCP server, run summaries and baseline comparison
-- [x] First v2 trials: LLM planner vs random search on one mutant (`docs/experiment-v2.md`)
-- [x] Second v2 trials on a mutant that random search finds quickly: roughly a tie
-- [x] v1 baseline: Hypothesis writes fault plans in the planner's plan space (`docs/design-v0.md`)
-- [x] Third v2 trials on three new mutants that random search rarely finds (`docs/experiment-v2.md`)
-- [x] Work-mode MCP tools: search, shrink and replay from an MCP client
-- [x] Second system: virtual turntable (`turntable.v0`), no mutants yet (`docs/protocol-turntable.md`)
-- [x] v3 WP1: `rewind` viewer for trace files, `replay --trace-out` (`docs/work-order-v3.md`)
-- [x] v3 WP2: trace schema with header, fidelity and source (`docs/trace-schema.md`, `schemas/trace-1.schema.json`)
-- [x] v3 WP3: run an implementation variant loaded from outside the package (`--variant`)
-- [x] v3 WP4: bridge experiment, reproduce a hidden run from a partial log (minimal trial done; main trial registered separately, `docs/experiments/bridge-01.md`)
-- [ ] v3 WP4 main trial: from a partial log to the defect, with a rule-based log reader as the baseline (harness done; registration and trial pending, `docs/experiments/bridge-02.md`)
+Implemented:
+
+- Deterministic simulation: virtual-time scheduler, link faults from replayable
+  plans, the lift and the turntable with their clients, the lift's seeded bugs
+  (mutants)
+- Contract judging: contract YAML and checkers; the contract is the only oracle
+- Search, shrink and replay, with repro files; random and Hypothesis baselines
+- `rewind`: a viewer for trace files (`replay --trace-out`)
+- Trace schema v1: header, fidelity and source per event
+  ([docs/trace-schema.md](docs/trace-schema.md), `schemas/trace-1.schema.json`)
+- Variant loader: run an implementation loaded from outside the package (`--variant`)
+- Rule-based reconstructor: reads a one-sided log and searches for a fault plan
+  that reproduces it, with no model (`incident baseline --strategy reconstruct`)
+- Experiment harness: planning sessions and bridge sessions over MCP, with
+  hidden incidents, budgets, session logs and verification
+  ([docs/experiment-v2.md](docs/experiment-v2.md),
+  [docs/experiments/bridge-01.md](docs/experiments/bridge-01.md),
+  [docs/experiments/bridge-02.md](docs/experiments/bridge-02.md))
+
+Not yet:
+
+- Log adapter: turning a real text log into a trace
+- Recorder for real code: a library that emits trace events from a running system
+- Symptom judge: matching a run against a stated symptom instead of a fixed check
+- Contract grades and a generic contract library
+- Provider interface: one LLM interface for MCP and API clients
+
+Experiments so far:
+
+- LLM planner vs random search on the lift's mutants
+  ([docs/experiment-v2.md](docs/experiment-v2.md))
+- Bridge experiment, minimal trial: reproduce a hidden run from a partial log
+  ([docs/experiments/bridge-01.md](docs/experiments/bridge-01.md))
+- Bridge experiment, main trial: from a partial log to the defect, with the
+  rule-based reconstructor as the baseline
+  ([docs/experiments/bridge-02.md](docs/experiments/bridge-02.md))
 
 ## Usage
 
