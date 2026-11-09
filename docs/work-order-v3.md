@@ -2,7 +2,35 @@
 
 2026-11-10
 
-This revision supersedes v3 from WP5 onward. WP1–WP4 are done and stay as recorded. Replace `docs/work-order-v3.md` with this text in one PR; the planner never reads this file, so past experiments stay comparable.
+This revision replaces v3 in full. The goal, principles, architecture, and standing constraints are carried over from v3; WP1–WP4 are recorded as done; WP5 onward is rewritten from the experiment results. Replace `docs/work-order-v3.md` with this text in one PR; the planner never reads this file, so past experiments stay comparable.
+
+## Goal, non-goals, principles
+
+replayspect records an execution as a trace, replays it deterministically with rewind, judges it against behavioral contracts, and shows "what if" by changing one thing and replaying. Where no record exists, models and an LLM fill in possible scenarios, but fact and reconstruction are always kept apart.
+
+Non-goals: reproducing arbitrary software without a model; generalizing the simulator itself; writing root-cause reports (that is the LLM's guesswork, not the tool's claim); any robot-wide model.
+
+Principles (all five are enforced in code and tests, not just in docs):
+
+1. Only contracts decide pass/fail. Scenario generators (random, Hypothesis, LLM) never judge.
+2. Same seed, same trace. A repro file replays identically forever.
+3. The LLM only proposes: scenarios, defect claims, contract candidates. The engine judges; a human confirms.
+4. Fact and reconstruction are tagged. Every event and every result carries a fidelity tag.
+5. Small first. Component-level models (lift, turntable) stay the unit; the robot is composed on top later.
+
+## Architecture
+
+Three layers. The engine owns formats and judgment; it never owns content.
+
+| Layer | Contains | Rule |
+| --- | --- | --- |
+| Workflows | `rewind` (incident analysis), `vary` (fault exploration), LLM as proposer | Call the engine; never bypass the judge |
+| Engine (`replayspect` core) | record (trace schema), replay/rewind, judge (contracts + symptom), vary (counterfactual + minimizer) | Deterministic, no LLM inside, no tokens spent |
+| Plugins | SUT models (lift, turntable, robot controller), log adapters (text, rosbag, pcap, wirestead recorder), contract files (`contracts/<module>/`, `contracts/system/`), LLM providers (api, mcp-tool, mcp-sampling) | Users fill these; lift/turntable are shipped only as examples |
+
+Fidelity tags on every replay result: `exact` (full record, no model used), `reconstructed` (partial log fixed, model filled gaps), `explored` (no record). A result containing any reconstructed event is never reported as a confirmed cause.
+
+Naming: the incident workflow is `rewind`, the exploration workflow is `vary`. Do not use the JoJo metaphor in README or code; it belongs in design notes only.
 
 ## Status and what the experiments changed
 
@@ -19,7 +47,7 @@ The experiments confirmed two claims and corrected four. The rest of this docume
 - Corrected: reproduction is not purely a rule-based job. The reader and the LLM solve overlapping but different sets. Order of attempts is reader first (free, deterministic), LLM when the reader is stuck.
 - Corrected: a plan handed from the reader to the LLM must be minimized first. One wrong answer came from a superfluous plan item taken for the trigger.
 - Corrected: the cause question is "which defect", stated as trigger and effect, not "which fault item". Removing a fault item is confirmed at close to chance level.
-- Corrected: the counterfactual check is an automatic engine step. As an optional tool it was called once in 32 sessions.
+- Corrected: the counterfactual check is an automatic engine step. In bridge-02, where it was an optional tool available in full mode only, it was called in 1 of 16 sessions. (In bridge-01 it was the tool that ended a session, so all 4 sessions called it.)
 - New fact: reproduction in WP4 relied on a fixed seed. The simulated client's schedule matched the incident because both came from the same seed. A real log has no such seed, so ingest alone does not make a log reproducible (see WP5b).
 - New fact: one task description exceeded 50,000 characters and hit a client limit. Most input tokens were that one text accumulating in context.
 
@@ -71,10 +99,24 @@ v3 had the symptom oracle (WP6) and contract provenance (WP7) as separate packag
 - It depends on WP6/7: the confidence inputs are the two automatic checks.
 - Done when: ranked candidates appear in an experiment table and the ranking is reproducible from the trace alone.
 
+## Later work
+
+Not in this order; do not start any of these without a new work order.
+
+- wirestead recorder: the operator's own comms library emits trace events directly (full record, `fidelity: exact`).
+- rosbag adapter and pcap adapter: second-phase log sources; pcap raises the device side to `exact`.
+- Driven replay from device-side-only logs: the client's schedule has to be inferred.
+- Variation vocabulary schema for `vary`: faults, inputs, event timing, initial state; extend only by adding to the schema.
+- Real ROS nodes under virtual time in place of a controller model.
+
+Model interpolation, listed here in v3, is now part of WP5b.
+
 ## Constraints, definition of done, open questions
 
-Constraints (carried over, with two additions):
+Constraints (carried over from v3, with two additions):
 
+- Keep lift and turntable as examples under `examples/` or `sut/`; they are not the product.
+- Do not rewrite the README purpose statement or Status without an instruction.
 - One WP per branch and PR. Stop and report after each WP. Do not start the next one without an instruction.
 - The operator merges every PR. Never merge without an explicit instruction that names the PR; if the number is missing, ask.
 - Do not change the documents the planner reads while an experiment is registered or running.
