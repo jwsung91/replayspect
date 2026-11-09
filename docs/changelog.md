@@ -41,3 +41,19 @@ name. WP4 will enforce it with tests.
 ## WP3: implementation variants
 
 A system can run an implementation variant loaded from outside the package (`--variant`).
+
+## WP4: bridge experiment harness
+
+An incident file (`replayspect.incident/1`) holds a hidden failing run: system, mutants or variant,
+seed and an explicit plan. A bridge session (`replayspect.bridge`, MCP server `--incident`) gives
+a planner one participant's log of it and runs every plan on the incident's seed. The log has a
+null header, no link metadata, renumbered `seq` and an optional constant clock offset. Each run is
+checked with the temporary WP4 match: same compared lines in order, within 250 ms, and the same
+contracts violated. Polls are not compared, and an optional status rule compares poll-reply data.
+Verdicts at 100 ms, 500 ms and 1 s are kept as diagnostics. `check_cause` reruns a reproducing plan
+without one entry and confirms it when the incident's contracts all hold. Random and Hypothesis
+plans run the same loop (`incident baseline`). `incident check` runs the two preconditions every
+incident must pass: it matches itself, and the correct implementation is told apart by the log
+alone. `incident summary` reports reproduction, candidates (entries whose single removal clears
+the failure), the counterfactual confirmation rate and diagnostics; `incident verify` reruns a log.
+The trial design is in `docs/experiments/bridge-01.md`, and its results follow in a separate change.

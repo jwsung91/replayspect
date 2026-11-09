@@ -121,8 +121,25 @@ Several header fields would give the answer away:
 
 So every trace file shown to a planner has a header with `seed`, `plan`,
 `contracts` and `slice.of` set to null. Its file name must not mention a
-mutant. WP4 adds the option that writes such files, together with tests that
-enforce both rules. WP2 only records the rule here.
+mutant.
+
+WP4 writes these files (`incident view`, and the `log` field of a bridge
+session's `describe`; see [docs/experiments/bridge-01.md](experiments/bridge-01.md)).
+A planner view also differs from an ordinary slice in four ways:
+
+- `until_us` is null: with a clock offset, the run's end in the view's clock
+  would give the offset away.
+- `data.link` is removed from every event. It records `k`, the delay and
+  whether a message is a duplicate copy, which a participant's own log does
+  not know.
+- `seq` is renumbered from 0. The original positions would show how many
+  events of other participants happened in between.
+- A view may add one constant clock offset to every time: one offset per
+  view, never per event.
+
+`incident view` refuses a file name that mentions the incident's mutant or
+variant. Tests check both header rules and that no hidden value reaches the
+planner.
 
 ## Versioning
 

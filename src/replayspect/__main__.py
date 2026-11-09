@@ -18,6 +18,10 @@ baseline  Random search over the same seeds a planning session uses
           With --strategy hypothesis, Hypothesis writes the fault plans
           instead (needs the hyp extra), once per Hypothesis seed.
 session   Summarize a planning-session log and rerun it to check it replays.
+incident  WP4 bridge experiment, operator side: check an incident's
+          preconditions, write the partial log a planner gets, run the random
+          and Hypothesis baselines through the same loop, and summarize or
+          rerun bridge-session logs (replayspect.bridge).
 
 search and baseline take --variant SPEC: run an implementation of the system
 loaded from outside the package (path/to/file.py:NAME or package.module:NAME;
@@ -211,6 +215,66 @@ def _session(args: argparse.Namespace) -> int:
     return 0
 
 
+def _incident(args: argparse.Namespace) -> int:
+    from replayspect import bridge
+    from replayspect.incident import check_preconditions, read_incident, view_text
+
+    if args.action == "check":
+        bad = 0
+        for f in args.files:
+            p = check_preconditions(read_incident(f))
+            cm = p.correct_match
+            print(f"{f}: {'ok' if p.ok else 'FAILS'}; matches itself {'yes' if p.self_match else 'NO'}; "
+                  f"correct implementation reproduces it {'no' if p.correct_differs else 'YES'}, "
+                  f"told apart by the log {'yes' if p.correct_log_differs else 'NO'} "
+                  f"(lines {cm.matched}/{cm.total})")
+            bad += not p.ok
+        return 1 if bad else 0
+    if args.action == "view":
+        (f,) = args.files
+        inc = read_incident(f)
+        out = Path(args.out)
+        hidden = [*inc.mutants, *([inc.variant.rpartition(":")[2]] if inc.variant else [])]
+        if any(h and h.lower() in out.name.lower() for h in hidden):
+            print("incident view: the file name must not mention a mutant or variant", file=sys.stderr)
+            return 2
+        try:
+            with out.open("x", encoding="utf-8") as fh:
+                fh.write(view_text(inc))
+        except FileExistsError:
+            print(f"{out} exists; not overwriting it", file=sys.stderr)
+            return 2
+        print(f"view: {inc.actor}-side log -> {out}")
+        return 0
+    if args.action == "baseline":
+        (f,) = args.files
+        cfg = bridge.BridgeConfig(f, args.budget, args.max_faults)
+        log_dir = Path(args.log_dir)
+        for i in range(args.start, args.start + args.runs):
+            log = log_dir / f"{args.strategy}-{i}.jsonl"
+            if args.strategy == "random":
+                bridge.random_baseline(cfg, i, log)
+            else:
+                bridge.hypothesis_baseline(cfg, i, log)
+            print(f"{args.strategy} {i}: {_bridge_line(bridge.summarize_log(log))} -> {log}")
+        return 0
+    if args.action == "summary":
+        for f in args.files:
+            print(f"{f}: {_bridge_line(bridge.summarize_log(Path(f)))}")
+        return 0
+    bad = {f: bridge.verify_log(Path(f)) for f in args.files}
+    for f, runs in bad.items():
+        print(f"{f}: replay {'ok' if not runs else f'runs {runs} came out different'}")
+    return 1 if any(bad.values()) else 0
+
+
+def _bridge_line(s: dict) -> str:
+    rep = f"reproduced at run {s['runs_to_reproduction']}" if s["reproduced"] else "not reproduced"
+    return (f"{s['calls']} calls, {rep}, candidates {s['candidates']}, "
+            f"confirmed {s['confirmed']}/{s['nominations']}, hidden fault named {s['nominated_hidden_fault']}, "
+            f"by tolerance {s['runs_to_reproduction_by_tolerance']}, exact {'yes' if s['exact_reproduction'] else 'no'}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python3 -m replayspect")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -272,7 +336,26 @@ def main(argv: list[str] | None = None) -> int:
     se.add_argument("log")
     se.add_argument("--verify", action="store_true", help="rerun every plan and compare")
     se.set_defaults(fn=_session)
+    inc = sub.add_parser(
+        "incident", help="WP4 bridge experiment: incidents, planner logs, baselines, session logs",
+        description="check: preconditions of incident files. view: write the partial log a planner gets "
+                    "(new file; its name must not mention the mutant or variant). baseline: run random or "
+                    "Hypothesis plans through the bridge loop, one log per run. summary: the WP4 metrics "
+                    "of bridge-session logs. verify: rerun bridge-session logs. Incident files and logs "
+                    "hold the answer; keep them away from planners.")
+    inc.add_argument("action", choices=["check", "view", "baseline", "summary", "verify"])
+    inc.add_argument("files", nargs="+", help="incident files (check, view, baseline) or session logs")
+    inc.add_argument("--out", help="view: output path")
+    inc.add_argument("--strategy", choices=["random", "hypothesis"], default="random")
+    inc.add_argument("--runs", type=int, default=3, help="baseline: how many runs (seeds start..start+runs-1)")
+    inc.add_argument("--start", type=int, default=0, help="baseline: first random or Hypothesis seed")
+    inc.add_argument("--budget", type=int, default=120)
+    inc.add_argument("--max-faults", type=int, default=20)
+    inc.add_argument("--log-dir", default=".", help="baseline: directory for the session logs")
+    inc.set_defaults(fn=_incident)
     args = ap.parse_args(argv)
+    if args.cmd == "incident" and args.action == "view" and not args.out:
+        ap.error("incident view needs --out")
     return args.fn(args)
 
 

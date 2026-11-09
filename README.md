@@ -45,6 +45,7 @@ Pre-alpha. v0 is being built in this order:
 - [x] v3 WP1: `rewind` viewer for trace files, `replay --trace-out` (`docs/work-order-v3.md`)
 - [x] v3 WP2: trace schema with header, fidelity and source (`docs/trace-schema.md`, `schemas/trace-1.schema.json`)
 - [x] v3 WP3: run an implementation variant loaded from outside the package (`--variant`)
+- [ ] v3 WP4: bridge experiment, reproduce a hidden run from a partial log (harness done; trial pending, `docs/experiments/bridge-01.md`)
 
 ## Usage
 
