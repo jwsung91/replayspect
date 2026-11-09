@@ -96,3 +96,22 @@ alone gave partly right answers on every run, and the answers that saw the log w
 two overlap on 6. `check_cause` was called once in 16 sessions. The bridge `describe` tool now
 declares a 200,000-character result size, because the client cut off one session's input at
 50,000 characters.
+
+## WP5a: text log ingest
+
+`replayspect ingest LOG --rules RULES --out TRACE` turns a text log into a trace file
+(`source: adapter:text`, every event `exact`). The rules file (`replayspect.rules/1`,
+`docs/rules-schema.md`) is the only part that depends on the line format. It splits an entry into
+fields with one regular expression, reads the timestamp (epoch, ISO 8601 or a strptime pattern),
+and maps entries to events with an ordered list of rules where the first match wins, ignore rules
+included. Templates fill an event's fields from the regex groups, with `|int`, `|float` and
+optional groups. A time zone is never guessed. Multi-line entries join by a continuation pattern.
+The input must be UTF-8, and CRLF line ends are accepted. Nothing is dropped silently: entries no
+rule matches are counted and listed in a file. Events logged out of time order are sorted stably
+and flagged (`out_of_order` within the tolerance, `out_of_tolerance` beyond it), and a run of
+`out_of_tolerance` events is reported as a suspected clock step. Nothing is corrected here. Clock
+estimation, driven replay and the reader belong to WP5b. Two minor additions to the trace schema
+carry this. The event field `log` holds the log line and flags, and is outside the digest like
+`fidelity` and `source`. The header field `origin` holds the wall-clock time of `t_us = 0`.
+`rewind` shows both. The tests ingest the same log in two line formats with only the rules file
+changed, and get the same trace.

@@ -1,0 +1,12 @@
+[INFO] [1794265200.000000] [lift_client]: TX MOVE_UP req=r-0001
+[DEBUG] [1794265200.500000] [lift_client]: heartbeat ok
+[DEBUG] [1794265201.000000] [lift_client]: TX STATUS req=s-0001
+[DEBUG] [1794265202.342059] [lift_client]: RX STATUS_REPLY req=s-0001 state=MOVING_UP
+[INFO] [1794265202.338764] [lift_client]: RX ACK req=r-0001
+[WARN] [1794265203.000000] [lift_client]: RX ERROR reason=busy
+[INFO] [1794265204.000000] [ui]: operator pressed STOP
+[ERROR] [1794265204.500000] [lift_client]: decode failed
+    Traceback (most recent call last):
+      ValueError: bad frame
+
+[INFO] [1794265205.021866] [lift_client]: result r-0001 DONE cause=reply

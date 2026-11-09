@@ -1,9 +1,9 @@
 # Trace file schema (replayspect.trace/1)
 
 A trace file is UTF-8 JSON Lines: an optional header line, then one event per
-line. The simulator (`replay --trace-out`) and slices (`rewind --full`) write
-this format, and so will log adapters (WP5). Every reader (`rewind`, the
-judge, later `ingest` and `vary`) reads only this. Writers emit canonical
+line. The simulator (`replay --trace-out`), slices (`rewind --full`) and the
+text log adapter (`ingest`, [rules-schema.md](rules-schema.md)) write this
+format. Every reader (`rewind`, the judge, later `vary`) reads only this. Writers emit canonical
 lines: keys sorted, no spaces. Readers accept any JSON formatting.
 
 The machine-readable form is [`schemas/trace-1.schema.json`](../schemas/trace-1.schema.json)
@@ -29,6 +29,7 @@ listed under [Reading rules](#reading-rules).
 | `plan` | object or null | `{"sha256": <digest of the canonical plan JSON>, "repro": <path as given, or null>}`. Identifies the fault plan without inlining it. Null for adapter output and for runs without a plan. |
 | `contracts` | object or null | `{"path": <path>, "sha256": <file digest>}`. Default contract file for judging. The digest records which version of the file. Writers give the path relative to the working directory when the file is under it, otherwise absolute. Readers resolve a relative path against the working directory. |
 | `until_us` | integer ≥ 0 or null | End of the run, and the default end time for judging. Null when unknown; judging then ends at the last event. Never before the last event. |
+| `origin` | string, optional | Wall-clock time of `t_us = 0`, ISO 8601 with a UTC offset (`2026-11-10T08:00:00.000000+09:00`). Written by log adapters, so the log's own times can be recovered and two logs aligned later. Absent in simulator output. |
 | `slice` | object or null | Set when the file is a cut of another trace: `{"window": [t0, t1] or null, "actors": [names] or null, "of": <digest of the full trace> or null}`. The window is inclusive and `t0 <= t1`. Null for a full trace. |
 
 Mutants and implementation variants (`--variant`) are never in the header.
@@ -57,9 +58,14 @@ are rejected.
 | `data` | object, optional | Plain JSON (no NaN, string keys). Reserved key: `link` (channel metadata). |
 | `fidelity` | `exact` or `reconstructed` | `exact`: recorded by the simulator or read from a log. `reconstructed`: filled in by a model (WP7). Default `exact`. |
 | `source` | string | Who produced this event: `sim` or `adapter:<name>`. Defaults to the header's `source`, else `sim`. |
+| `log` | object, optional | Where a log adapter read the event: `{"line": n}`, the log line (1-based), plus `"flags"` when the event was logged out of time order: `out_of_order` (within the rules' tolerance) or `out_of_tolerance`. Absent in simulator output. |
 
 Writers always write `fidelity` and `source` on every event, so each line
-describes itself without the header.
+describes itself without the header. Adapters also write `log`.
+
+An adapter keeps every event's logged time. Times in a file never decrease, so
+events logged out of time order are sorted (stably) and flagged in `log.flags`,
+not dropped or corrected ([rules-schema.md](rules-schema.md#order-and-flags)).
 
 Kind-specific `data` is what the example systems write. Adapters may add keys.
 
@@ -72,10 +78,11 @@ Kind-specific `data` is what the example systems write. Adapters may add keys.
 
 The trace digest is SHA-256 over the canonical JSON Lines (sorted keys, no
 spaces) of the **event core** only: `seq, t_us, actor, kind, name, req_id,
-data`. The header, `fidelity` and `source` are not part of it.
+data`. The header, `fidelity`, `source` and `log` are not part of it.
 
 - Repro files written before this schema keep their digests (principle 2).
-- The digest says *what happened*. Fidelity and source say *how we know it*.
+- The digest says *what happened*. Fidelity, source and log say *how we know
+  it*: a comment line added to a log moves line numbers but not the digest.
 
 ## Reading rules
 
@@ -155,3 +162,9 @@ defect, would be read off the planner's own runs.
 
 Adding an optional field is a minor change (same major). Changing or removing
 a field is a new major (`replayspect.trace/2`, `schemas/trace-2.schema.json`).
+
+Minor changes so far:
+
+- WP5a (text log ingest): the header field `origin` and the event field `log`.
+  Readers that do not know them ignore them; simulator output does not write
+  them, so its files and digests are unchanged.

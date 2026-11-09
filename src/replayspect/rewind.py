@@ -140,7 +140,14 @@ def fmt_t(us: int) -> str:
 
 
 def event_line(ev: Event) -> str:
-    """One line per event: position, time, actor, kind, name, req_id and the data that identifies it."""
+    """One line per event: position, time, actor, kind, name, req_id and the data that identifies it.
+
+    An event a log adapter flagged ends with its log line and flags: ``[log line 4: out_of_order]``.
+    """
+    return _event_text(ev) + _flag_text(ev)
+
+
+def _event_text(ev: Event) -> str:
     head = f"#{ev.seq} {fmt_t(ev.t_us)} {ev.actor} {ev.kind} {ev.name} {ev.req_id or '-'}"
     d = ev.data
     if not d:
@@ -151,6 +158,15 @@ def event_line(ev: Event) -> str:
         rest = {k: v for k, v in d.items() if k != "link"}
         return f"{head} k={link.get('k')}{extra}" + (f" {_compact(rest)}" if rest else "")
     return f"{head} {_compact(d)}"
+
+
+def _flags(ev: Event) -> list[str]:
+    return list(ev.log.get("flags", [])) if ev.log else []
+
+
+def _flag_text(ev: Event) -> str:
+    flags = _flags(ev)
+    return f" [log line {ev.log['line']}: {', '.join(flags)}]" if flags else ""
 
 
 def _compact(d: Any, limit: int = 120) -> str:
@@ -375,6 +391,10 @@ def view(
                      f"kinds: {_counts(selected, lambda e: e.kind)}")
     else:
         lines.append(f"kinds: {_counts(events, lambda e: e.kind)}")
+    flagged = [(f, e) for e in events for f in _flags(e)]
+    if flagged:
+        lines.append(f"flagged by the log adapter: {_counts(flagged, lambda fe: fe[0])} "
+                     "(times as logged; see docs/trace-schema.md)")
 
     if ref is not None:
         theirs = sel.apply(ref.events)
