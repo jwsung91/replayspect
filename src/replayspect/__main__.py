@@ -20,7 +20,8 @@ baseline  Random search over the same seeds a planning session uses
 session   Summarize a planning-session log and rerun it to check it replays.
 incident  WP4 bridge experiment, operator side: check an incident's
           preconditions, write the partial log a planner gets, run the random
-          and Hypothesis baselines through the same loop, and summarize or
+          and Hypothesis baselines and the rule-based log reader
+          (replayspect.reconstruct) through the same loop, and summarize or
           rerun bridge-session logs (replayspect.bridge).
 
 search and baseline take --variant SPEC: run an implementation of the system
@@ -250,6 +251,13 @@ def _incident(args: argparse.Namespace) -> int:
         (f,) = args.files
         cfg = bridge.BridgeConfig(f, args.budget, args.max_faults)
         log_dir = Path(args.log_dir)
+        if args.strategy == "reconstruct":  # deterministic: one session
+            log = log_dir / "reconstruct.jsonl"
+            _, result = bridge.reconstruct_baseline(cfg, log)
+            print(f"reconstruct: {result.status} after {result.runs} runs"
+                  + (f" ({result.reason})" if result.reason else "")
+                  + f"; {_bridge_line(bridge.summarize_log(log))} -> {log}")
+            return 0
         for i in range(args.start, args.start + args.runs):
             log = log_dir / f"{args.strategy}-{i}.jsonl"
             if args.strategy == "random":
@@ -340,14 +348,18 @@ def main(argv: list[str] | None = None) -> int:
         "incident", help="WP4 bridge experiment: incidents, planner logs, baselines, session logs",
         description="check: preconditions of incident files. view: write the partial log a planner gets "
                     "(new file; its name must not mention the mutant or variant). baseline: run random or "
-                    "Hypothesis plans through the bridge loop, one log per run. summary: the WP4 metrics "
+                    "Hypothesis plans, or the rule-based log reader (reconstruct), through the bridge loop, "
+                    "one log per run. summary: the WP4 metrics "
                     "of bridge-session logs. verify: rerun bridge-session logs. Incident files and logs "
                     "hold the answer; keep them away from planners.")
     inc.add_argument("action", choices=["check", "view", "baseline", "summary", "verify"])
     inc.add_argument("files", nargs="+", help="incident files (check, view, baseline) or session logs")
     inc.add_argument("--out", help="view: output path")
-    inc.add_argument("--strategy", choices=["random", "hypothesis"], default="random")
-    inc.add_argument("--runs", type=int, default=3, help="baseline: how many runs (seeds start..start+runs-1)")
+    inc.add_argument("--strategy", choices=["random", "hypothesis", "reconstruct"], default="random",
+                     help="baseline: random or Hypothesis plans, or the rule-based log reader (deterministic, "
+                          "one session, no model)")
+    inc.add_argument("--runs", type=int, default=3,
+                     help="baseline: how many runs (seeds start..start+runs-1); not used by reconstruct")
     inc.add_argument("--start", type=int, default=0, help="baseline: first random or Hypothesis seed")
     inc.add_argument("--budget", type=int, default=120)
     inc.add_argument("--max-faults", type=int, default=20)

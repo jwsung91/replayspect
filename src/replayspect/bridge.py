@@ -42,6 +42,7 @@ from replayspect.incident import (
     Match,
     read_incident,
     run_incident,
+    run_view,
     view_text,
     wp4_match,
 )
@@ -113,6 +114,7 @@ class BridgeSession:
         self.ended: str | None = None
         self.runs: dict[int, dict[str, Any]] = {}  # run index -> {"plan": dict, "reproduced": bool}
         self.last_record: dict[str, Any] | None = None
+        self.last_run = None  # the Run of the last accepted run_plan (baselines read its own view)
         self._texts = {
             "protocol": self.system.protocol_path.read_text(encoding="utf-8"),
             "contracts": self.system.contracts_path.read_text(encoding="utf-8"),
@@ -209,6 +211,7 @@ class BridgeSession:
             return {"status": "rejected", "run": idx, "error": str(exc), "budget": self._after()}
         run = self._run(parsed)
         m = wp4_match(self.incident, self.hidden, run, self.system)
+        self.last_run = run
         self.runs[idx] = {"plan": raw, "reproduced": m.reproduced}
         report = run.plan_report.to_dict() if run.plan_report else {}
         record.update(status="ok", violated=sorted(run.violated()), digest=run.trace.digest(),
@@ -482,3 +485,46 @@ def hypothesis_baseline(config: BridgeConfig, hyp_seed: int, log_path: Path | No
     with no_local_constants():
         run()
     return s
+
+
+def reconstruct_baseline(config: BridgeConfig, log_path: Path | None = None, **search: Any):
+    """The rule-based reconstructor (:mod:`replayspect.reconstruct`) in the same loop.
+
+    It reads only what a planner gets: the describe log and limits, and for each
+    run the reproduction verdict, lines matched and the visible participant's
+    events of that run. A reproducing plan's causes are then named in seeded
+    random order, as for the other baselines. If it does not reproduce, the
+    session is finished with the reconstructor's status and reason as the note.
+    ``search`` goes to :func:`~replayspect.reconstruct.reconstruct` (``max_edits``,
+    ``max_tries``). Returns ``(session, result)``.
+    """
+    from replayspect.reconstruct import Feedback, Limits, reconstruct
+    from replayspect.tracefile import parse_trace_file
+
+    s = BridgeSession(config, log_path)
+    d = s.describe()
+    tf = parse_trace_file(d["log"], "log")
+    log = tf.trace
+    actor = tf.header.slice.actors[0]
+    vocab = s.system.vocabulary
+    if vocab is None:
+        raise ValueError(f"system {s.system.name} has no plan vocabulary")
+    reproducing: list[int] = []
+
+    def oracle(plan: dict[str, Any]) -> Feedback | None:
+        out = s.run_plan(plan)
+        if out.get("status") != "ok":
+            return None
+        rep = out["reproduction"]
+        if rep["reproduced"]:
+            reproducing.append(out["run"])
+        return Feedback(rep["reproduced"], int(rep["lines_matched"].split("/")[0]), run_view(s.last_run.trace, actor))
+
+    result = reconstruct(log, actor, s.system.quiet_messages, (vocab.poll_request, vocab.poll_reply),
+                         Limits.from_describe(d["limits"]), oracle,
+                         clock_known="off from the simulator's" not in d["log_note"], **search)
+    if reproducing and s.ended is None:
+        name_causes(s, random.Random("bridge-reconstruct"), reproducing[0])
+    if s.ended is None:
+        s.finish(f"reconstruct: {result.status}: {result.reason}")
+    return s, result
