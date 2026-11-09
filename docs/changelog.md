@@ -63,3 +63,13 @@ logs in 2 to 6 runs and confirmed a cause in each; no random or Hypothesis sessi
 log, 120 runs) reproduced any. Single removals clear the failure for most entries of a
 reproducing plan, so the confirmation adds little to the reproduction. Results and departures
 from the registration are in `docs/experiments/bridge-01.md`.
+
+Rule-based log reader (`replayspect.reconstruct`, `incident baseline --strategy reconstruct`): the
+main baseline of the WP4 main trial, and a step of the WP5 path. It reads only what a planner gets
+(the one-sided log, the public limits and, per run, the verdict, lines matched and the visible
+participant's events of its own run with their link data, `incident.run_view`), and searches
+depth first over edits that improve the first mismatch: adjust an existing entry, delay, drop or
+duplicate a message, or a disconnect from a gap in the polls or ending at an unexplained resend,
+earliest cause first. It never runs a plan twice and keeps only improvements, so it cannot loop;
+it ends reproduced, stuck (no improving edit left; the furthest mismatch is reported), at the edit
+cap, or out of budget. No model and no tokens.

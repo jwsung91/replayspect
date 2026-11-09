@@ -124,6 +124,33 @@ def view_events(trace: Trace | Sequence[Event], actor: str, clock_offset_us: int
     return out
 
 
+def run_view(trace: Trace | Sequence[Event], actor: str) -> list[Event]:
+    """One participant's events of a planner's **own** run.
+
+    Like :func:`view_events` (one actor, ``seq`` renumbered), but channel
+    metadata stays: it describes the planner's own run, not the hidden one.
+    Each received copy also gets ``link.sent_us`` and ``link.delay_us``, the
+    send time and drawn delay of the message, taken from the matching send.
+    This is what lets a planner (or :mod:`replayspect.reconstruct`) turn
+    "this line came 0.3 s too early" into a plan entry.
+    """
+    sends: dict[tuple, tuple[int, int]] = {}
+    out = []
+    for ev in trace:
+        link = ev.data.get("link")
+        if ev.kind == "send" and link is not None:
+            sends[(link["dir"], ev.name, ev.req_id, link["k"])] = (ev.t_us, link["delay_us"])
+        if ev.actor != actor:
+            continue
+        data = dict(ev.data)
+        if ev.kind == "recv" and link is not None:
+            sent = sends.get((link["dir"], ev.name, ev.req_id, link["k"]))
+            if sent is not None:
+                data["link"] = {**link, "sent_us": sent[0], "delay_us": sent[1]}
+        out.append(Event(len(out), ev.t_us, ev.actor, ev.kind, ev.name, ev.req_id, data, ev.fidelity, ev.source))
+    return out
+
+
 def view_header(inc: Incident) -> Header:
     """Header of a planner view: nothing that identifies the run, plan, contracts or full trace.
 
@@ -142,7 +169,8 @@ def view_text(inc: Incident, run: Run | None = None) -> str:
 # -- the WP4 match (replaced by the symptom judge in WP6) -------------------------------------
 
 
-def _key(ev: Event) -> tuple:
+def line_key(ev: Event) -> tuple:
+    """What two compared lines must share: kind, name, req_id and data without ``link``."""
     return (ev.kind, ev.name, ev.req_id, canonical({k: v for k, v in ev.data.items() if k != "link"}))
 
 
@@ -213,7 +241,7 @@ def wp4_match(inc: Incident, hidden: Run, candidate: Run, system: System) -> Mat
             first = {"line": i, "expected": _show(w), "expected_t_s": w.t_us / 1e6, "got": None, "got_t_s": None}
             break
         g = got[i]
-        if _key(w) != _key(g) or abs(w.t_us - g.t_us) > inc.tolerance_us:
+        if line_key(w) != line_key(g) or abs(w.t_us - g.t_us) > inc.tolerance_us:
             first = {"line": i, "expected": _show(w), "expected_t_s": w.t_us / 1e6,
                      "got": _show(g), "got_t_s": g.t_us / 1e6}
             break
@@ -221,7 +249,7 @@ def wp4_match(inc: Incident, hidden: Run, candidate: Run, system: System) -> Mat
     if first is None and len(got) > len(want):
         g = got[len(want)]
         first = {"line": len(want), "expected": None, "expected_t_s": None, "got": _show(g), "got_t_s": g.t_us / 1e6}
-    lines_same = len(want) == len(got) and all(_key(w) == _key(g) for w, g in zip(want, got))
+    lines_same = len(want) == len(got) and all(line_key(w) == line_key(g) for w, g in zip(want, got))
     max_dt = max((abs(w.t_us - g.t_us) for w, g in zip(want, got)), default=0) if lines_same else None
     status_same = None
     if inc.status_rule:
