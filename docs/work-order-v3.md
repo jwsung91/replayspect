@@ -130,6 +130,8 @@ Constraints (carried over from v3, with two additions):
 - The operator merges every PR. Never merge without an explicit instruction that names the PR; if the number is missing, ask.
 - Do not change the documents the planner reads (protocol, contracts, plan format) while an experiment is registered or running; the inputs of earlier rounds must stay comparable.
 - Hidden variants, incident files, seeds, defect forms, and scoring keys stay outside the repository until the experiment is published.
+- Hidden variants are reserved as hidden answers for bridge-style experiments. Do not run a planner campaign (v2-style LLM versus random) against them until they are published.
+- Every experiment that reports an LLM result runs its baselines through the same loop, incidents, and budget: the rule-based reader, random, and Hypothesis.
 - Experiments are preregistered. Anything that differs from the registration, however small, goes into "Departures from the registration" with session IDs.
 - Tool output is short by default; detail goes to files. Added: no tool result above 20,000 characters.
 - Added: no result is called a cause unless the engine checks in WP6/7 have run on it. Until then it is a hypothesis and is labelled so.
