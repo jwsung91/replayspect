@@ -15,6 +15,7 @@ dependencies = ["PyYAML>=6.0"]
 dev = ["pytest>=8", "jsonschema>=4"]
 mcp = ["mcp>=1.2"]
 hyp = ["hypothesis>=6.170"]
+testbed = ["pyserial>=3.5"]  # examples/testbed-uno/host on the Orin
 
 [project.urls]
 Repository = "https://github.com/jwsung91/replayspect"

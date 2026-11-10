@@ -50,6 +50,9 @@ Implemented:
 - Text log ingest: `ingest` reads a text log with a rules file
   ([docs/rules-schema.md](docs/rules-schema.md)) into a trace file, which
   `rewind` reads
+- Hardware testbed for the lift (`examples/testbed-uno`): Arduino Uno firmware
+  checked against the model, and a client and link for a Jetson Orin; the first
+  hardware run is pending
 - Driven replay of a client-side log: `drive` replays the log as a script,
   simulates the device and needs no seed; `drive --reconstruct` searches for
   the fault plan ([docs/driven-replay.md](docs/driven-replay.md))

@@ -155,3 +155,27 @@ the run cap, or a space too large to run), a limit of the fitter. Without expect
 explanations that match every receive differ in the device's violations, all of them are
 reported and none is chosen. Development runs on the 17 driven-01 logs reproduce 5; these are not
 results.
+
+## WP5c stage 1: hardware testbed (code)
+
+`examples/testbed-uno/` holds the code for the testbed:
+- An Arduino Uno runs the `lift.v0` device as `lift_device.h`, plain C++ wrapped by `lift_uno.ino`.
+- A Jetson Orin runs the client (`host/client.py`) through a link that passes lines and records
+  them (`host/fault_link.py`).
+- `rules/testbed-client.yaml` ingests the client's log.
+
+Details:
+- **Wire format:** one ASCII line per message at 115200 baud. `READY` carries the build options,
+  and `#` device log lines carry `millis()`. The Uno's memory limits and every place the firmware
+  differs from the model are listed in the testbed README.
+- **Conformance:** a test compiles the header natively and checks its replies and state changes
+  against the Python model.
+- **Client log:** one wall-clock reading plus monotonic time, with a header line (firmware options,
+  think seed, plan id) and a validity line. A device error or a reset makes the run invalid.
+- **Tests:** a host test runs the client against a fake board. The log ingests and reproduces with
+  an empty plan at the fake link delay.
+- **`drive`:** `--link-delay` sets the link delay range for one run (0 allowed), and `--residuals`
+  prints the recorded-minus-simulated times.
+- **`pyserial`** is an optional extra (`[testbed]`).
+
+The first hardware run is the operator's.
