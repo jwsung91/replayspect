@@ -65,6 +65,9 @@ class Feedback:
 
 
 Oracle = Callable[[dict[str, Any]], "Feedback | None"]  # None: refused, budget used up
+#: Extra candidate edits for a mismatched line: (plan, the run's line, time it should move by) ->
+#: (name, plan). Names starting with "adjust" are tried before the built-in edits.
+Extra = Callable[[dict[str, Any], Event, int], Iterator[tuple[str, dict[str, Any]]]]
 
 
 @dataclass
@@ -74,15 +77,18 @@ class Result:
     runs: int
     plan: dict[str, Any]
     offset_us: int
-    edits: list[str] = field(default_factory=list)
+    edits: list[str] = field(default_factory=list)  # search edits on the branch (MAX_EDITS counts these)
+    start_entries: int = 0  # entries of the start plan (e.g. round-trip delays), not search edits
 
     @property
     def reconstructed(self) -> bool:
         return self.status == "reproduced"
 
 
-def empty_plan() -> dict[str, Any]:
-    return {"base": "random", "delays": [], "faults": [], "disconnects": []}
+def empty_plan(base: str = "random") -> dict[str, Any]:
+    """``base: random`` takes unplanned delays from the run's seed (bridge sessions); ``fixed`` uses
+    the profile minimum and needs no seed (driven replay)."""
+    return {"base": base, "delays": [], "faults": [], "disconnects": []}
 
 
 @dataclass(frozen=True)
@@ -166,8 +172,11 @@ def _show(ev: Event | None, offset_us: int = 0) -> str:
 
 class _Search:
     def __init__(self, log: Sequence[Event], actor: str, quiet: frozenset[str], polls: tuple[str, str],
-                 limits: Limits, oracle: Oracle, clock_known: bool, max_edits: int, max_tries: int) -> None:
+                 limits: Limits, oracle: Oracle, clock_known: bool, max_edits: int, max_tries: int,
+                 start: dict[str, Any] | None = None, kinds: frozenset[str] | None = None,
+                 extra: Extra | None = None) -> None:
         self.actor, self.quiet, self.polls, self.limits = actor, quiet, polls, limits
+        self.start, self.kinds, self.extra = start, kinds, extra
         self.oracle, self.clock_known = oracle, clock_known
         self.max_edits, self.max_tries = max_edits, max_tries
         self.log = [e for e in log if e.actor == actor]
@@ -176,7 +185,8 @@ class _Search:
         self.offset = 0
 
     def compared(self, events: Sequence[Event]) -> list[Event]:
-        return [e for e in events if e.actor == self.actor and e.name not in self.quiet]
+        return [e for e in events if e.actor == self.actor and e.name not in self.quiet
+                and (self.kinds is None or e.kind in self.kinds)]
 
     def run(self, plan: dict[str, Any]) -> Feedback | None:
         self.runs += 1
@@ -213,6 +223,10 @@ class _Search:
         same = e is not None and g is not None and line_key(e) == line_key(g)
         d = t_e - g.t_us if same else None
         events = list(fb.events)
+
+        # 0. caller-supplied adjustments (driven replay: shift a round trip's split), tried first
+        if self.extra is not None and same:
+            yield from self.extra(plan, g, d)
 
         # 1. adjust an entry already in the plan by the time difference
         if same:
@@ -346,7 +360,13 @@ class _Search:
     # the search: depth first over improving edits, backtracking when a branch is stuck
 
     def search(self) -> Result:
-        plan = empty_plan()
+        plan = self.start if self.start is not None else empty_plan()
+        n_start = len(plan["delays"]) + len(plan["faults"]) + len(plan["disconnects"])
+        res = self._search(plan)
+        res.start_entries = n_start
+        return res
+
+    def _search(self, plan: dict[str, Any]) -> Result:
         fb = self.run(plan)
         if fb is None:
             return Result("budget", "the oracle refused the first run", self.runs, plan, 0)
@@ -448,9 +468,16 @@ def _desc(key: Mapping[str, Any]) -> str:
 
 def reconstruct(log: Sequence[Event], actor: str, quiet: frozenset[str], polls: tuple[str, str], limits: Limits,
                 oracle: Oracle, *, clock_known: bool, max_edits: int = MAX_EDITS,
-                max_tries: int = MAX_TRIES_PER_LINE) -> Result:
+                max_tries: int = MAX_TRIES_PER_LINE, start: dict[str, Any] | None = None,
+                kinds: frozenset[str] | None = None, extra: Extra | None = None) -> Result:
     """Look for a plan that reproduces ``log`` (see the module docstring).
 
     ``clock_known``: the log's clock is the simulator's (no offset to estimate).
+    ``start``: the plan to start from (default :func:`empty_plan`); its entries are counted in
+    ``Result.start_entries``, apart from search edits, and ``max_edits`` limits search edits only.
+    ``kinds``: compare only lines of these kinds (driven replay compares receives only; the
+    oracle's ``matched`` must count the same lines).
+    ``extra``: more candidate edits for a mismatched line, tried first (see :data:`Extra`).
     """
-    return _Search(log, actor, quiet, polls, limits, oracle, clock_known, max_edits, max_tries).search()
+    return _Search(log, actor, quiet, polls, limits, oracle, clock_known, max_edits, max_tries,
+                   start, kinds, extra).search()
