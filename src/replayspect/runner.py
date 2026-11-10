@@ -42,6 +42,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # -- systems --------------------------------------------------------------------------
 
 RunFn = Callable[[int, "FaultPlan | None", tuple[str, ...], int], Trace]
+DeviceFn = Callable[[Any, Trace, Any, tuple[str, ...]], Any]  # (scheduler, trace, channel, mutants) -> device
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,9 @@ class System:
     #: Published defects ``(id, description)``: the mutant list a planner may choose from
     #: (WP4 condition A). Empty when the system's defects are not published.
     published_defects: tuple[tuple[str, str], ...] = ()
+    #: Build the device model alone on a scheduler, trace and channel, with mutants
+    #: ``(sched, trace, ch, mutants) -> device``. Driven replay (replayspect.driven) uses it.
+    device: DeviceFn | None = None
 
     def contracts(self) -> ContractSet:
         return load_contracts(self.contracts_path)
@@ -119,6 +123,15 @@ def _run_lift(seed: int, plan: FaultPlan | None, mutants: tuple[str, ...], until
     from replayspect.sut.lift import run_lift
 
     return run_lift(seed, plan=plan, mutants=mutants, until_us=until_us)
+
+
+def _lift_device(sched: Any, trace: Trace, ch: Any, mutants: tuple[str, ...]) -> Any:
+    from replayspect.sut.lift import MUTANTS, LiftDevice
+
+    unknown = set(mutants) - MUTANTS.keys()
+    if unknown:
+        raise ValueError(f"unknown mutants: {sorted(unknown)}")
+    return LiftDevice(sched, trace, ch, frozenset(mutants))
 
 
 def _lift_defects() -> tuple[tuple[str, str], ...]:
@@ -139,6 +152,15 @@ def _run_turntable(seed: int, plan: FaultPlan | None, mutants: tuple[str, ...], 
     return run_turntable(seed, plan=plan, mutants=mutants, until_us=until_us)
 
 
+def _turntable_device(sched: Any, trace: Trace, ch: Any, mutants: tuple[str, ...]) -> Any:
+    from replayspect.sut.turntable import MUTANTS, TurntableDevice
+
+    unknown = set(mutants) - MUTANTS.keys()
+    if unknown:
+        raise ValueError(f"unknown mutants: {sorted(unknown)}")
+    return TurntableDevice(sched, trace, ch, frozenset(mutants))
+
+
 def _turntable_profile() -> ChannelProfile:
     from replayspect.sut.turntable import SEARCH_PROFILE
 
@@ -149,12 +171,12 @@ SYSTEMS: dict[str, System] = {
     "lift.v0": System(
         "lift.v0", _run_lift, ROOT / "contracts" / "lift.v0.yaml", 90_000_000,
         _lift_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-lift.md",
-        _lift_vocabulary(), published_defects=_lift_defects(),
+        _lift_vocabulary(), published_defects=_lift_defects(), device=_lift_device,
     ),
     "turntable.v0": System(
         "turntable.v0", _run_turntable, ROOT / "contracts" / "turntable.v0.yaml", 90_000_000,
         _turntable_profile(), frozenset({"STATUS", "STATUS_REPLY"}), ROOT / "docs" / "protocol-turntable.md",
-        _turntable_vocabulary(),
+        _turntable_vocabulary(), device=_turntable_device,
     ),
 }
 
@@ -174,7 +196,13 @@ def get_system(name: str, variant: str | None = None) -> System:
     v, ref = load_variant(variant)
     if v.system != name:
         raise ValueError(f"variant {variant} implements {v.system}, not {name}")
-    return replace(system, run=variant_run(v, system.profile), variant=ref)
+    device = None
+    if getattr(v, "device", None) is not None:
+        def device(sched: Any, trace: Trace, ch: Any, mutants: tuple[str, ...]) -> Any:
+            if mutants:
+                raise ValueError("a variant run takes no mutants")
+            return v.device(sched, trace, ch)
+    return replace(system, run=variant_run(v, system.profile), variant=ref, device=device)
 
 
 # -- single runs --------------------------------------------------------------------------

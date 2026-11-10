@@ -17,6 +17,10 @@ What a variant must do, so that its traces compare with the system's:
 * use the link profile it is given, not one of its own;
 * return the :class:`~replayspect.trace.Trace` it recorded.
 
+A variant may also give ``device``: a function that builds only its device on a given
+scheduler, trace and channel. Driven replay of a client-side log needs it; without it, a
+driven replay of the variant is refused.
+
 A variant that behaves like the registered implementation gives the same
 digest for every seed and plan. The tests check this with a neutral variant.
 """
@@ -38,11 +42,18 @@ from replayspect.trace import Trace
 VariantRun = Callable[[int, ChannelProfile, "FaultPlan | None", int], Trace]
 
 
+#: (scheduler, trace, channel) -> the device model, attached to the channel (driven replay)
+VariantDevice = Callable[[Any, Trace, Any], Any]
+
+
 @dataclass(frozen=True)
 class Variant:
     #: Name of the registered system this variant implements, e.g. ``"lift.v0"``.
     system: str
     run: VariantRun
+    #: Optional: build only the variant's device on a given scheduler, trace and channel. Driven
+    #: replay (:mod:`replayspect.driven`) needs it, because there the logged side is a script.
+    device: VariantDevice | None = None
 
 
 @dataclass(frozen=True)
@@ -117,7 +128,10 @@ def load_variant(spec: str) -> tuple[Variant, VariantRef]:
     system, run = getattr(obj, "system", None), getattr(obj, "run", None)
     if not isinstance(system, str) or not callable(run):
         raise VariantError(f"{spec} is not a variant: it needs a 'system' name and a 'run' function")
-    return Variant(system, run), VariantRef(spec, file_digest(getattr(module, "__file__", None)))
+    device = getattr(obj, "device", None)
+    if device is not None and not callable(device):
+        raise VariantError(f"{spec}: 'device' must be a function (scheduler, trace, channel) -> device")
+    return Variant(system, run, device), VariantRef(spec, file_digest(getattr(module, "__file__", None)))
 
 
 def variant_run(variant: Variant, profile: ChannelProfile) -> Callable[[int, FaultPlan | None, tuple[str, ...], int], Trace]:

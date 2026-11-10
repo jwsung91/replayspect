@@ -50,6 +50,9 @@ Implemented:
 - Text log ingest: `ingest` reads a text log with a rules file
   ([docs/rules-schema.md](docs/rules-schema.md)) into a trace file, which
   `rewind` reads
+- Driven replay of a client-side log: `drive` replays the log as a script,
+  simulates the device and needs no seed; `drive --reconstruct` searches for
+  the fault plan ([docs/driven-replay.md](docs/driven-replay.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with
@@ -60,8 +63,7 @@ Implemented:
 
 Not yet:
 
-- Reproducing an ingested log: an ingested trace can be rewound but not yet
-  reproduced (driven replay, WP5b)
+- Reproducing a device-side log alone, or merging two logs with their clocks
 - Recorder for real code: a library that emits trace events from a running system
 - Symptom judge: matching a run against a stated symptom instead of a fixed check
 - Contract grades and a generic contract library

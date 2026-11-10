@@ -58,7 +58,7 @@ are rejected.
 | `data` | object, optional | Plain JSON (no NaN, string keys). Reserved key: `link` (channel metadata). |
 | `fidelity` | `exact` or `reconstructed` | `exact`: recorded by the simulator or read from a log. `reconstructed`: filled in by a model (WP7). Default `exact`. |
 | `source` | string | Who produced this event: `sim` or `adapter:<name>`. Defaults to the header's `source`, else `sim`. |
-| `log` | object, optional | Where a log adapter read the event: `{"line": n}`, the log line (1-based), plus `"flags"` when the event was logged out of time order: `out_of_order` (within the rules' tolerance) or `out_of_tolerance`. Absent in simulator output. |
+| `log` | object, optional | Where a log adapter read the event: `{"line": n}`, the log line (1-based), plus `"flags"` when the event was logged out of time order: `out_of_order` (within the rules' tolerance) or `out_of_tolerance`. On a `reconstructed` event written by driven replay (`drive --trace-out`), `log.line` is the log line the event was matched to. Absent in simulator output. |
 
 Writers always write `fidelity` and `source` on every event, so each line
 describes itself without the header. Adapters also write `log`.

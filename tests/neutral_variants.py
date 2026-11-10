@@ -37,6 +37,11 @@ SAME_TURNTABLE = Variant(
 )
 FEWER_COMMANDS = Variant("turntable.v0", _wire(turntable.TurntableDevice, turntable.TurntableClient, 3))
 LIFT_PUBLIC_FAILING = Variant("lift.v0", _wire(lift.LiftDevice, lift.LiftClient, 6, frozenset({"M5"})))
+#: LIFT_PUBLIC_FAILING with its device given separately, for driven replay (replayspect.driven).
+LIFT_PUBLIC_FAILING_DEVICE = Variant(
+    "lift.v0", _wire(lift.LiftDevice, lift.LiftClient, 6, frozenset({"M5"})),
+    device=lambda sched, trace, ch: lift.LiftDevice(sched, trace, ch, frozenset({"M5"})),
+)
 
 
 class _Recorder(Trace):

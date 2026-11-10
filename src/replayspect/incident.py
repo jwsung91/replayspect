@@ -172,6 +172,43 @@ def view_text(inc: Incident, run: Run | None = None) -> str:
     return trace_file_text(view_events(run.trace, inc.actor, inc.clock_offset_us), view_header(inc))
 
 
+# -- text log export (WP5b seed-blind test) ---------------------------------------------------
+
+#: Epoch seconds of t = 0 in exported text logs: 2026-11-10T08:00:00+09:00.
+TEXT_EPOCH_S = 1794265200
+
+
+def text_log(events: Sequence[Event], actor: str, ms: bool = False, poll: str = "STATUS",
+             poll_reply: str = "STATUS_REPLY") -> str:
+    """One participant's events as a ROS 2 style text log (``examples/rules/sim-client-ros.yaml``).
+
+    ``[LEVEL] [epoch.frac] [actor]: ...`` with ``TX``/``RX`` lines for messages (data as
+    ``key=value``) and ``result`` lines for the participant's decisions. Times are microseconds,
+    or with ``ms`` cut to milliseconds, as many real logs are. Channel metadata is not written: a
+    real participant does not know it.
+    """
+    lines = []
+    for e in events:
+        if e.actor != actor:
+            continue
+        sec, frac = TEXT_EPOCH_S + e.t_us // 1_000_000, e.t_us % 1_000_000
+        stamp = f"{sec}.{frac // 1000:03d}" if ms else f"{sec}.{frac:06d}"
+        level = "DEBUG" if e.name in (poll, poll_reply) else "INFO"
+        data = {k: v for k, v in e.data.items() if k != "link"}
+        req = f" req={e.req_id}" if e.req_id is not None else ""
+        if e.kind in ("send", "recv"):
+            kv = "".join(f" {k}={v}" for k, v in sorted(data.items()) if v is not None)
+            text = f"{'TX' if e.kind == 'send' else 'RX'} {e.name}{req}{kv}"
+        elif e.kind == "handle":
+            reply = f" reply={data['msg_req_id']}" if data.get("msg_req_id") is not None else ""
+            text = f"result {e.req_id or '-'} {e.name} cause={data.get('cause')}{reply}"
+        else:
+            kv = "".join(f" {k}={v}" for k, v in sorted(data.items()) if v is not None)
+            text = f"{e.kind} {e.name}{req}{kv}"
+        lines.append(f"[{level}] [{stamp}] [{actor}]: {text}\n")
+    return "".join(lines)
+
+
 # -- the WP4 match (replaced by the symptom judge in WP6) -------------------------------------
 
 
