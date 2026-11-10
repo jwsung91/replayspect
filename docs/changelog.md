@@ -133,3 +133,10 @@ changes when their split moves to an extreme: the part a client-side log does no
 `incident text` writes one side of a hidden run as a text log, with
 `examples/rules/sim-client-ros.yaml` to ingest it, for the seed-blind test. Scope is one source:
 merging two logs and estimating their clocks is later work.
+
+Seed-blind experiment (`docs/experiments/driven-01.md`): 17 client-side logs from the WP4 pool.
+With the hidden run's seed, the rule-based reader reproduced 6 of them, under the old judge and
+under the driven-replay judge alike. Without the seed, by driven replay, it reproduced none; with
+the round-trip start, one. With each hidden run's own link plan, all 17 microsecond logs reproduce
+exactly. With timestamps cut to milliseconds, 8 do: a resend made at a reconnect is logged before
+the reconnect. The seed had been handing over every delay the plan did not name.
