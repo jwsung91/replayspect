@@ -209,7 +209,7 @@ def test_split_sensitivity_counts_round_trips_the_log_does_not_pin_down():
 def test_text_log_round_trips_through_ingest():
     hidden = run_lift(5)
     for ms in (False, True):
-        res = ingest_text(text_log(hidden.events, "client", ms=ms).encode(), read_rules(RULES))
+        res = ingest_text(text_log(hidden.events, "client", ms=ms, connection=False).encode(), read_rules(RULES))
         assert not res.unmatched and res.events[0].t_us == 0
         want = [(e.t_us // (1000 if ms else 1) * (1000 if ms else 1), e.kind, e.name, e.req_id)
                 for e in client_log(hidden)]

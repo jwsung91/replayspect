@@ -140,3 +140,14 @@ under the driven-replay judge alike. Without the seed, by driven replay, it repr
 the round-trip start, one. With each hidden run's own link plan, all 17 microsecond logs reproduce
 exactly. With timestamps cut to milliseconds, 8 do: a resend made at a reconnect is logged before
 the reconnect. The seed had been handing over every delay the plan did not name.
+
+`drive --fit`: driven replay fitted by fixing what the client log shows instead of searching
+delays (`docs/driven-replay.md`). The client is a script, so reply delays do not change the
+device. One run with chosen request arrivals gives every device send's time, and each reply's
+delay is the logged receive time minus that. A send with no receive is a loss, an extra receive is
+a duplicate, and a receive no send explains is reported as unexplained. The client's logged
+disconnects (`incident text` now writes `link down`/`link up`) are facts. Request arrivals start
+at the middle of the interval their replies allow, read off a probe run, and change one move at a
+time with a run cap. `--branches` counts command attempts whose outcome changes inside that
+interval. Delay ranges are parameters. Development runs on the 17 driven-01 logs reproduce 5;
+these are not results.

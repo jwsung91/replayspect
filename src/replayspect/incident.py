@@ -179,16 +179,25 @@ TEXT_EPOCH_S = 1794265200
 
 
 def text_log(events: Sequence[Event], actor: str, ms: bool = False, poll: str = "STATUS",
-             poll_reply: str = "STATUS_REPLY") -> str:
+             poll_reply: str = "STATUS_REPLY", connection: bool = True) -> str:
     """One participant's events as a ROS 2 style text log (``examples/rules/sim-client-ros.yaml``).
 
     ``[LEVEL] [epoch.frac] [actor]: ...`` with ``TX``/``RX`` lines for messages (data as
     ``key=value``) and ``result`` lines for the participant's decisions. Times are microseconds,
     or with ``ms`` cut to milliseconds, as many real logs are. Channel metadata is not written: a
     real participant does not know it.
+
+    With ``connection``, the link's disconnects and reconnects are written as ``link down`` and
+    ``link up`` lines: every participant is told of them at that instant, as a real client that
+    logs its connection would be (a real one may learn of a disconnect later).
     """
     lines = []
     for e in events:
+        if connection and e.actor == "link" and e.kind == "fault" and e.name in ("disconnect", "reconnect"):
+            sec, frac = TEXT_EPOCH_S + e.t_us // 1_000_000, e.t_us % 1_000_000
+            stamp = f"{sec}.{frac // 1000:03d}" if ms else f"{sec}.{frac:06d}"
+            lines.append(f"[WARN] [{stamp}] [{actor}]: link {'down' if e.name == 'disconnect' else 'up'}\n")
+            continue
         if e.actor != actor:
             continue
         sec, frac = TEXT_EPOCH_S + e.t_us // 1_000_000, e.t_us % 1_000_000

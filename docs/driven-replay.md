@@ -86,6 +86,83 @@ and the plan's base is `fixed`.
   - Start delays are counted apart from search edits. The edit limit (`MAX_EDITS`) applies to
     search edits only.
 
+## Fitting by fixing what the log shows (`--fit`)
+
+`drive --fit` replaces search over delays with arithmetic. The script never reacts to a reply, so
+a reply's delay changes nothing on the device: it only sets when the client receives it. What the
+device does depends only on when requests arrive and on the disconnects. So:
+
+1. **First run.** Requests arrive at chosen times; the device runs. Its sends and their times do
+   not depend on reply delays.
+2. **Fit.** Each device send is paired with a logged receive of the same reply and request id, in
+   time order. Its delay is the logged receive time minus the send time.
+   - A device send with no logged receive was lost (a drop).
+   - A receive left over after its send was used is a duplicate copy.
+   - A receive no device send can explain is **unexplained**: the link can lose and copy what the
+     device sent, not invent it.
+   - A send that would arrive after the log ends is left in flight.
+3. **Check run.** The plan is run and judged like any driven replay.
+
+**Disconnects are facts.** `incident text` writes the link's disconnects and reconnects as
+`link down` / `link up` lines, and the rules turn them into client `state` events
+(`DISCONNECTED`, `CONNECTED`). The fit uses them as the plan's disconnects. A resend logged in the
+same millisecond as the reconnect runs after it.
+
+**Request arrivals are the one unknown.**
+
+- **First choice.** A probe run, with every attempt at the minimum delay, shows how long after an
+  arrival the device sends each reply. Each logged reply bounds the arrival
+  (`receive − delay max − lag ≤ arrival ≤ receive − delay min − lag`). Replies are numbered by the
+  device sends that reached the link. The first choice is the middle of the interval all bounds
+  allow.
+- **Moves.** When something stays unexplained, the fit tries one move at a time, in a fixed order:
+  1. drop an attempt, or let a dropped one arrive;
+  2. drop every attempt of a request before the mismatch;
+  3. move an arrival to just after a device event inside the attempt's delay range;
+  4. duplicate an attempt, with the copy arriving just after a device event.
+
+  The moves aim at the earliest unexplained receive, poll replies included. Attempts of the same
+  request id come first, latest first. When everything is explained but the contracts differ,
+  command attempts are tried earliest first.
+- **Score.** The first move that lowers the score is kept. The score compares, in order:
+  1. unexplained receives, polls left out;
+  2. whether the check run's lines match;
+  3. whether the violated contracts match;
+  4. unexplained poll replies;
+  5. link faults.
+
+  Poll replies are not judged, but they show the device's state at an arrival.
+- **Determinism.** The same log gives the same fit: candidates come in a fixed order and the first
+  improvement wins.
+
+**Ranges are parameters.** `--c2s-delay`, `--s2c-delay` and `--dup-extra` default to the system's
+link profile, which suits simulator logs. A real serial link can answer in a few milliseconds,
+below the profile's 10 ms minimum.
+
+**Caps.** `--fit-runs` (default 120) caps the fit, and `--branch-runs` caps the branch check. The
+report says when a cap was reached. A move evaluation costs one run, plus the check run when
+nothing is unexplained.
+
+**Report:**
+
+- receives fitted;
+- explained by loss: link faults. A device that does not send a reply looks the same as a lost
+  reply, so this line is not evidence that there is no defect;
+- explained by duplicate;
+- in flight at the end of the log;
+- unexplained, with poll replies counted apart and each log line named;
+- with `--branches`, attempts with a branch point;
+- runs used.
+
+**Branch points** (`--branches`, for a reproduced fit): each arriving command attempt is moved to
+just after every device event inside the interval its replies allow. If some move stops the fit
+reproducing, the device's behaviour depends on an arrival time the log does not fix. That is
+where a device defect can hide. This replaces `--sensitivity`. `--rtt` and `--sensitivity` stay
+until the fit passes a measurement.
+
+**Unexplained as evidence.** With a correct device model, a receive the model sends under no
+arrival choice is evidence of a device defect, without naming one.
+
 ## What a client-side log does not decide
 
 A client-side log shows a round trip's total, not its split. A device-side defect, however, can
@@ -102,6 +179,12 @@ reproducing plan:
 The count is a first, concrete measure of how ambiguous a log is.
 
 ## Limits
+
+- **The client's view of a disconnect can come late.** A real client may learn of it only after a
+  timeout, so its logged `link down` is later than the real one. Messages in between are then
+  explained as losses.
+- **The fit changes one thing at a time.** A log that needs two arrivals or drops changed together
+  can end unexplained or at the cap.
 
 - **Client side only, one source.** A device-side log, or a log that starts in the middle of an
   operation, needs a start state for the device. The device starts in its initial state at the

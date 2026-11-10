@@ -183,7 +183,22 @@ def _drive(args: argparse.Namespace) -> int:
         until = parse_time_us(args.until) if args.until else log[-1].t_us + tol
         setup = DrivenSetup(system, log, until, tuple(args.mutant), actors[0], tol,
                             set(args.expect) if args.expect else None, args.status_rule)
-        if args.reconstruct:
+        fitres = None
+        if args.fit:
+            from replayspect.fit import Ranges, fit_log
+
+            if args.plan or args.reconstruct:
+                raise ValueError("--fit cannot be combined with --plan or --reconstruct")
+            r = Ranges.of(setup)
+            ranges = Ranges(tuple(parse_time_us(x) for x in args.c2s_delay) if args.c2s_delay else r.c2s,
+                            tuple(parse_time_us(x) for x in args.s2c_delay) if args.s2c_delay else r.s2c,
+                            tuple(parse_time_us(x) for x in args.dup_extra) if args.dup_extra else r.dup_extra)
+            for name, (a, b) in (("c2s", ranges.c2s), ("s2c", ranges.s2c), ("dup", ranges.dup_extra)):
+                if a > b:
+                    raise ValueError(f"{name} range starts after it ends")
+            fitres = fit_log(setup, ranges, args.fit_runs, branches=args.branches, branch_cap=args.branch_runs)
+            plan, res = fitres.fit.plan, None
+        elif args.reconstruct:
             if args.plan:
                 raise ValueError("--plan and --reconstruct cannot be combined")
             res = driven_reconstruct(setup, args.budget, rtt=args.rtt, split=args.split)
@@ -204,6 +219,10 @@ def _drive(args: argparse.Namespace) -> int:
                  if args.rtt else "")
         print(f"reconstruct: {res.status} after {res.runs} runs, {len(res.edits)} search edits{start}"
               + (f" ({res.reason})" if res.reason else ""))
+    if fitres is not None:
+        from replayspect.fit import report_lines
+
+        print("\n".join(report_lines(fitres)))
     fp = FaultPlan.from_dict(dict(plan))
     print(f"plan: base {fp.base}, {len(fp.delays)} delays, {len(fp.faults)} faults, {len(fp.disconnects)} disconnects")
     dt = f", largest time difference {m.max_dt_us / 1000:.3f}ms" if m.max_dt_us is not None else ""
@@ -524,6 +543,19 @@ def main(argv: list[str] | None = None) -> int:
                     help="reconstruct: start from delays split from the logged round trips (request to its ACK) "
                          "and allow shifting a split; start delays are counted apart from search edits")
     dr.add_argument("--split", type=float, default=0.5, help="--rtt: share of a round trip given to the request")
+    dr.add_argument("--fit", action="store_true",
+                    help="fit the log by fixing what it shows: reply delays computed from the logged receive times, "
+                         "the client's logged disconnects as facts, request arrivals chosen from the interval the "
+                         "replies allow (docs/driven-replay.md)")
+    dr.add_argument("--c2s-delay", nargs=2, metavar=("LO", "HI"), help="--fit: request delay range "
+                    "(default: the system's link profile; a real link can be faster)")
+    dr.add_argument("--s2c-delay", nargs=2, metavar=("LO", "HI"), help="--fit: reply delay range (default: profile)")
+    dr.add_argument("--dup-extra", nargs=2, metavar=("LO", "HI"), help="--fit: duplicate extra delay range (default: profile)")
+    dr.add_argument("--fit-runs", type=int, default=120, help="--fit: run cap for the fit (default 120)")
+    dr.add_argument("--branches", action="store_true",
+                    help="--fit, when reproduced: count command attempts whose arrival, moved inside the interval "
+                         "the log allows, changes the outcome")
+    dr.add_argument("--branch-runs", type=int, default=120, help="--branches: run cap (default 120)")
     dr.add_argument("--sensitivity", action="store_true",
                     help="when reproduced: count round trips whose outcome changes at an extreme split")
     dr.add_argument("--trace-out", metavar="PATH",
