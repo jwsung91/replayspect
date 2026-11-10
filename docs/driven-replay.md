@@ -143,6 +143,32 @@ below the profile's 10 ms minimum.
 report says when a cap was reached. A move evaluation costs one run, plus the check run when
 nothing is unexplained.
 
+**Two kinds of "unexplained".**
+
+- **Unexplained** (status `unexplained`): every choice in the fitter's choice space was run, and
+  some receive stays unexplained. Only this kind can be read as evidence about the device.
+  - The choice space gives each request attempt these choices: dropped; arriving at its minimum
+    delay; or arriving just after a device event in its delay range, each with or without a
+    duplicate whose copy arrives just after a device event.
+  - The device events come from the run where the moves stopped, polls included. So the space
+    stands in for the continuous range, and "every choice" means every choice in this space.
+  - The space is run only when it fits in the runs left, which in practice means short logs.
+- **Incomplete** (status `incomplete`): the fit did not get to the end. Either no single move
+  improved, or the run cap was reached, or the choice space was too large to run (its size is
+  reported). What stays unexplained is a limit of the fitter, not evidence about the device. When
+  it cannot be told whether the enumeration was complete, the result is incomplete.
+
+**More than one explanation.** A client log may fit two explanations that differ inside the
+device: one with a contract violation and one without. Two development logs did exactly that: every
+client receive matched, with and without the device's `C3` violation.
+
+- The report lists the violated-contract sets of the explanations that matched every receive,
+  among the choices tried.
+- Without `--expect` it does not choose between them: "more than one violation outcome fits the
+  log: none is chosen".
+- `--branches` also runs every single move from the fitted choice, so such alternatives are looked
+  for.
+
 **Report:**
 
 - receives fitted;
@@ -151,6 +177,7 @@ nothing is unexplained.
 - explained by duplicate;
 - in flight at the end of the log;
 - unexplained, with poll replies counted apart and each log line named;
+- explanations matching every receive, by violated contracts;
 - with `--branches`, attempts with a branch point;
 - runs used.
 
@@ -162,6 +189,35 @@ until the fit passes a measurement.
 
 **Unexplained as evidence.** With a correct device model, a receive the model sends under no
 arrival choice is evidence of a device defect, without naming one.
+
+## Development record of `--fit` (not a result)
+
+This was tuned on the 17 driven-01 logs, which are now development material. None of these numbers
+is a measurement.
+
+- **Predicted before the runs:** 10–13 reproduced at the first choice, 15–17 with moves.
+- **Observed:** 0 at the first choice and 5 with moves (5/17 at µs and at ms). All 5 also matched
+  the expected contracts. Of the rest, 7 stopped with no improving move and 5 reached the run cap.
+- **For comparison:** synthetic lift runs with frequent drops, duplicates and disconnects
+  reproduced 5 of 6, two of them at the first choice.
+- **What holds:** with the hidden run's true request arrivals, the computed reply delays reproduce
+  every receive exactly (tested). The reply side is solved; what remains is choosing whether and
+  when requests arrived.
+- **Four bugs were found and fixed on these logs:**
+  1. Poll replies were left out of the score, which threw away evidence about arrivals.
+  2. The arrival interval lacked the lower bound that a `DONE` gives.
+  3. An `ACK` caused by another attempt was counted in the first attempt's bounds.
+  4. Device sends lost while the link was down were counted when numbering logged receives.
+- **Two hypotheses for the remaining failures:**
+  1. Single moves stall when several attempts' arrivals or losses must change together.
+  2. A client log can fit explanations that differ inside the device: two logs first fitted
+     without the expected violation.
+- **The pool logs are adversarial.** They were picked because they reach rarely-hit mutants, and
+  hold up to 18 faults in 90 s. Field incidents usually hold one or two. The next step is real logs
+  from the testbed, not more tuning on these.
+- **Not tried yet (held until real logs are seen):** build the device's state trajectory from the
+  poll replies first, and work request arrivals back from it, instead of moving arrivals one at a
+  time.
 
 ## What a client-side log does not decide
 

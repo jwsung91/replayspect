@@ -87,11 +87,38 @@ def test_delay_ranges_are_parameters():
     assert not res.reproduced and res.fit.unexplained
 
 
-def test_run_cap_is_reported():
+def test_run_cap_is_reported_as_incomplete():
     res = fit_log(DrivenSetup(LIFT, logged(run_lift(23)), 90_000_000), cap=3)
-    assert res.status in ("cap", "reproduced") and res.runs <= 3
+    assert res.runs <= 3
     if not res.reproduced:
-        assert res.status == "cap" and "cap" in report_lines(res)[0]
+        assert res.status == "incomplete" and res.incomplete_reason == "cap"
+        assert "run cap reached" in report_lines(res)[0] and "not evidence about the device" in report_lines(res)[0]
+
+
+def test_unexplained_only_when_the_whole_choice_space_was_run():
+    # A one-command log with a receive the device never sends: the choice space is small, so every
+    # choice is run, and the receive is reported as unexplained (evidence), not as a fitter limit.
+    log = [e for e in logged(run_lift(3, plan=FaultPlan.from_dict({"base": "fixed"}))) if e.t_us < 500_000]
+    log.append(Event(len(log), 400_000, "client", "recv", "DONE", "r-0099"))
+    res = fit_log(DrivenSetup(LIFT, log, 5_000_000), cap=400)
+    assert res.status == "unexplained" and res.space is not None and res.space * 2 <= 400
+    assert "every choice in the fitter's choice space was run" in report_lines(res)[0]
+    # The same log on a long run (many attempts): too many choices to run, so incomplete.
+    long_log = sorted([*logged(run_lift(3)), Event(0, 400_000, "client", "recv", "DONE", "r-0099")],
+                      key=lambda e: e.t_us)
+    big = fit_log(DrivenSetup(LIFT, long_log, 90_000_000), cap=30)
+    assert big.status == "incomplete" and big.incomplete_reason in ("space", "cap", "no_improvement")
+
+
+def test_violation_outcomes_are_reported_and_ambiguity_is_not_resolved_without_expect():
+    res = fit_log(DrivenSetup(LIFT, logged(run_lift(7)), 90_000_000), branches=True)
+    assert res.reproduced and res.outcomes and not res.expect_given
+    text = "\n".join(report_lines(res))
+    assert "explanations matching every receive, by violated contracts" in text
+    res.outcomes = {(): 3, ("C3",): 1}
+    assert res.ambiguous and "none is chosen" in "\n".join(report_lines(res))
+    res.expect_given = True
+    assert not res.ambiguous
 
 
 def test_moves_are_deterministic():

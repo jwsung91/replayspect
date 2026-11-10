@@ -149,5 +149,9 @@ a duplicate, and a receive no send explains is reported as unexplained. The clie
 disconnects (`incident text` now writes `link down`/`link up`) are facts. Request arrivals start
 at the middle of the interval their replies allow, read off a probe run, and change one move at a
 time with a run cap. `--branches` counts command attempts whose outcome changes inside that
-interval. Delay ranges are parameters. Development runs on the 17 driven-01 logs reproduce 5;
-these are not results.
+interval. Delay ranges are parameters. "Unexplained" means every choice in the fitter's choice
+space was run (evidence about the device); otherwise the fit is "incomplete" (no improving move,
+the run cap, or a space too large to run), a limit of the fitter. Without expected contracts, when
+explanations that match every receive differ in the device's violations, all of them are
+reported and none is chosen. Development runs on the 17 driven-01 logs reproduce 5; these are not
+results.

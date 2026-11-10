@@ -37,6 +37,10 @@ device's state at an arrival, so they help choose arrivals. The earliest unexpla
 poll replies included, is the one the moves aim at.
 It stops when the check run reproduces, when no move improves, or at the run cap, and says which.
 
+**Other explanations.** With ``--branches``, the fitter also runs every single move from the fitted
+choice. The report lists the violated-contract sets of all explanations that matched every
+receive. Without expected contracts it does not choose between them.
+
 **Branch points.** For a fitted log, each command attempt's arrival can lie anywhere in an
 interval the log allows. The fitter moves it to just after each device event in that interval. If
 any such move stops the fit reproducing, the attempt has a branch point: the device's behaviour
@@ -49,6 +53,7 @@ a reply lost on the link. A log explained with drops is not shown to be free of 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import product
 from typing import Any, Mapping, Sequence
 
 from replayspect.contract import judge
@@ -129,7 +134,10 @@ class Fit:
 
 @dataclass
 class FitResult:
-    status: str  # reproduced | unexplained | no_improvement | cap
+    #: reproduced; unexplained: every choice in the fitter's choice space was run and some receive
+    #: stays unexplained (evidence about the device); incomplete: the fit did not get to the end
+    #: (``incomplete_reason``: no_improvement, cap or space), a limit of the fitter, not evidence.
+    status: str
     runs: int
     fit: Fit
     moves: list[str] = field(default_factory=list)
@@ -141,10 +149,20 @@ class FitResult:
     branch_checked: int | None = None
     branch_runs: int = 0
     branch_capped: bool = False
+    incomplete_reason: str | None = None
+    space: int | None = None  # size of the choice space, when it was counted
+    #: violated-contract sets of the explanations that matched every receive, with how many choices gave each
+    outcomes: dict[tuple[str, ...], int] = field(default_factory=dict)
+    expect_given: bool = False
 
     @property
     def reproduced(self) -> bool:
         return self.status == "reproduced"
+
+    @property
+    def ambiguous(self) -> bool:
+        """More than one violation outcome fits every receive (only meaningful without --expect)."""
+        return not self.expect_given and len(self.outcomes) > 1
 
 
 # -- reading the log ------------------------------------------------------------------------
@@ -280,6 +298,7 @@ class _Runner:
         self.setup, self.ranges, self.disconnects, self.cap = setup, ranges, disconnects, cap
         self.runs = 0
         self.cache: dict[Choice, tuple[Fit, Trace]] = {}
+        self.outcomes: dict[tuple[str, ...], int] = {}
 
     def evaluate(self, choice: Choice) -> tuple[Fit, Trace] | None:
         """One run, plus the check run when no receive (polls left out) is unexplained."""
@@ -299,14 +318,16 @@ class _Runner:
             return None
         self.runs += 1
         check = run_driven(s.system, s.log, FaultPlan.from_dict(fit.plan), s.until_us, s.mutants, s.actor)
-        violated = None
-        if s.expect is not None:
-            violated = {v.contract for v in judge(check, s.system.contracts(), s.until_us)}
+        violated = {v.contract for v in judge(check, s.system.contracts(), s.until_us)}
         vocab = s.system.vocabulary
         poll_reply = (vocab.poll_reply if vocab is not None else "STATUS_REPLY") if s.status_rule else None
         fit.match = driven_match(s.log, check.events, s.actor, s.system.quiet_messages, s.tolerance_us,
                                  s.horizon_us, violated, s.expect, poll_reply)
         fit.violated = violated
+        m = fit.match
+        if m.max_dt_us is not None and m.max_dt_us <= s.tolerance_us and m.status_same is not False:
+            key = tuple(sorted(violated))
+            self.outcomes[key] = self.outcomes.get(key, 0) + 1
         self.cache[choice] = (fit, first)
         return fit, first
 
@@ -489,16 +510,74 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
         if status == "cap":
             break
         if better is None:
-            status = "unexplained" if fit.unexplained else "no_improvement"
+            status = "no_improvement"
             break
         moves.append(better[0])
         choice, cur = better[1], better[2]
+    reason = None
+    space = None
+    if status != "reproduced":
+        reason = status  # no_improvement or cap
+        status = "incomplete"
+        if reason == "no_improvement":
+            found, space, exhausted = _enumerate(runner, setup, cur[1], attempts, ranges, quiet)
+            if found is not None:
+                choice, cur = found
+                status, reason = "reproduced", None
+                moves.append("found by enumerating the choice space")
+            elif exhausted:
+                status, reason = ("unexplained" if cur[0].unexplained else "incomplete"), (
+                    None if cur[0].unexplained else "no_improvement")
+            else:
+                reason = "space" if runner.runs + 1 <= runner.cap else "cap"
     fit, first = cur
     out = FitResult(status, runner.runs, fit, moves, n_recv, fit.match.matched if fit.match else 0, len(disconnects),
-                    quiet)
+                    quiet, incomplete_reason=reason, space=space, outcomes=dict(runner.outcomes),
+                    expect_given=setup.expect is not None)
     if branches and out.reproduced:
         _branch_points(setup, out, choice, first, attempts, ranges, disconnects, branch_cap)
     return out
+
+
+def _options(first: Trace, a: Attempt, ranges: Ranges, quiet: frozenset[str]) -> list[tuple[int | None, int | None]]:
+    """An attempt's choices: dropped, or arriving at its minimum delay or just after a device event in
+    its delay range, each without a duplicate or with its copy just after a device event."""
+    lo, hi = ranges.c2s
+    dlo, dhi = ranges.dup_extra
+    out: list[tuple[int | None, int | None]] = [(None, None)]
+    for d in [lo] + [t + 1 - a.t_us for t in _cut_points(first, a.t_us + lo, a.t_us + hi, quiet)]:
+        out.append((d, None))
+        arr = a.t_us + d
+        out += [(d, t + 1 - arr) for t in _cut_points(first, arr + dlo, arr + dhi, quiet)]
+    return out
+
+
+def _enumerate(runner: _Runner, setup: DrivenSetup, first: Trace, attempts: list[Attempt], ranges: Ranges,
+               quiet: frozenset[str]):
+    """Run every choice of the choice space if it fits in the runs left (two runs per choice at most).
+
+    Returns ``(found, size, exhausted)``: a reproducing choice and its result, or None; the size of
+    the space; and whether every choice was run. The space is built from the device events of the
+    run where the moves stopped (:func:`_options`), polls included.
+    """
+    opts = [_options(first, a, ranges, quiet) for a in attempts]
+    size = 1
+    for o in opts:
+        size *= len(o)
+        if size > 10**12:
+            break
+    if size * 2 > runner.cap - runner.runs:
+        return None, size, False
+    for combo in product(*opts):
+        choice = Choice(tuple((a.key, d) for a, (d, _) in zip(attempts, combo)),
+                        tuple(sorted(((a.key, x) for a, (d, x) in zip(attempts, combo) if d is not None and x is not None),
+                                     key=lambda kv: str(kv[0]))))
+        res = runner.evaluate(choice)
+        if res is None:
+            return None, size, False
+        if res[0].match is not None and res[0].match.reproduced:
+            return (choice, res), size, False
+    return None, size, True
 
 
 def _branch_points(setup: DrivenSetup, out: FitResult, choice: Choice, first: Trace, attempts: list[Attempt],
@@ -530,13 +609,33 @@ def _branch_points(setup: DrivenSetup, out: FitResult, choice: Choice, first: Tr
                 break
         if out.branch_capped:
             break
+    # Other explanations: every single move from the fitted choice, within the same cap, so that an
+    # explanation with a different violation outcome (say, a lost request instead of a late one) is seen.
+    if not out.branch_capped:
+        fit0, _ = runner.cache.get(choice) or (None, None)
+        if fit0 is None:
+            res0 = runner.evaluate(choice)
+            fit0 = res0[0] if res0 else None
+        if fit0 is not None:
+            for _, cand in _moves(choice, Fit(fit0.plan, [], 0, 0, 0), first, attempts, ranges, quiet):
+                if runner.evaluate(cand) is None:
+                    out.branch_capped = True
+                    break
     out.branch_attempts, out.branch_checked, out.branch_runs = with_branch, checked, runner.runs
+    for k, n in runner.outcomes.items():
+        out.outcomes[k] = out.outcomes.get(k, 0) + n
 
 
 def report_lines(res: FitResult) -> list[str]:
     f = res.fit
+    head = {"reproduced": "reproduced",
+            "unexplained": "unexplained: every choice in the fitter's choice space was run (evidence about the device)",
+            "incomplete": "incomplete: the fit did not get to the end ("
+                          + {"no_improvement": "no single move improved", "cap": "run cap reached",
+                             "space": f"choice space too large to run: {res.space} choices"}.get(res.incomplete_reason or "", "")
+                          + "); what stays unexplained is a limit of the fitter, not evidence about the device"}[res.status]
     lines = [
-        f"fit: {res.status} after {res.runs} runs" + (f" ({len(res.moves)} moves: {'; '.join(res.moves)})" if res.moves else ""),
+        f"fit: {head}, {res.runs} runs" + (f" ({len(res.moves)} moves: {'; '.join(res.moves)})" if res.moves else ""),
         f"receives fitted: {res.matched}/{res.receives} (polls left out); disconnects from the log: {res.disconnects_from_log}",
         f"explained by loss: {f.drops} link faults (a device that does not send a reply looks the same as a lost "
         "reply, so this is not evidence that there is no defect)",
@@ -546,6 +645,13 @@ def report_lines(res: FitResult) -> list[str]:
             f"{e.name} {e.req_id or '-'} at {e.t_us / 1e6:.6f}s" + (f" log line {e.log['line']}" if e.log else "")
             for e in f.unexplained[:5]) + (" ..." if len(f.unexplained) > 5 else "") + ")" if f.unexplained else ""),
     ]
+    if res.outcomes:
+        shown = ", ".join(f"{'+'.join(k) if k else 'no violation'} ({n})" for k, n in sorted(res.outcomes.items()))
+        lines.append(f"explanations matching every receive, by violated contracts (choices tried): {shown}")
+        if res.ambiguous:
+            lines.append("more than one violation outcome fits the log: none is chosen")
+        elif res.branch_checked is None and not res.expect_given:
+            lines.append("other explanations not looked for (--branches runs single moves from this fit)")
     if res.branch_checked is not None:
         lines.append(f"attempts with a branch point: {res.branch_attempts} of {res.branch_checked} checked "
                      f"({res.branch_runs} runs" + ("; run cap reached" if res.branch_capped else "") + ")")
