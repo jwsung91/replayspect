@@ -122,7 +122,35 @@ simulated receive time) is the real total delay of that round trip plus the firm
 error. Do not use `--fit` for this measurement: it computes each reply delay from the log, so the
 residuals would be 0 by construction.
 
-## Not yet
+## Stage 1 result (2026-11-11)
+
+Hardware: an Arduino UNO Mini (ATmega328P, `arduino:avr:uno`) on a Jetson Orin (Ubuntu, aarch64,
+Python 3.10, pyserial 3.5, arduino-cli 1.6.0, arduino:avr 1.8.8). Two 90 s runs with think seed 0
+and no faults: the first with the device log off, the second with it on.
+
+| | device log off | device log on |
+| --- | --- | --- |
+| firmware (flash / RAM) | 4,256 B / 719 B (35%) | 5,166 B / 841 B (41%) |
+| run valid (no device error, no reset) | yes | yes |
+| ingest: events, unmatched, flagged | 202, 0, 0 | 202, 0, 0 |
+| `drive --link-delay 0 0 --status-rule`: reproduced at 250 ms | yes, 12/12 receives, status sequence same | yes, 12/12 receives, status sequence same |
+| residual, all matched receives (min / median / max) | 2 / 3 / 3 ms | 5 / 7.5 / 10 ms |
+| residual, `ACK` | 2 / 3 / 3 ms | 5 / 5 / 6 ms |
+| residual, `DONE` | 2 / 3 / 3 ms | 9 / 9.5 / 10 ms |
+| residual, `STATUS_REPLY` (polls, not judged; n = 89) | 4 / 4 / 5 ms | 6 / 7 / 8 ms |
+
+Residual = recorded minus simulated receive time, with no link delay in the model. It is the real
+total delay of the round trip plus the firmware's timing error, measured with the client's 1 ms
+timestamps.
+
+- **Device log off:** about 3 ms per round trip. `DONE` is no later than `ACK`, so the firmware's
+  50 ms and 3 s timers show no error at this resolution.
+- **Device log on:** `ACK` takes 2–3 ms longer and `DONE` 6–7 ms longer. Each `#` line goes out on
+  the same serial line as the replies, so watching the device costs a few milliseconds per reply.
+  It is the most for `DONE`, which is followed and preceded by several log lines.
+- **The first real-hardware problem:** the Uno sent two NUL bytes before `READY` after the port
+  opened. The link now drops NUL bytes.
+
 
 - **Stage 2:** fault plans in the link; the client then logs the `link down` / `link up` it observes.
 - **Stage 3:** a firmware defect switch.
