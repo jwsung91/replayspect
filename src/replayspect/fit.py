@@ -124,8 +124,9 @@ class Fit:
 
     def score(self, setup: DrivenSetup) -> tuple:
         quiet = setup.system.quiet_messages
-        unexpl = sum(1 for e in self.unexplained if e.name not in quiet)
-        polls = len(self.unexplained) - unexpl
+        judged = [e for e in self.unexplained if e.t_us >= setup.judge_from_us]
+        unexpl = sum(1 for e in judged if e.name not in quiet)
+        polls = len(judged) - unexpl
         lines_bad = 0 if (self.match is not None and self.match.max_dt_us is not None
                           and self.match.max_dt_us <= setup.tolerance_us) else 1
         contracts_bad = 1 if (self.match is not None and self.match.contracts_same is False) else 0
@@ -154,6 +155,7 @@ class FitResult:
     #: violated-contract sets of the explanations that matched every receive, with how many choices gave each
     outcomes: dict[tuple[str, ...], int] = field(default_factory=dict)
     expect_given: bool = False
+    window: tuple[int, int] | None = None
 
     @property
     def reproduced(self) -> bool:
@@ -311,7 +313,7 @@ class _Runner:
         first = run_driven(s.system, s.log, FaultPlan.from_dict(_first_plan(choice, self.disconnects)),
                            s.until_us, s.mutants, s.actor)
         fit = fit_replies(s, first, choice, self.disconnects, self.ranges)
-        if any(e.name not in s.system.quiet_messages for e in fit.unexplained):
+        if any(e.name not in s.system.quiet_messages and e.t_us >= s.judge_from_us for e in fit.unexplained):
             self.cache[choice] = (fit, first)
             return fit, first
         if self.runs + 1 > self.cap:
@@ -322,7 +324,7 @@ class _Runner:
         vocab = s.system.vocabulary
         poll_reply = (vocab.poll_reply if vocab is not None else "STATUS_REPLY") if s.status_rule else None
         fit.match = driven_match(s.log, check.events, s.actor, s.system.quiet_messages, s.tolerance_us,
-                                 s.horizon_us, violated, s.expect, poll_reply)
+                                 s.horizon_us, violated, s.expect, poll_reply, s.judge_from_us)
         fit.violated = violated
         m = fit.match
         if m.max_dt_us is not None and m.max_dt_us <= s.tolerance_us and m.status_same is not False:
@@ -444,6 +446,8 @@ def _moves(choice: Choice, fit: Fit, first: Trace, attempts: list[Attempt], rang
     dlo, dhi = ranges.dup_extra
     target = fit.unexplained[0].t_us if fit.unexplained else None
     target_rid = fit.unexplained[0].req_id if fit.unexplained else None
+    if target is not None and attempts and target < attempts[0].t_us:
+        target, target_rid = None, None  # unexplained before the window: aim at the window's attempts
     cands = [a for a in attempts if target is None or a.t_us <= target]
     if target is None:  # every receive explained, the contracts differ: causes first, commands only
         cands = [a for a in cands if a.key[0] not in quiet]
@@ -476,13 +480,25 @@ def _moves(choice: Choice, fit: Fit, first: Trace, attempts: list[Attempt], rang
 
 
 def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUNS, branches: bool = False,
-            branch_cap: int = BRANCH_RUNS) -> FitResult:
-    """Fit ``setup.log`` (see the module docstring)."""
+            branch_cap: int = BRANCH_RUNS, window: tuple[int, int] | None = None) -> FitResult:
+    """Fit ``setup.log`` (see the module docstring).
+
+    ``window``: fit only ``(t0, t1)``. The script stops at t1, receives before t0 are not judged, and
+    moves and enumeration change only attempts sent inside the window; the rest keep the first
+    choice. The run still starts at 0 (no device start state yet), so a window after an earlier
+    anomaly may not fit.
+    """
+    from dataclasses import replace as _replace
+
     ranges = ranges or Ranges.of(setup)
-    attempts = attempts_of(setup.log, setup.actor)
+    if window is not None:
+        t0, t1 = window
+        setup = _replace(setup, log=[e for e in setup.log if e.t_us <= t1], judge_from_us=t0)
+    all_attempts = attempts_of(setup.log, setup.actor)
+    attempts = [a for a in all_attempts if window is None or window[0] <= a.t_us <= window[1]]
     disconnects = logged_disconnects(setup.log, setup.actor, setup.until_us)
     runner = _Runner(setup, ranges, disconnects, cap)
-    choice = _initial_choice(setup, attempts, runner)
+    choice = _initial_choice(setup, all_attempts, runner)
     cur = runner.evaluate(choice)
     quiet = setup.system.quiet_messages
     n_recv = sum(1 for e in setup.log if e.actor == setup.actor and e.kind == "recv" and e.name not in quiet)
@@ -520,20 +536,21 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
         reason = status  # no_improvement or cap
         status = "incomplete"
         if reason == "no_improvement":
-            found, space, exhausted = _enumerate(runner, setup, cur[1], attempts, ranges, quiet)
+            found, space, exhausted = _enumerate(runner, setup, cur[1], choice, attempts, ranges, quiet)
             if found is not None:
                 choice, cur = found
                 status, reason = "reproduced", None
                 moves.append("found by enumerating the choice space")
             elif exhausted:
-                status, reason = ("unexplained" if cur[0].unexplained else "incomplete"), (
-                    None if cur[0].unexplained else "no_improvement")
+                left = [e for e in cur[0].unexplained if e.name not in quiet and e.t_us >= setup.judge_from_us]
+                status, reason = ("unexplained", None) if left else ("incomplete", "no_improvement")
             else:
                 reason = "space" if runner.runs + 1 <= runner.cap else "cap"
     fit, first = cur
     out = FitResult(status, runner.runs, fit, moves, n_recv, fit.match.matched if fit.match else 0, len(disconnects),
                     quiet, incomplete_reason=reason, space=space, outcomes=dict(runner.outcomes),
                     expect_given=setup.expect is not None)
+    out.window = window
     if branches and out.reproduced:
         _branch_points(setup, out, choice, first, attempts, ranges, disconnects, branch_cap)
     return out
@@ -552,15 +569,21 @@ def _options(first: Trace, a: Attempt, ranges: Ranges, quiet: frozenset[str]) ->
     return out
 
 
-def _enumerate(runner: _Runner, setup: DrivenSetup, first: Trace, attempts: list[Attempt], ranges: Ranges,
-               quiet: frozenset[str]):
+def _enumerate(runner: _Runner, setup: DrivenSetup, first: Trace, base: Choice, attempts: list[Attempt],
+               ranges: Ranges, quiet: frozenset[str]):
     """Run every choice of the choice space if it fits in the runs left (two runs per choice at most).
 
+    The space varies the command attempts among ``attempts`` (:func:`_options`, from the device
+    events of the run where the moves stopped). Poll requests keep their choice in ``base``: a poll
+    does not change the device's state (the lift and turntable models answer STATUS and nothing
+    else), so its arrival cannot change any command reply, and the enumeration is complete for
+    command replies. Attempts outside ``attempts`` (outside a window) keep their choice too.
+
     Returns ``(found, size, exhausted)``: a reproducing choice and its result, or None; the size of
-    the space; and whether every choice was run. The space is built from the device events of the
-    run where the moves stopped (:func:`_options`), polls included.
+    the space; and whether every choice was run.
     """
-    opts = [_options(first, a, ranges, quiet) for a in attempts]
+    free = [a for a in attempts if a.key[0] not in quiet]
+    opts = [_options(first, a, ranges, quiet) for a in free]
     size = 1
     for o in opts:
         size *= len(o)
@@ -568,10 +591,16 @@ def _enumerate(runner: _Runner, setup: DrivenSetup, first: Trace, attempts: list
             break
     if size * 2 > runner.cap - runner.runs:
         return None, size, False
+    base_d, base_dup = dict(base.delays), dict(base.dups)
     for combo in product(*opts):
-        choice = Choice(tuple((a.key, d) for a, (d, _) in zip(attempts, combo)),
-                        tuple(sorted(((a.key, x) for a, (d, x) in zip(attempts, combo) if d is not None and x is not None),
-                                     key=lambda kv: str(kv[0]))))
+        d = dict(base_d)
+        dups = {k: v for k, v in base_dup.items() if k not in {a.key for a in free}}
+        for a, (delay, extra) in zip(free, combo):
+            d[a.key] = delay
+            if delay is not None and extra is not None:
+                dups[a.key] = extra
+        choice = Choice(tuple((k, d[k]) for k, _ in base.delays),
+                        tuple(sorted(dups.items(), key=lambda kv: str(kv[0]))))
         res = runner.evaluate(choice)
         if res is None:
             return None, size, False
@@ -626,6 +655,73 @@ def _branch_points(setup: DrivenSetup, out: FitResult, choice: Choice, first: Tr
         out.outcomes[k] = out.outcomes.get(k, 0) + n
 
 
+def anomaly_windows(log: Sequence[Event], actor: str, quiet: frozenset[str], margin_us: int = 1_000_000,
+                    late_us: int = 50_000) -> list[tuple[int, int, list[str]]]:
+    """Windows around what looks wrong in a client log, chosen without knowing the answer.
+
+    A command (a request id that is not a poll) is anomalous when it was sent more than once, closed
+    with ``ERROR`` (any cause), got an ``ERROR`` reply, got the same reply twice, waited more than
+    ``late_us`` for its first ``ACK``, or waited from ``ACK`` to ``DONE`` more than ``late_us``
+    longer than the log's median for that gap. A logged disconnect is anomalous too. The window
+    runs from ``margin_us`` before the command's first send (the disconnect) to ``margin_us`` after
+    it closed (the reconnect). Overlapping windows are merged.
+    """
+    ev = [e for e in log if e.actor == actor]
+    by: dict[str, list[Event]] = {}
+    for e in ev:
+        if e.req_id is not None and e.name not in quiet:
+            by.setdefault(e.req_id, []).append(e)
+    gaps = []
+    info = {}
+    for rid, es in by.items():
+        sends = [e for e in es if e.kind == "send"]
+        if not sends:
+            continue
+        acks = [e for e in es if e.kind == "recv" and e.name == "ACK"]
+        dones = [e for e in es if e.kind == "recv" and e.name == "DONE"]
+        if acks and dones:
+            gaps.append(dones[0].t_us - acks[0].t_us)
+        info[rid] = (sends, acks, dones, es)
+    gaps.sort()
+    median = (gaps[len(gaps) // 2] if len(gaps) % 2 else (gaps[len(gaps) // 2 - 1] + gaps[len(gaps) // 2]) // 2) if gaps else None
+    wins: list[tuple[int, int, list[str]]] = []
+    for rid, (sends, acks, dones, es) in info.items():
+        why = []
+        if len({(e.name, e.req_id) for e in sends}) and len(sends) > 1:
+            why.append("retry")
+        if any(e.kind == "handle" and e.name == "ERROR" for e in es):
+            why.append("failed")
+        if any(e.kind == "recv" and e.name == "ERROR" for e in es):
+            why.append("error reply")
+        names = [e.name for e in es if e.kind == "recv"]
+        if any(names.count(n) > 1 for n in set(names)) and len(sends) == 1:
+            why.append("same reply twice")
+        if acks and acks[0].t_us - sends[0].t_us > late_us:
+            why.append("late ACK")
+        if acks and dones and median is not None and dones[0].t_us - acks[0].t_us > median + late_us:
+            why.append("late DONE")
+        if why:
+            closes = [e.t_us for e in es if e.kind == "handle"]
+            end = max(closes) if closes else max(e.t_us for e in es)
+            wins.append((sends[0].t_us - margin_us, end + margin_us, [f"{rid}: {', '.join(why)}"]))
+    down = None
+    for e in ev:
+        if e.kind == "state" and e.name == "DISCONNECTED":
+            down = e.t_us
+        elif e.kind == "state" and e.name == "CONNECTED" and down is not None:
+            wins.append((down - margin_us, e.t_us + margin_us, ["disconnect"]))
+            down = None
+    wins.sort()
+    merged: list[tuple[int, int, list[str]]] = []
+    for a, b, w in wins:
+        a = max(a, 0)
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b), merged[-1][2] + w)
+        else:
+            merged.append((a, b, w))
+    return merged
+
+
 def report_lines(res: FitResult) -> list[str]:
     f = res.fit
     head = {"reproduced": "reproduced",
@@ -634,8 +730,9 @@ def report_lines(res: FitResult) -> list[str]:
                           + {"no_improvement": "no single move improved", "cap": "run cap reached",
                              "space": f"choice space too large to run: {res.space} choices"}.get(res.incomplete_reason or "", "")
                           + "); what stays unexplained is a limit of the fitter, not evidence about the device"}[res.status]
+    win = f" in window {res.window[0] / 1e6:.6f}s..{res.window[1] / 1e6:.6f}s" if res.window else ""
     lines = [
-        f"fit: {head}, {res.runs} runs" + (f" ({len(res.moves)} moves: {'; '.join(res.moves)})" if res.moves else ""),
+        f"fit{win}: {head}, {res.runs} runs" + (f" ({len(res.moves)} moves: {'; '.join(res.moves)})" if res.moves else ""),
         f"receives fitted: {res.matched}/{res.receives} (polls left out); disconnects from the log: {res.disconnects_from_log}",
         f"explained by loss: {f.drops} link faults (a device that does not send a reply looks the same as a lost "
         "reply, so this is not evidence that there is no defect)",
@@ -658,5 +755,5 @@ def report_lines(res: FitResult) -> list[str]:
     return lines
 
 
-__all__ = ["BRANCH_RUNS", "DOWN", "FIT_RUNS", "Fit", "FitResult", "Ranges", "UP", "attempts_of", "fit_log",
+__all__ = ["anomaly_windows", "BRANCH_RUNS", "DOWN", "FIT_RUNS", "Fit", "FitResult", "Ranges", "UP", "attempts_of", "fit_log",
            "fit_replies", "logged_disconnects", "report_lines"]

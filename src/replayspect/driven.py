@@ -153,16 +153,18 @@ def _show(ev: Event | None) -> str | None:
 def driven_match(log: Sequence[Event], run: Sequence[Event], actor: str, quiet: frozenset[str],
                  tolerance_us: int = TOLERANCE_US, horizon_us: int | None = None,
                  violated: set[str] | None = None, expect: set[str] | None = None,
-                 poll_reply: str | None = None) -> DrivenMatch:
+                 poll_reply: str | None = None, start_us: int = 0) -> DrivenMatch:
     """Compare the scripted side's receives (see the module docstring).
 
     ``horizon_us``: simulated receives after it are not compared (default: the log's last event
     plus the tolerance). ``expect``/``violated``: the expected and the run's violated contracts.
     ``poll_reply``: also compare the sequence of poll replies (the WP4 status rule).
+    ``start_us``: compare only receives from then on (a window); simulated ones from a tolerance before.
     """
-    want = compared_receives(log, actor, quiet)
+    want = [e for e in compared_receives(log, actor, quiet) if e.t_us >= start_us]
     end = horizon_us if horizon_us is not None else (log[-1].t_us + tolerance_us if log else 0)
-    got = [e for e in compared_receives(run, actor, quiet) if e.t_us <= end]
+    lo = max(0, start_us - tolerance_us) if start_us else 0
+    got = [e for e in compared_receives(run, actor, quiet) if lo <= e.t_us <= end]
     matched, first, pairs = 0, None, []
     for i, w in enumerate(want):
         g = got[i] if i < len(got) else None
@@ -208,6 +210,7 @@ class DrivenSetup:
     tolerance_us: int = TOLERANCE_US
     expect: set[str] | None = None
     status_rule: bool = False
+    judge_from_us: int = 0  # a window: receives before it are not compared
 
     @property
     def horizon_us(self) -> int:
@@ -222,7 +225,7 @@ class DrivenSetup:
         vocab = self.system.vocabulary
         poll_reply = (vocab.poll_reply if vocab is not None else "STATUS_REPLY") if self.status_rule else None
         m = driven_match(self.log, trace.events, self.actor, self.system.quiet_messages, self.tolerance_us,
-                         self.horizon_us, violated, self.expect, poll_reply)
+                         self.horizon_us, violated, self.expect, poll_reply, self.judge_from_us)
         return trace, m
 
     def limits(self, max_faults: int = 20) -> Limits:

@@ -222,6 +222,25 @@ def _drive(args: argparse.Namespace) -> int:
             for name, (a, b) in (("c2s", ranges.c2s), ("s2c", ranges.s2c), ("dup", ranges.dup_extra)):
                 if a > b:
                     raise ValueError(f"{name} range starts after it ends")
+            if args.window:
+                from replayspect.fit import anomaly_windows
+
+                if args.window == ["auto"]:
+                    wins = anomaly_windows(setup.log, setup.actor, system.quiet_messages)
+                elif len(args.window) == 2:
+                    wins = [(parse_time_us(args.window[0]), parse_time_us(args.window[1]), ["given"])]
+                    if wins[0][0] > wins[0][1]:
+                        raise ValueError("--window starts after it ends")
+                else:
+                    raise ValueError("--window takes 'auto' or T0 T1")
+                print(f"windows: {len(wins)}" + "".join(f"\n  {a / 1e6:.6f}s..{b / 1e6:.6f}s ({'; '.join(w)})"
+                                                        for a, b, w in wins))
+                from replayspect.fit import report_lines as _rl
+
+                for a, b, _ in wins:
+                    wr = fit_log(setup, ranges, args.fit_runs, branches=args.branches,
+                                 branch_cap=args.branch_runs, window=(a, b))
+                    print("\n".join(_rl(wr)))
             fitres = fit_log(setup, ranges, args.fit_runs, branches=args.branches, branch_cap=args.branch_runs)
             plan, res = fitres.fit.plan, None
         elif args.reconstruct:
@@ -586,6 +605,9 @@ def main(argv: list[str] | None = None) -> int:
     dr.add_argument("--s2c-delay", nargs=2, metavar=("LO", "HI"), help="--fit: reply delay range (default: profile)")
     dr.add_argument("--dup-extra", nargs=2, metavar=("LO", "HI"), help="--fit: duplicate extra delay range (default: profile)")
     dr.add_argument("--fit-runs", type=int, default=120, help="--fit: run cap for the fit (default 120)")
+    dr.add_argument("--window", nargs="+", metavar="T",
+                    help="--fit: also fit windows, 'auto' (around retries, failures, error replies, repeated "
+                         "replies, late ACK or DONE, disconnects) or T0 T1; the whole-log fit is still reported")
     dr.add_argument("--branches", action="store_true",
                     help="--fit, when reproduced: count command attempts whose arrival, moved inside the interval "
                          "the log allows, changes the outcome")

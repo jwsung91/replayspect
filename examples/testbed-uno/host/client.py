@@ -10,7 +10,9 @@ Behaviour is the client of docs/protocol-lift.md:
 
 The log (one line per send, receive, result, link change) is what ``ingest`` reads with
 ``rules/testbed-client.yaml``. Timestamps are the wall clock read once at start plus the monotonic
-time since, in milliseconds, so a clock correction during a run cannot make the log jump.
+time since, written in microseconds, so a clock correction during a run cannot make the log jump.
+The resolution is µs; the accuracy is coarser (USB serial delivers bytes in bursts, and the loop
+polls every half millisecond or so).
 
 A run is invalid when the device writes any ``# ... error`` line, or when ``READY`` comes again
 (the board reset). The last log line says which.
@@ -29,36 +31,36 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # fault_link.py sits next to this file
-from fault_link import FaultLink  # noqa: E402
+from fault_link import FaultLink, Plan  # noqa: E402
 
-ACK_TIMEOUT_MS = 2_000
+ACK_TIMEOUT_US = 2_000_000
 MAX_RETRIES = 2
-DONE_TIMEOUT_MS = 15_000
-POLL_MS = 1_000
+DONE_TIMEOUT_US = 15_000_000
+POLL_US = 1_000_000
 THINK_MS = (1_000, 3_000)
 
 
 class Clock:
-    """Wall clock read once, then advanced by the monotonic clock. ``now_ms`` is the time since start."""
+    """Wall clock read once, then advanced by the monotonic clock. ``now_us`` is the time since start."""
 
     def __init__(self, wall: datetime | None = None, mono=time.monotonic):
         self._mono = mono
         self.start_wall = wall or datetime.now().astimezone()
         self.start_mono = mono()
 
-    def now_ms(self) -> int:
-        return int((self._mono() - self.start_mono) * 1000)
+    def now_us(self) -> int:
+        return int(round((self._mono() - self.start_mono) * 1_000_000))
 
-    def stamp(self, ms: int | None = None) -> str:
-        t = self.start_wall + timedelta(milliseconds=self.now_ms() if ms is None else ms)
-        return t.isoformat(timespec="milliseconds")
+    def stamp(self, us: int | None = None) -> str:
+        t = self.start_wall + timedelta(microseconds=self.now_us() if us is None else us)
+        return t.isoformat(timespec="microseconds")
 
 
 class Client:
     def __init__(self, link: FaultLink, clock: Clock, log, seed: int = 0, commands: int = 6, run_s: int = 90):
         self.link, self.clock, self.log = link, clock, log
         self.rng = random.Random(seed)
-        self.seed, self.commands, self.run_ms = seed, commands, run_s * 1000
+        self.seed, self.commands, self.run_us = seed, commands, run_s * 1_000_000
         self.counters = {"r": 0, "s": 0}
         self.issued = 0
         self.want = "MOVE_UP"
@@ -72,11 +74,12 @@ class Client:
         self.firmware = "unknown"
         self.resets = 0
         self.up = True
+        link.on_change = self.link_change
 
     # -- log ----------------------------------------------------------------------------------
 
-    def write(self, text: str, ms: int | None = None) -> None:
-        self.log.write(f"{self.clock.stamp(ms)} {text}\n")
+    def write(self, text: str, us: int | None = None) -> None:
+        self.log.write(f"{self.clock.stamp(us)} {text}\n")
 
     # -- timers -------------------------------------------------------------------------------
 
@@ -97,13 +100,13 @@ class Client:
     def start(self, now: int, ready_line: str) -> None:
         self.firmware = " ".join(ready_line.split()[1:]) or "unknown"
         self.write(f"# testbed client: firmware {self.firmware}; think_seed={self.seed}; plan={self.link.plan_id}; "
-                   f"commands={self.commands}; run_s={self.run_ms // 1000}; started={self.clock.stamp(now)}", now)
+                   f"commands={self.commands}; run_s={self.run_us // 1_000_000}; started={self.clock.stamp(now)}", now)
         self.started_at = now
         self.at(now, "issue")
-        self.at(now + POLL_MS, "poll")
+        self.at(now + POLL_US, "poll")
 
     def done(self, now: int) -> bool:
-        return self.started_at is not None and now - self.started_at >= self.run_ms
+        return self.started_at is not None and now - self.started_at >= self.run_us
 
     def finish(self, now: int) -> bool:
         """Write the closing line; returns whether the run is valid."""
@@ -142,15 +145,15 @@ class Client:
             self.want = "MOVE_DOWN" if self.want == "MOVE_UP" else "MOVE_UP"
             self.acked, self.retries = False, 0
             self.send(self.cmd, self.current, now)
-            self.at(now + ACK_TIMEOUT_MS, "ack_timeout", self.current)
-            self.at(now + DONE_TIMEOUT_MS, "done_timeout", self.current)
+            self.at(now + ACK_TIMEOUT_US, "ack_timeout", self.current)
+            self.at(now + DONE_TIMEOUT_US, "done_timeout", self.current)
         elif kind == "ack_timeout":
             if self.current != req_id or self.acked:
                 return
             if self.retries < MAX_RETRIES:
                 self.retries += 1
                 self.send(self.cmd, req_id, now)
-                self.at(now + ACK_TIMEOUT_MS, "ack_timeout", req_id)
+                self.at(now + ACK_TIMEOUT_US, "ack_timeout", req_id)
             else:
                 self.close("ERROR", None, "ack_timeout", now)
         elif kind == "done_timeout":
@@ -158,13 +161,13 @@ class Client:
                 self.close("ERROR", None, "done_timeout", now)
         elif kind == "poll":
             self.send("STATUS", self.new_id("s"), now)
-            self.at((now if due is None else due) + POLL_MS, "poll")
+            self.at((now if due is None else due) + POLL_US, "poll")
 
     def close(self, outcome: str, reply_id: str | None, cause: str, now: int) -> None:
         self.write(f"result {self.current} {outcome} cause={cause}" + (f" reply={reply_id}" if reply_id else ""), now)
         self.timers = [t for t in self.timers if t[2] not in ("ack_timeout", "done_timeout")]
         self.current = None
-        self.at(now + self.rng.randint(*THINK_MS), "issue")
+        self.at(now + self.rng.randint(*THINK_MS) * 1000, "issue")
 
     def receive(self, line: str, now: int) -> None:
         parts = line.split()
@@ -199,7 +202,7 @@ def main(argv=None) -> int:
     ap.add_argument("--device-log", required=True, help="device log, the board's '#' lines (new file)")
     ap.add_argument("--truth", help="what the link did (new file; stage 2 keeps it outside the repository)")
     ap.add_argument("--seed", type=int, default=0, help="think time seed")
-    ap.add_argument("--plan", default="none", help="link plan id (stage 1: none)")
+    ap.add_argument("--plan", default="none", help="link fault plan, a JSON file (default none: pass through)")
     ap.add_argument("--run-seconds", type=int, default=90)
     ap.add_argument("--commands", type=int, default=6)
     args = ap.parse_args(argv)
@@ -209,22 +212,22 @@ def main(argv=None) -> int:
             (open(args.truth, "x") if args.truth else open("/dev/null", "w")) as truth:
         port = serial.Serial(args.port, args.baud, timeout=0)  # opening resets the Uno
         clock = Clock()
-        link = FaultLink(port, clock, truth, dlog, args.plan)
+        link = FaultLink(port, clock, truth, dlog, Plan.load(args.plan))
         client = Client(link, clock, log, args.seed, args.commands, args.run_seconds)
         deadline = time.monotonic() + 10
         while client.started_at is None:
             if time.monotonic() > deadline:
                 print("no READY from the board within 10 s")
                 return 2
-            client.step(clock.now_ms())
+            client.step(clock.now_us())
             time.sleep(0.001)
         while True:
-            now = clock.now_ms()
+            now = clock.now_us()
             if client.done(now):
                 break
             client.step(now)
             time.sleep(0.0005)
-        valid = client.finish(clock.now_ms())
+        valid = client.finish(clock.now_us())
         port.close()
     print(f"run {'valid' if valid else 'INVALID'}: {args.log}, {args.device_log}")
     return 0 if valid else 1
