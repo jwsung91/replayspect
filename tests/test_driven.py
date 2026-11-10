@@ -7,7 +7,8 @@ import pytest
 
 from replayspect.__main__ import main
 from replayspect.driven import (DRIVEN_SEED, DrivenError, DrivenSetup, driven_match, driven_reconstruct,
-                                round_trips, rtt_start_plan, run_driven, shift_split, split_sensitivity)
+                                later_replies, round_trips, rtt_start_plan, run_driven, shift_split,
+                                split_sensitivity)
 from replayspect.incident import Incident, run_incident, text_log, with_expect, write_incident
 from replayspect.ingest import ingest_text, read_rules
 from replayspect.reconstruct import Limits
@@ -150,10 +151,15 @@ def test_shift_split_keeps_the_round_trip_and_optionally_later_replies():
     done = {"dir": "s2c", "msg": "DONE", "req_id": "r-0001", "k": 0}
     plan = {"base": "fixed", "delays": [{**req, "delay_us": 500_000}, {**ack, "delay_us": 500_000},
                                         {**done, "delay_us": 600_000}], "faults": [], "disconnects": []}
-    new = shift_split(plan, req, ack, 200_000, limits, later_replies=True)
+    new = shift_split(plan, req, ack, 200_000, limits, later_replies=[done])
     got = {x["msg"]: x["delay_us"] for x in new["delays"]}
     assert got == {"MOVE_UP": 700_000, "ACK": 300_000, "DONE": 400_000}
     assert shift_split(plan, req, ack, 495_000, limits) is None  # the ACK would go below its minimum
+    # A later reply at the base delay (not in the plan) is kept in place too.
+    bare = {**plan, "delays": plan["delays"][:2]}
+    earlier = shift_split(bare, req, ack, -200_000, limits, later_replies=[done])
+    assert {x["msg"]: x["delay_us"] for x in earlier["delays"]}["DONE"] == 10_000 + 200_000
+    assert shift_split(bare, req, ack, 200_000, limits, later_replies=[done]) is None  # below its minimum
 
 
 # -- the reader -------------------------------------------------------------------------------
@@ -170,6 +176,23 @@ def test_reader_reproduces_without_the_seed_and_counts_start_entries_apart():
     # max_edits limits search edits only: the start plan itself is never cut.
     capped = driven_reconstruct(setup, budget=120, rtt=True, max_edits=0)
     assert capped.status in ("cap", "reproduced") and capped.edits == [] and capped.start_entries == rtt.start_entries
+
+
+def test_later_replies_are_read_off_the_log():
+    log = [Event(0, 1, "client", "recv", "ACK", "r-1"), Event(1, 2, "client", "recv", "DONE", "r-1"),
+           Event(2, 3, "client", "recv", "DONE", "r-2"), Event(3, 4, "client", "recv", "ERROR", "r-1")]
+    assert later_replies(log, "client", "r-1", ("ACK",)) == [
+        {"dir": "s2c", "msg": "DONE", "req_id": "r-1", "k": 0}, {"dir": "s2c", "msg": "ERROR", "req_id": "r-1", "k": 0}]
+
+
+def test_with_the_true_plan_no_round_trip_is_sensitive_unless_the_device_outcome_changes():
+    # Correct lift, no defect: moving when a command arrives keeps every receive time, so nothing breaks
+    # unless the device's answer itself changes (an arrival moved past another command or a timeout).
+    hidden = run_lift(5)
+    log = client_log(hidden)
+    setup = DrivenSetup(LIFT, log, 90_000_000)
+    s = split_sensitivity(setup, FaultPlan.from_trace(hidden).to_dict())
+    assert s.pairs > 0 and s.sensitive < s.pairs
 
 
 def test_split_sensitivity_counts_round_trips_the_log_does_not_pin_down():

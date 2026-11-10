@@ -330,25 +330,37 @@ def _set_delays(plan: Mapping[str, Any], items: Sequence[tuple[Mapping[str, Any]
 
 
 def shift_split(plan: Mapping[str, Any], req: Mapping[str, Any], rep: Mapping[str, Any], delta: int,
-                limits: Limits, later_replies: bool = False) -> dict[str, Any] | None:
+                limits: Limits, later_replies: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any] | None:
     """Move ``delta`` of a round trip from the reply to the request: the request arrives ``delta``
-    later and the prompt reply still comes back at the same time. With ``later_replies``, every
-    other reply to the same request id already in the plan (``DONE``, ``ERROR``) gets ``delta``
-    less delay too, so its receive time stays put. None when a delay would leave its range."""
+    later and the prompt reply still comes back at the same time. Each key in ``later_replies``
+    (the request's other replies, ``DONE``, ``ERROR``) gets ``delta`` less delay too, whether it
+    is in the plan or at the base delay, so its receive time stays put. None when a delay would
+    leave its range."""
     (clo, chi), (slo, shi) = limits.delay_us["c2s"], limits.delay_us["s2c"]
     c2s = _delay_of(plan, req, clo) + delta
     s2c = _delay_of(plan, rep, slo) - delta
     if not (clo <= c2s <= chi and slo <= s2c <= shi):
         return None
     items: list[tuple[Mapping[str, Any], int]] = [(req, c2s), (rep, s2c)]
-    if later_replies:
-        for d in plan["delays"]:
-            if d["dir"] == "s2c" and d["req_id"] == req["req_id"] and d["msg"] != rep["msg"]:
-                v = d["delay_us"] - delta
-                if not slo <= v <= shi:
-                    return None
-                items.append((d, v))
+    for key in later_replies:
+        v = _delay_of(plan, key, slo) - delta
+        if not slo <= v <= shi:
+            return None
+        items.append((key, v))
     return _set_delays(plan, items)
+
+
+def later_replies(log: Sequence[Event], actor: str, req_id: str, prompt: Sequence[str]) -> list[dict[str, Any]]:
+    """The s2c keys of the logged replies to ``req_id`` other than the prompt replies: the j-th
+    receive of ``(name, req_id)`` is taken as ``k = j``."""
+    seen: dict[str, int] = {}
+    out = []
+    for e in log:
+        if e.actor == actor and e.kind == "recv" and e.req_id == req_id and e.name not in prompt:
+            j = seen.get(e.name, 0)
+            seen[e.name] = j + 1
+            out.append({"dir": "s2c", "msg": e.name, "req_id": req_id, "k": j})
+    return out
 
 
 def split_edits(log: Sequence[Event], actor: str, limits: Limits, replies: Sequence[str] = ("ACK",)):
@@ -407,8 +419,9 @@ def split_sensitivity(setup: DrivenSetup, plan: Mapping[str, Any], replies: Sequ
 
     A client-side log shows only a round trip's total. For each logged prompt reply, move the
     split to each extreme (the request's delay at its minimum, then at its maximum) with
-    :func:`shift_split`, keeping the prompt reply's and the request's later replies' receive
-    times, and run again. If an extreme stops the reproduction, the outcome depends on when the
+    :func:`shift_split`, keeping the receive times of the prompt reply and of the request's later
+    replies in the log (planned or at the base delay; an extreme that would push one out of its
+    delay range is skipped), and run again. If an extreme stops the reproduction, the outcome depends on when the
     request reached the other side, which the log does not say: the pair is sensitive. Two runs
     per pair at most; no budget.
     """
@@ -422,7 +435,8 @@ def split_sensitivity(setup: DrivenSetup, plan: Mapping[str, Any], replies: Sequ
             continue
         done.add(rk)
         c2s = _delay_of(plan, req, clo)
-        cands = [shift_split(plan, req, rep, target - c2s, limits, later_replies=True)
+        later = later_replies(setup.log, setup.actor, req["req_id"], replies)
+        cands = [shift_split(plan, req, rep, target - c2s, limits, later_replies=later)
                  for target in (max(clo, rtt - shi), min(chi, rtt - slo)) if target != c2s]
         cands = [c for c in cands if c is not None]
         if not cands:
@@ -436,5 +450,5 @@ def split_sensitivity(setup: DrivenSetup, plan: Mapping[str, Any], replies: Sequ
 
 __all__ = ["DEFAULT_SPLIT", "DRIVEN_SEED", "DrivenError", "DrivenMatch", "DrivenSetup", "ScriptedEndpoint",
            "SplitSensitivity", "annotate", "compared_receives", "driven_match", "driven_reconstruct",
-           "round_trips", "rtt_start_plan", "run_driven", "script_events", "shift_split", "split_edits",
+           "later_replies", "round_trips", "rtt_start_plan", "run_driven", "script_events", "shift_split", "split_edits",
            "split_sensitivity"]
