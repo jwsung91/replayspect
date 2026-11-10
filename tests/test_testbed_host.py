@@ -139,6 +139,16 @@ def test_device_error_or_reset_makes_the_run_invalid():
     assert not valid and "resets=1" in log.splitlines()[-1] and "READY again" in log
 
 
+def test_nul_bytes_around_a_reset_are_dropped():
+    # A real Uno sent b"\x00\x00READY ..." after the port opened.
+    class Port:
+        in_waiting = 30
+        def read(self, n):
+            return b"\x00\x00READY log=0 defect=none\n"
+    link = FaultLink(Port(), tb_client.Clock(WALL, FakeTime()))
+    assert link.poll() == ["READY log=0 defect=none"]
+
+
 def test_timestamps_follow_the_monotonic_clock_from_one_wall_reading():
     ft = FakeTime()
     c = tb_client.Clock(WALL, ft)

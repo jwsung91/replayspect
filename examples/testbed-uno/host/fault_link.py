@@ -38,7 +38,8 @@ class FaultLink:
         out = []
         while b"\n" in self._buf:
             raw, self._buf = self._buf.split(b"\n", 1)
-            line = raw.rstrip(b"\r").decode("ascii", errors="replace")
+            # NUL bytes arrive around a reset (seen before READY on a real Uno): not part of any line
+            line = raw.replace(b"\x00", b"").rstrip(b"\r").decode("ascii", errors="replace")
             if not line:
                 continue
             if line.startswith("#"):
