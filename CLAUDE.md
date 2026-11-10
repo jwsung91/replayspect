@@ -77,6 +77,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v3 WP4 다리 실험: 하네스(`incident.py`, `bridge.py`, MCP `--incident`, `incident` 명령)와 최소 시행. LLM은 로그 4개를 모두 2~6회 만에 재현, 기준선 160세션은 0. 결과·사전 등록과 다른 점은 `docs/experiments/bridge-01.md`. 본 시행은 따로 등록
 - [x] v3 WP4 본 시행: 규칙 기반 로그 읽기 재현기(`reconstruct.py`)가 주 기준선, 결함 질문(`name_defect`/`describe_defect`), 증상, 모드(full/answer_only/symptom_only). 35세션. 조건 A는 증상만으로 6/8이라 결함 질문이 너무 쉬웠고, 조건 B는 증상만 4/4 부분, 로그를 본 답 11/12 맞음. 재현은 LLM 11/16(1~6회), 재현기 8/16, 겹침 6. `check_cause`는 16세션 중 1회. 결과·사전 등록과 다른 점은 `docs/experiments/bridge-02.md`
 - [x] v3.1 WP5a 텍스트 로그 수집: `ingest LOG --rules RULES --out TRACE`(`src/replayspect/ingest.py`), 규칙 파일 형식은 `docs/rules-schema.md`. 사건마다 `log`(줄 번호·표시, 다이제스트 밖), 헤더 `origin`. 시각순 안정 정렬 후 `out_of_order`/`out_of_tolerance` 표시, 연속 묶음은 `clock_step` 의심으로 요약. 시계 보정·구동 재생은 WP5b
+- [x] v3.1 WP5b 구동 재생(구현): `drive`(`src/replayspect/driven.py`). 클라이언트 쪽 로그를 대본으로 재생하고 장치만 모델(`System.device`, 변형은 선택 `device`), `base: fixed`라 시드 없음. 판정은 클라이언트 수신만(폴링 제외), 일치한 수신에 `log.line`. 재현기 연결(`--reconstruct`), 왕복 시간 초기화(`--rtt`), 분할 민감도(`--sensitivity`). 시드 없는 시험(driven-01)은 사전 등록 후
 - [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)

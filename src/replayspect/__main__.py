@@ -1,4 +1,4 @@
-"""Command line: ``python3 -m replayspect search|replay|rewind|ingest|baseline|session|incident``.
+"""Command line: ``python3 -m replayspect search|replay|rewind|ingest|drive|baseline|session|incident``.
 
 search    Run random-fault seeds against a system, report which contracts
           failed, shrink the failures of one target contract and write the
@@ -23,6 +23,10 @@ ingest    Read a text log with a rules file (docs/rules-schema.md) and write
           line it came from). Entries no rule matches are counted and listed
           in a file; events logged out of time order are sorted and flagged,
           never dropped or corrected.
+drive     Reproduce a client-side log (e.g. from ingest) by driven replay: the
+          log is replayed as a script, the device is simulated, and only
+          the client's receives are compared, so no seed is needed. With
+          --reconstruct the rule-based log reader searches for the fault plan.
 incident  WP4 bridge experiment, operator side: check an incident's
           preconditions, write the partial log a planner gets, run the random
           and Hypothesis baselines and the rule-based log reader
@@ -153,6 +157,80 @@ def _ingest(args: argparse.Namespace) -> int:
             f.write(unmatched_text(res.unmatched))
     print("\n".join(res.summary(args.log, str(out), str(unmatched_path))))
     return 0
+
+
+def _drive(args: argparse.Namespace) -> int:
+    from replayspect.driven import DrivenError, DrivenSetup, annotate, driven_reconstruct, split_sensitivity
+    from replayspect.incident import TOLERANCE_US
+    from replayspect.sim.link import FaultPlan, LinkError
+
+    for p in (args.trace_out, args.plan_out):
+        if p and Path(p).exists():
+            print(f"drive: {p} exists; not overwriting it", file=sys.stderr)
+            return 2
+    try:
+        if args.mutant and args.variant:
+            raise ValueError("--mutant and --variant cannot be combined")
+        system = get_system(args.system, args.variant)
+        tf = read_trace_file(args.trace)
+        log = list(tf.trace.events)
+        if not log:
+            raise ValueError("the trace has no events")
+        actors = sorted({e.actor for e in log})
+        if len(actors) != 1:
+            raise ValueError(f"driven replay takes one participant's log; this trace has {', '.join(actors)}")
+        tol = parse_time_us(args.tolerance) if args.tolerance else TOLERANCE_US
+        until = parse_time_us(args.until) if args.until else log[-1].t_us + tol
+        setup = DrivenSetup(system, log, until, tuple(args.mutant), actors[0], tol,
+                            set(args.expect) if args.expect else None, args.status_rule)
+        if args.reconstruct:
+            if args.plan:
+                raise ValueError("--plan and --reconstruct cannot be combined")
+            res = driven_reconstruct(setup, args.budget, rtt=args.rtt, split=args.split)
+            plan = res.plan
+        else:
+            plan = json.loads(Path(args.plan).read_text()) if args.plan else {"base": "fixed"}
+            res = None
+        trace, m = setup.run(plan)
+    except (DrivenError, TraceFileError, LinkError, ContractError, ValueError, OSError) as exc:
+        print(f"drive: {exc}", file=sys.stderr)
+        return 2
+    n_send = sum(e.kind == "send" for e in log)
+    print(f"drive {args.trace}: {system.name}{' (variant)' if system.variant else ''}, {actors[0]} side scripted "
+          f"({len(log)} events, {n_send} sends); {m.total} receives to match, polls left out; "
+          f"tolerance {tol / 1000:g}ms; run until {until / 1e6:.6f}s")
+    if res is not None:
+        start = (f"; {res.start_entries} start delays from round trips (split {args.split:g})"
+                 if args.rtt else "")
+        print(f"reconstruct: {res.status} after {res.runs} runs, {len(res.edits)} search edits{start}"
+              + (f" ({res.reason})" if res.reason else ""))
+    fp = FaultPlan.from_dict(dict(plan))
+    print(f"plan: base {fp.base}, {len(fp.delays)} delays, {len(fp.faults)} faults, {len(fp.disconnects)} disconnects")
+    dt = f", largest time difference {m.max_dt_us / 1000:.3f}ms" if m.max_dt_us is not None else ""
+    print(f"reproduced: {'yes' if m.reproduced else 'no'}; receives matched {m.matched}/{m.total}{dt}"
+          + ("" if m.contracts_same is None else f"; violated contracts same: {'yes' if m.contracts_same else 'no'}")
+          + ("" if m.status_same is None else f"; status sequence same: {'yes' if m.status_same else 'no'}"))
+    if m.first is not None:
+        where = f" (log line {m.first['line']})" if m.first.get("line") else ""
+        print(f"first mismatch{where}: expected {m.first['expected'] or 'nothing'}, got {m.first['got'] or 'nothing'}")
+    if args.sensitivity:
+        if m.reproduced:
+            ss = split_sensitivity(setup, plan)
+            print(f"split sensitivity: {ss.sensitive} of {ss.pairs} round trips change the outcome at an extreme split"
+                  + (f" ({', '.join(ss.keys)})" if ss.keys else ""))
+        else:
+            print("split sensitivity: not measured (not reproduced)")
+    if args.plan_out:
+        with Path(args.plan_out).open("x", encoding="utf-8") as fh:
+            fh.write(json.dumps(plan, indent=2, sort_keys=True) + "\n")
+        print(f"plan -> {args.plan_out}")
+    if args.trace_out:
+        header = Header(system=system.name, source="sim", seed=None, plan=None,
+                        contracts=contracts_ref(system.contracts_path), until_us=until,
+                        origin=tf.header.origin if tf.header else None)
+        n = write_trace_file(args.trace_out, annotate(trace.events, m), header)
+        print(f"trace: {n} events -> {args.trace_out} (matched receives carry their log line)")
+    return 0 if m.reproduced else 1
 
 
 def _rewind(args: argparse.Namespace) -> int:
@@ -288,6 +366,25 @@ def _incident(args: argparse.Namespace) -> int:
             return 2
         print(f"view: {inc.actor}-side log -> {out}")
         return 0
+    if args.action == "text":
+        from replayspect.incident import run_incident, text_log
+
+        (f,) = args.files
+        inc = read_incident(f)
+        system = inc.system_obj()
+        vocab = system.vocabulary
+        text = text_log(run_incident(inc, system).trace.events, args.actor, ms=args.ms,
+                        poll=vocab.poll_request if vocab else "STATUS",
+                        poll_reply=vocab.poll_reply if vocab else "STATUS_REPLY")
+        try:
+            with Path(args.out).open("x", encoding="utf-8") as fh:
+                fh.write(text)
+        except FileExistsError:
+            print(f"{args.out} exists; not overwriting it", file=sys.stderr)
+            return 2
+        print(f"text: {args.actor}-side log of the hidden run, {'ms' if args.ms else 'us'} timestamps, "
+              f"{text.count(chr(10))} lines -> {args.out}")
+        return 0
     if args.action == "baseline":
         (f,) = args.files
         cfg = bridge.BridgeConfig(f, args.budget, args.max_faults)
@@ -403,6 +500,36 @@ def main(argv: list[str] | None = None) -> int:
     ig.add_argument("--contracts", metavar="YAML",
                     help="contract file to record in the trace header, the default for rewind")
     ig.set_defaults(fn=_ingest)
+    dr = sub.add_parser(
+        "drive", help="reproduce a client-side log by driven replay (no seed)",
+        description="The log's participant (the client) is replayed as a script: its recorded sends and "
+                    "decisions at their recorded times. The device model answers through a link that follows "
+                    "a fault plan (base fixed: unplanned delays are the profile minimum), so nothing depends on "
+                    "a seed. Only the client's receives are compared (polls left out): kind, name, request id "
+                    "and data without link, in order, each within --tolerance of its log line; with --expect, "
+                    "the violated contracts too. --reconstruct searches for a plan with the rule-based reader. "
+                    "Exit status 0 reproduced, 1 not, 2 bad input.")
+    dr.add_argument("trace", help="one participant's trace (e.g. from ingest)")
+    dr.add_argument("--system", default="lift.v0")
+    dr.add_argument("--variant", metavar="SPEC", help="an implementation variant with a device (replayspect.variant)")
+    dr.add_argument("--mutant", action="append", default=[], help="device mutant, repeatable")
+    dr.add_argument("--plan", metavar="JSON", help='fault plan to run (default: {"base": "fixed"})')
+    dr.add_argument("--until", metavar="T", help="run end (default: the last log event plus the tolerance)")
+    dr.add_argument("--tolerance", metavar="T", help="largest time difference of a matched receive (default 250ms)")
+    dr.add_argument("--expect", nargs="+", metavar="C", help="the violated contracts must be exactly these")
+    dr.add_argument("--status-rule", action="store_true", help="also compare the sequence of poll replies")
+    dr.add_argument("--reconstruct", action="store_true", help="search for a plan with the rule-based reader")
+    dr.add_argument("--budget", type=int, default=120, help="reconstruct: most runs (default 120)")
+    dr.add_argument("--rtt", action="store_true",
+                    help="reconstruct: start from delays split from the logged round trips (request to its ACK) "
+                         "and allow shifting a split; start delays are counted apart from search edits")
+    dr.add_argument("--split", type=float, default=0.5, help="--rtt: share of a round trip given to the request")
+    dr.add_argument("--sensitivity", action="store_true",
+                    help="when reproduced: count round trips whose outcome changes at an extreme split")
+    dr.add_argument("--trace-out", metavar="PATH",
+                    help="write the run's trace (new file); matched receives carry their log line")
+    dr.add_argument("--plan-out", metavar="PATH", help="write the plan (new file)")
+    dr.set_defaults(fn=_drive)
     b = sub.add_parser("baseline", help="random search over a session's seeds")
     b.add_argument("--system", default="lift.v0")
     b.add_argument("--mutant", action="append", default=[])
@@ -425,13 +552,18 @@ def main(argv: list[str] | None = None) -> int:
         description="check: preconditions of incident files. view: write the partial log a planner gets "
                     "(new file; its name must not mention the mutant or variant). baseline: run random or "
                     "Hypothesis plans, or the rule-based log reader (reconstruct), through the bridge loop, "
-                    "one log per run. plan: write the first reproducing plan of a session log (for --mode "
+                    "one log per run. text: write one side of the hidden run as a text log for ingest "
+                    "(examples/rules/sim-client-ros.yaml; the WP5b seed-blind test). "
+                    "plan: write the first reproducing plan of a session log (for --mode "
                     "answer-only). summary: the WP4 metrics "
                     "of bridge-session logs. verify: rerun bridge-session logs. Incident files and logs "
                     "hold the answer; keep them away from planners.")
-    inc.add_argument("action", choices=["check", "view", "baseline", "plan", "summary", "verify"])
+    inc.add_argument("action", choices=["check", "view", "text", "baseline", "plan", "summary", "verify"])
     inc.add_argument("files", nargs="+", help="incident files (check, view, baseline) or session logs")
-    inc.add_argument("--out", help="view, plan: output path (new file)")
+    inc.add_argument("--out", help="view, text, plan: output path (new file)")
+    inc.add_argument("--actor", choices=["client", "device"], default="client",
+                     help="text: whose side of the hidden run to write (default client)")
+    inc.add_argument("--ms", action="store_true", help="text: cut timestamps to milliseconds")
     inc.add_argument("--strategy", choices=["random", "hypothesis", "reconstruct"], default="random",
                      help="baseline: random or Hypothesis plans, or the rule-based log reader (deterministic, "
                           "one session, no model)")
@@ -443,7 +575,7 @@ def main(argv: list[str] | None = None) -> int:
     inc.add_argument("--log-dir", default=".", help="baseline: directory for the session logs")
     inc.set_defaults(fn=_incident)
     args = ap.parse_args(argv)
-    if args.cmd == "incident" and args.action in ("view", "plan") and not args.out:
+    if args.cmd == "incident" and args.action in ("view", "text", "plan") and not args.out:
         ap.error(f"incident {args.action} needs --out")
     return args.fn(args)
 

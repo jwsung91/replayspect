@@ -115,3 +115,21 @@ carry this. The event field `log` holds the log line and flags, and is outside t
 `fidelity` and `source`. The header field `origin` holds the wall-clock time of `t_us = 0`.
 `rewind` shows both. The tests ingest the same log in two line formats with only the rules file
 changed, and get the same trace.
+
+## WP5b: driven replay
+
+`replayspect drive TRACE` reproduces a client-side log without a seed (`docs/driven-replay.md`).
+The log's participant is replayed as a script on the channel: its recorded sends and decisions
+at their recorded times, each after whatever else is due at that instant. The device model
+(`System.device`, or a variant's optional `device`) answers through a link that follows a fault
+plan with `base: fixed`, so nothing draws from a seed, and the tests check that the seed does not
+change the digest. The judge compares only the client's receives, with polls left out, in order
+and within a tolerance. With `--expect` it also compares the violated contracts. Matched receives
+carry their log line, which `rewind` shows. `--reconstruct` runs the rule-based reader against
+driven runs; `--rtt` starts it from delays split from the logged request/ACK round trips and lets
+it shift a split. The reader takes a start plan, compared kinds and extra candidate edits; start
+entries are counted apart from search edits. `--sensitivity` counts the round trips whose outcome
+changes when their split moves to an extreme: the part a client-side log does not decide.
+`incident text` writes one side of a hidden run as a text log, with
+`examples/rules/sim-client-ros.yaml` to ingest it, for the seed-blind test. Scope is one source:
+merging two logs and estimating their clocks is later work.

@@ -142,7 +142,8 @@ def fmt_t(us: int) -> str:
 def event_line(ev: Event) -> str:
     """One line per event: position, time, actor, kind, name, req_id and the data that identifies it.
 
-    An event a log adapter flagged ends with its log line and flags: ``[log line 4: out_of_order]``.
+    An event a log adapter flagged ends with its log line and flags: ``[log line 4: out_of_order]``;
+    a reconstructed event matched to a log line (driven replay) with ``[matches log line 4]``.
     """
     return _event_text(ev) + _flag_text(ev)
 
@@ -166,7 +167,11 @@ def _flags(ev: Event) -> list[str]:
 
 def _flag_text(ev: Event) -> str:
     flags = _flags(ev)
-    return f" [log line {ev.log['line']}: {', '.join(flags)}]" if flags else ""
+    if flags:
+        return f" [log line {ev.log['line']}: {', '.join(flags)}]"
+    if ev.log and ev.fidelity == "reconstructed":  # driven replay: the log line this receive matched
+        return f" [matches log line {ev.log['line']}]"
+    return ""
 
 
 def _compact(d: Any, limit: int = 120) -> str:

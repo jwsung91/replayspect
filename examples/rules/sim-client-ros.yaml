@@ -1,0 +1,26 @@
+# Rules for the client-side text logs that `incident text` writes from a simulated run
+# (lift.v0 and turntable.v0). ROS 2 style lines: [LEVEL] [epoch seconds] [client]: message
+schema: replayspect.rules/1
+name: sim-client-ros
+actor: client
+clock:
+  format: epoch
+  unit: s
+  timezone: "+09:00"
+  tolerance: 1ms
+entry:
+  pattern: '^\[(?P<level>[A-Z]+)\] \[(?P<time>[0-9.]+)\] \[(?P<module>[^\]]+)\]: (?P<text>.*)$'
+rules:
+  - name: send
+    match: '^TX (?P<msg>[A-Z_]+)(?: req=(?P<req>\S+))?$'
+    event: {kind: send, name: '{msg}', req_id: '{req?}'}
+  - name: recv
+    match: '^RX (?P<msg>[A-Z_]+)(?: req=(?P<req>\S+))?(?: reason=(?P<reason>\S+))?(?: state=(?P<state>\S+))?$'
+    event:
+      kind: recv
+      name: '{msg}'
+      req_id: '{req?}'
+      data: {reason: '{reason?}', state: '{state?}'}
+  - name: result
+    match: '^result (?P<req>\S+) (?P<res>DONE|ERROR) cause=(?P<cause>\S+)(?: reply=(?P<reply>\S+))?$'
+    event: {kind: handle, name: '{res}', req_id: '{req}', data: {cause: '{cause}', msg_req_id: '{reply?}'}}
