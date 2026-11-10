@@ -1,0 +1,35 @@
+# Rules for the WP5c testbed client log (host/client.py):
+#   <ISO 8601 with ms and offset> TX|RX NAME req=ID [key=value ...] | result ID OUTCOME cause=C [reply=ID]
+#   | link down | link up | # comment (run header, end line)
+schema: replayspect.rules/1
+name: testbed-client
+system: lift.v0
+actor: client
+clock:
+  format: iso8601
+  tolerance: 1ms
+entry:
+  pattern: '^(?P<time>\d{4}-\d\d-\d\dT\S+) (?P<text>.*)$'
+rules:
+  - name: comment
+    match: '^#'
+    ignore: true
+  - name: link-down
+    match: '^link down$'
+    event: {kind: state, name: DISCONNECTED}
+  - name: link-up
+    match: '^link up$'
+    event: {kind: state, name: CONNECTED}
+  - name: send
+    match: '^TX (?P<msg>[A-Z_]+) req=(?P<req>\S+)$'
+    event: {kind: send, name: '{msg}', req_id: '{req}'}
+  - name: recv
+    match: '^RX (?P<msg>[A-Z_]+)(?: req=(?P<req>\S+))?(?: reason=(?P<reason>\S+))?(?: state=(?P<state>\S+))?$'
+    event:
+      kind: recv
+      name: '{msg}'
+      req_id: '{req?}'
+      data: {reason: '{reason?}', state: '{state?}'}
+  - name: result
+    match: '^result (?P<req>\S+) (?P<res>DONE|ERROR) cause=(?P<cause>\S+)(?: reply=(?P<reply>\S+))?$'
+    event: {kind: handle, name: '{res}', req_id: '{req}', data: {cause: '{cause}', msg_req_id: '{reply?}'}}

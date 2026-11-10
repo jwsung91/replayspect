@@ -159,6 +159,23 @@ def _ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def residual_lines(m) -> list[str]:
+    """Recorded minus simulated time of each matched receive: overall and by message, in ms."""
+    def stats(xs: list[int]) -> str:
+        xs = sorted(xs)
+        mid = xs[len(xs) // 2] if len(xs) % 2 else (xs[len(xs) // 2 - 1] + xs[len(xs) // 2]) / 2
+        return f"min {xs[0] / 1000:.3f}, median {mid / 1000:.3f}, max {xs[-1] / 1000:.3f} ms (n={len(xs)})"
+
+    by: dict[str, list[int]] = {}
+    for w, g in m.pairs:
+        by.setdefault(w.name, []).append(w.t_us - g.t_us)
+    if not by:
+        return ["residuals (recorded - simulated): no matched receive"]
+    out = [f"residuals (recorded - simulated), matched receives: {stats([x for v in by.values() for x in v])}"]
+    out += [f"  {name}: {stats(v)}" for name, v in sorted(by.items())]
+    return out
+
+
 def _drive(args: argparse.Namespace) -> int:
     from replayspect.driven import DrivenError, DrivenSetup, annotate, driven_reconstruct, split_sensitivity
     from replayspect.incident import TOLERANCE_US
@@ -172,6 +189,15 @@ def _drive(args: argparse.Namespace) -> int:
         if args.mutant and args.variant:
             raise ValueError("--mutant and --variant cannot be combined")
         system = get_system(args.system, args.variant)
+        if args.link_delay:
+            from dataclasses import replace as _replace
+
+            lo, hi = (parse_time_us(x) for x in args.link_delay)
+            if lo > hi:
+                raise ValueError("--link-delay range starts after it ends")
+            p = system.profile
+            system = _replace(system, profile=_replace(p, c2s=_replace(p.c2s, delay_us=(lo, hi)),
+                                                       s2c=_replace(p.s2c, delay_us=(lo, hi))))
         tf = read_trace_file(args.trace)
         log = list(tf.trace.events)
         if not log:
@@ -229,6 +255,8 @@ def _drive(args: argparse.Namespace) -> int:
     print(f"reproduced: {'yes' if m.reproduced else 'no'}; receives matched {m.matched}/{m.total}{dt}"
           + ("" if m.contracts_same is None else f"; violated contracts same: {'yes' if m.contracts_same else 'no'}")
           + ("" if m.status_same is None else f"; status sequence same: {'yes' if m.status_same else 'no'}"))
+    if args.residuals:
+        print("\n".join(residual_lines(m)))
     if m.first is not None:
         where = f" (log line {m.first['line']})" if m.first.get("line") else ""
         print(f"first mismatch{where}: expected {m.first['expected'] or 'nothing'}, got {m.first['got'] or 'nothing'}")
@@ -543,6 +571,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="reconstruct: start from delays split from the logged round trips (request to its ACK) "
                          "and allow shifting a split; start delays are counted apart from search edits")
     dr.add_argument("--split", type=float, default=0.5, help="--rtt: share of a round trip given to the request")
+    dr.add_argument("--link-delay", nargs=2, metavar=("LO", "HI"),
+                    help="link delay range for this run, both directions, instead of the system's profile: an empty "
+                         "plan uses LO, and --fit's default ranges follow it (0 is allowed)")
+    dr.add_argument("--residuals", action="store_true",
+                    help="print recorded minus simulated time of the matched receives (min, median, max), "
+                         "overall and by message")
     dr.add_argument("--fit", action="store_true",
                     help="fit the log by fixing what it shows: reply delays computed from the logged receive times, "
                          "the client's logged disconnects as facts, request arrivals chosen from the interval the "

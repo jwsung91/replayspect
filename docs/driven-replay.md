@@ -50,6 +50,17 @@ would have to be inferred.
 A sanity check in the tests: with the plan that `FaultPlan.from_trace` takes from the original
 run, the driven run produces every client receive at exactly its original time.
 
+## Link delay for a run, and residuals
+
+- **`--link-delay LO HI`** replaces the system profile's delay range, in both directions, for one
+  `drive`. An empty plan uses LO, and `--fit`'s default ranges follow it. 0 is allowed.
+- **`--residuals`** prints recorded minus simulated time for every matched receive, overall and by
+  message (min, median, max).
+
+With `--link-delay 0 0`, the residuals of a fault-free log are the real total delay of each round
+trip plus the model's timing error. Do not use `--fit` for this measurement: it computes each reply
+delay from the log, so the residuals are 0 by construction.
+
 ## The judge
 
 Only the client's receives are compared, with polls left out, in order. Two receives match when
@@ -153,6 +164,8 @@ nothing is unexplained.
   - The device events come from the run where the moves stopped, polls included. So the space
     stands in for the continuous range, and "every choice" means every choice in this space.
   - The space is run only when it fits in the runs left, which in practice means short logs.
+  - A long log is almost always incomplete. A judgement that needs a complete enumeration
+    (`unexplained`) holds only for a window cut around an incident.
 - **Incomplete** (status `incomplete`): the fit did not get to the end. Either no single move
   improved, or the run cap was reached, or the choice space was too large to run (its size is
   reported). What stays unexplained is a limit of the fitter, not evidence about the device. When
@@ -168,6 +181,8 @@ client receive matched, with and without the device's `C3` violation.
   log: none is chosen".
 - `--branches` also runs every single move from the fitted choice, so such alternatives are looked
   for.
+- **The number of matching explanations is not their likelihood.** On those two logs the true
+  answer was the one violation explanation among 36. Candidates are not ranked by count.
 
 **Report:**
 
