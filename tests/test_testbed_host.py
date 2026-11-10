@@ -185,6 +185,18 @@ def test_disconnect_window_is_anchored_logged_and_resent_after():
     assert any(r["action"] == "lost_in_disconnect" for r in recs)  # the ACK in flight, or a poll
 
 
+def test_messages_lost_to_a_logged_disconnect_are_not_counted_as_faults():
+    plan = {"id": "d", "disconnects": [{"after": "c2s MOVE_UP r-0003 0", "offset_ms": 0, "duration_ms": 1500}]}
+    log, *_ = run_client(run_s=40, plan=plan)
+    from replayspect.driven import DrivenSetup
+    from replayspect.fit import Ranges, fit_log
+    from replayspect.runner import get_system
+    ev = ingest_text(log.encode(), read_rules(RULES)).events
+    res = fit_log(DrivenSetup(get_system("lift.v0"), ev, ev[-1].t_us + 25_000, tolerance_us=25_000),
+                  Ranges((0, 5_000_000), (0, 5_000_000), (0, 5_000_000)))
+    assert res.reproduced and res.fit.drops == 0 and not res.fit.plan["faults"]
+
+
 def test_bad_plans_are_refused():
     with pytest.raises(ValueError, match="exactly one"):
         Plan({"faults": [{"dir": "c2s", "msg": "MOVE_UP", "req_id": "r-0001", "k": 0, "drop": True, "delay_ms": 5}]})

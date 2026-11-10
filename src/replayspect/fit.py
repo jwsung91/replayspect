@@ -121,6 +121,7 @@ class Fit:
     in_flight: int  # device sends left in flight at the end of the log
     match: DrivenMatch | None = None
     violated: set[str] | None = None
+    lost_to_disconnect: int = 0  # device sends left in flight across a logged disconnect (not faults)
 
     def score(self, setup: DrivenSetup) -> tuple:
         quiet = setup.system.quiet_messages
@@ -247,7 +248,7 @@ def fit_replies(setup: DrivenSetup, first: Trace, choice: Choice, disconnects: l
         if e.actor == setup.actor and e.kind == "recv":
             recvs.setdefault((e.name, e.req_id), []).append(e)
     unexplained: list[Event] = []
-    drops = dups = in_flight = 0
+    drops = dups = in_flight = lost_to_disconnect = 0
     for name_rid in sorted(set(sends) | set(recvs), key=str):
         ss, rs = sends.get(name_rid, []), recvs.get(name_rid, [])
         used = [None] * len(ss)  # receive time each send was given
@@ -285,6 +286,12 @@ def fit_replies(setup: DrivenSetup, first: Trace, choice: Choice, disconnects: l
                     plan["delays"].append({**key, "delay_us": int(hi)})  # in flight at the end of the log
                     in_flight += 1
                     continue
+                cut = next((d["t_us"] for d in disconnects if e.t_us < d["t_us"] and lo <= d["t_us"] - e.t_us + 1 <= hi),
+                           None)
+                if cut is not None:  # lost to a logged disconnect: still in flight when it began, not a fault
+                    plan["delays"].append({**key, "delay_us": int(cut - e.t_us + 1)})
+                    lost_to_disconnect += 1
+                    continue
                 plan["faults"].append({**key, "drop": True})
                 drops += 1
             else:
@@ -292,7 +299,7 @@ def fit_replies(setup: DrivenSetup, first: Trace, choice: Choice, disconnects: l
     drops += sum(1 for _, d in choice.delays if d is None)
     dups += sum(1 for k, _ in choice.dups if choice.delay(k) is not None)
     unexplained.sort(key=lambda e: e.t_us)
-    return Fit(plan, unexplained, drops, dups, in_flight)
+    return Fit(plan, unexplained, drops, dups, in_flight, lost_to_disconnect=lost_to_disconnect)
 
 
 class _Runner:
@@ -426,6 +433,9 @@ def _initial_choice(setup: DrivenSetup, attempts: list[Attempt], runner: _Runner
     bounds = _arrival_bounds(setup, attempts, probe[1], runner.ranges)
     delays = []
     for a in attempts:
+        if any(d["t_us"] <= a.t_us < d["t_us"] + d["duration_us"] for d in runner.disconnects):
+            delays.append((a.key, lo))  # sent while the link was down: lost at once, its delay means nothing
+            continue
         b_lo, b_hi = bounds[a.key]
         if b_lo > b_hi:
             b_lo, b_hi = (b_hi, b_hi) if b_hi >= a.t_us + lo else (a.t_us + lo, a.t_us + lo)
@@ -736,7 +746,8 @@ def report_lines(res: FitResult) -> list[str]:
         f"receives fitted: {res.matched}/{res.receives} (polls left out); disconnects from the log: {res.disconnects_from_log}",
         f"explained by loss: {f.drops} link faults (a device that does not send a reply looks the same as a lost "
         "reply, so this is not evidence that there is no defect)",
-        f"explained by duplicate: {f.dups}; in flight at the end of the log: {f.in_flight}",
+        f"explained by duplicate: {f.dups}; lost to a logged disconnect: {f.lost_to_disconnect}; "
+        f"in flight at the end of the log: {f.in_flight}",
         f"unexplained: {len(f.unexplained)}, poll replies {sum(e.name in res.quiet for e in f.unexplained)}"
         + (" (no device send explains: " + ", ".join(
             f"{e.name} {e.req_id or '-'} at {e.t_us / 1e6:.6f}s" + (f" log line {e.log['line']}" if e.log else "")
