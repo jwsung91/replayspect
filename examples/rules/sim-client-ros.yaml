@@ -11,6 +11,12 @@ clock:
 entry:
   pattern: '^\[(?P<level>[A-Z]+)\] \[(?P<time>[0-9.]+)\] \[(?P<module>[^\]]+)\]: (?P<text>.*)$'
 rules:
+  - name: link-down
+    match: '^link down$'
+    event: {kind: state, name: DISCONNECTED}
+  - name: link-up
+    match: '^link up$'
+    event: {kind: state, name: CONNECTED}
   - name: send
     match: '^TX (?P<msg>[A-Z_]+)(?: req=(?P<req>\S+))?$'
     event: {kind: send, name: '{msg}', req_id: '{req?}'}

@@ -86,6 +86,139 @@ and the plan's base is `fixed`.
   - Start delays are counted apart from search edits. The edit limit (`MAX_EDITS`) applies to
     search edits only.
 
+## Fitting by fixing what the log shows (`--fit`)
+
+`drive --fit` replaces search over delays with arithmetic. The script never reacts to a reply, so
+a reply's delay changes nothing on the device: it only sets when the client receives it. What the
+device does depends only on when requests arrive and on the disconnects. So:
+
+1. **First run.** Requests arrive at chosen times; the device runs. Its sends and their times do
+   not depend on reply delays.
+2. **Fit.** Each device send is paired with a logged receive of the same reply and request id, in
+   time order. Its delay is the logged receive time minus the send time.
+   - A device send with no logged receive was lost (a drop).
+   - A receive left over after its send was used is a duplicate copy.
+   - A receive no device send can explain is **unexplained**: the link can lose and copy what the
+     device sent, not invent it.
+   - A send that would arrive after the log ends is left in flight.
+3. **Check run.** The plan is run and judged like any driven replay.
+
+**Disconnects are facts.** `incident text` writes the link's disconnects and reconnects as
+`link down` / `link up` lines, and the rules turn them into client `state` events
+(`DISCONNECTED`, `CONNECTED`). The fit uses them as the plan's disconnects. A resend logged in the
+same millisecond as the reconnect runs after it.
+
+**Request arrivals are the one unknown.**
+
+- **First choice.** A probe run, with every attempt at the minimum delay, shows how long after an
+  arrival the device sends each reply. Each logged reply bounds the arrival
+  (`receive − delay max − lag ≤ arrival ≤ receive − delay min − lag`). Replies are numbered by the
+  device sends that reached the link. The first choice is the middle of the interval all bounds
+  allow.
+- **Moves.** When something stays unexplained, the fit tries one move at a time, in a fixed order:
+  1. drop an attempt, or let a dropped one arrive;
+  2. drop every attempt of a request before the mismatch;
+  3. move an arrival to just after a device event inside the attempt's delay range;
+  4. duplicate an attempt, with the copy arriving just after a device event.
+
+  The moves aim at the earliest unexplained receive, poll replies included. Attempts of the same
+  request id come first, latest first. When everything is explained but the contracts differ,
+  command attempts are tried earliest first.
+- **Score.** The first move that lowers the score is kept. The score compares, in order:
+  1. unexplained receives, polls left out;
+  2. whether the check run's lines match;
+  3. whether the violated contracts match;
+  4. unexplained poll replies;
+  5. link faults.
+
+  Poll replies are not judged, but they show the device's state at an arrival.
+- **Determinism.** The same log gives the same fit: candidates come in a fixed order and the first
+  improvement wins.
+
+**Ranges are parameters.** `--c2s-delay`, `--s2c-delay` and `--dup-extra` default to the system's
+link profile, which suits simulator logs. A real serial link can answer in a few milliseconds,
+below the profile's 10 ms minimum.
+
+**Caps.** `--fit-runs` (default 120) caps the fit, and `--branch-runs` caps the branch check. The
+report says when a cap was reached. A move evaluation costs one run, plus the check run when
+nothing is unexplained.
+
+**Two kinds of "unexplained".**
+
+- **Unexplained** (status `unexplained`): every choice in the fitter's choice space was run, and
+  some receive stays unexplained. Only this kind can be read as evidence about the device.
+  - The choice space gives each request attempt these choices: dropped; arriving at its minimum
+    delay; or arriving just after a device event in its delay range, each with or without a
+    duplicate whose copy arrives just after a device event.
+  - The device events come from the run where the moves stopped, polls included. So the space
+    stands in for the continuous range, and "every choice" means every choice in this space.
+  - The space is run only when it fits in the runs left, which in practice means short logs.
+- **Incomplete** (status `incomplete`): the fit did not get to the end. Either no single move
+  improved, or the run cap was reached, or the choice space was too large to run (its size is
+  reported). What stays unexplained is a limit of the fitter, not evidence about the device. When
+  it cannot be told whether the enumeration was complete, the result is incomplete.
+
+**More than one explanation.** A client log may fit two explanations that differ inside the
+device: one with a contract violation and one without. Two development logs did exactly that: every
+client receive matched, with and without the device's `C3` violation.
+
+- The report lists the violated-contract sets of the explanations that matched every receive,
+  among the choices tried.
+- Without `--expect` it does not choose between them: "more than one violation outcome fits the
+  log: none is chosen".
+- `--branches` also runs every single move from the fitted choice, so such alternatives are looked
+  for.
+
+**Report:**
+
+- receives fitted;
+- explained by loss: link faults. A device that does not send a reply looks the same as a lost
+  reply, so this line is not evidence that there is no defect;
+- explained by duplicate;
+- in flight at the end of the log;
+- unexplained, with poll replies counted apart and each log line named;
+- explanations matching every receive, by violated contracts;
+- with `--branches`, attempts with a branch point;
+- runs used.
+
+**Branch points** (`--branches`, for a reproduced fit): each arriving command attempt is moved to
+just after every device event inside the interval its replies allow. If some move stops the fit
+reproducing, the device's behaviour depends on an arrival time the log does not fix. That is
+where a device defect can hide. This replaces `--sensitivity`. `--rtt` and `--sensitivity` stay
+until the fit passes a measurement.
+
+**Unexplained as evidence.** With a correct device model, a receive the model sends under no
+arrival choice is evidence of a device defect, without naming one.
+
+## Development record of `--fit` (not a result)
+
+This was tuned on the 17 driven-01 logs, which are now development material. None of these numbers
+is a measurement.
+
+- **Predicted before the runs:** 10–13 reproduced at the first choice, 15–17 with moves.
+- **Observed:** 0 at the first choice and 5 with moves (5/17 at µs and at ms). All 5 also matched
+  the expected contracts. Of the rest, 7 stopped with no improving move and 5 reached the run cap.
+- **For comparison:** synthetic lift runs with frequent drops, duplicates and disconnects
+  reproduced 5 of 6, two of them at the first choice.
+- **What holds:** with the hidden run's true request arrivals, the computed reply delays reproduce
+  every receive exactly (tested). The reply side is solved; what remains is choosing whether and
+  when requests arrived.
+- **Four bugs were found and fixed on these logs:**
+  1. Poll replies were left out of the score, which threw away evidence about arrivals.
+  2. The arrival interval lacked the lower bound that a `DONE` gives.
+  3. An `ACK` caused by another attempt was counted in the first attempt's bounds.
+  4. Device sends lost while the link was down were counted when numbering logged receives.
+- **Two hypotheses for the remaining failures:**
+  1. Single moves stall when several attempts' arrivals or losses must change together.
+  2. A client log can fit explanations that differ inside the device: two logs first fitted
+     without the expected violation.
+- **The pool logs are adversarial.** They were picked because they reach rarely-hit mutants, and
+  hold up to 18 faults in 90 s. Field incidents usually hold one or two. The next step is real logs
+  from the testbed, not more tuning on these.
+- **Not tried yet (held until real logs are seen):** build the device's state trajectory from the
+  poll replies first, and work request arrivals back from it, instead of moving arrivals one at a
+  time.
+
 ## What a client-side log does not decide
 
 A client-side log shows a round trip's total, not its split. A device-side defect, however, can
@@ -102,6 +235,12 @@ reproducing plan:
 The count is a first, concrete measure of how ambiguous a log is.
 
 ## Limits
+
+- **The client's view of a disconnect can come late.** A real client may learn of it only after a
+  timeout, so its logged `link down` is later than the real one. Messages in between are then
+  explained as losses.
+- **The fit changes one thing at a time.** A log that needs two arrivals or drops changed together
+  can end unexplained or at the cap.
 
 - **Client side only, one source.** A device-side log, or a log that starts in the middle of an
   operation, needs a start state for the device. The device starts in its initial state at the
