@@ -42,6 +42,7 @@ Naming: the incident workflow is `rewind`, the exploration workflow is `vary`. D
 | WP2 | Trace schema v1, header line, `fidelity` and `source` per event, `slice` | Done (PR #2) |
 | WP3 | External SUT variant loader (`--variant`); hidden variants kept outside the repository | Done |
 | WP4 | Bridge experiments 01 and 02, rule-based reader (`--strategy reconstruct`), defect questions, symptom input | Done (results in `docs/experiments/`) |
+| WP5a | Text log ingest (`ingest`, rules file `replayspect.rules/1`), event `log` and header `origin` | Done (PR #15) |
 
 The experiments confirmed two claims and corrected four. The rest of this document is written to the corrected version.
 
@@ -67,10 +68,10 @@ Ingest gives a trace that can be rewound but not reproduced. This package makes 
 - Scripted actor: on the recorded side, replace the model with a player that emits exactly the recorded sends at the recorded times. The other side stays a model. Nothing on the scripted side depends on a seed.
 - Start with client-side (controller) logs. There the sends are known and the unknowns are link faults and device behaviour. Device-side-only logs come later; they need the client's schedule to be inferred.
 - Retries are replayed as recorded. The scripted client does not decide retries; they are facts in the log.
-- Clock: estimate offset and linear drift per source from request/response pairs, not from the first line alone. Report the estimate and its residual. Polls are replayed at their recorded times; no fixed period is assumed.
+- One source only: a client-side log. Its times are the simulation's times, so there is no clock to estimate. Polls are replayed at their recorded times; no fixed period is assumed.
 - Fidelity: recorded events stay `exact`, model-produced events are `reconstructed`, and any result built this way is reported as `reconstructed`.
 - The reader and the match judge run against the driven simulation. The judge compares recorded receives with simulated receives.
-- Acceptance, seed-blind: take the client side of existing bridge incidents, write them out as text logs in a realistic line format, ingest them with a rules file, and reproduce them without the seed. Report how many of the logs the reader solved with the seed it still solves without it. Incident material stays outside the repository.
+- Acceptance, seed-blind: take the client side of existing bridge incidents, write them out as text logs in a realistic line format, ingest them with a rules file, and reproduce them without the seed. Report how many of the logs the reader solved with the seed it still solves without it. Incident material stays outside the repository. The table puts the reader unchanged next to the reader with a round-trip start (delays split from request/ACK round trips), at µs and at ms timestamps, and reports for each solved log how many round trips change the outcome when their split moves to an extreme.
 - Only after that passes: run the same path on the operator's real sample log.
 - Done when: the seed-blind table is in `docs/experiments/`, and at least one real-format log goes ingest → driven replay → `rewind` end to end.
 
@@ -115,6 +116,7 @@ Not in this order; do not start any of these without a new work order.
 - wirestead recorder: the operator's own comms library emits trace events directly (full record, `fidelity: exact`).
 - rosbag adapter and pcap adapter: second-phase log sources; pcap raises the device side to `exact`.
 - Driven replay from device-side-only logs: the client's schedule has to be inferred.
+- Two sources: a controller log and a device log together, with clock offset and linear drift estimated per source from request/response pairs, and the residual reported.
 - Variation vocabulary schema for `vary`: faults, inputs, event timing, initial state; extend only by adding to the schema.
 - Real ROS nodes under virtual time in place of a controller model.
 
