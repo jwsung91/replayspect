@@ -80,7 +80,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] v3.1 WP5b 구동 재생(구현): `drive`(`src/replayspect/driven.py`). 클라이언트 쪽 로그를 대본으로 재생하고 장치만 모델(`System.device`, 변형은 선택 `device`), `base: fixed`라 시드 없음. 판정은 클라이언트 수신만(폴링 제외), 일치한 수신에 `log.line`. 재현기 연결(`--reconstruct`), 왕복 시간 초기화(`--rtt`), 분할 민감도(`--sensitivity`). 시드 없는 시험(driven-01)은 사전 등록 후
 - [x] v3.1 WP5b 시드 없는 시험 driven-01: 클라이언트 로그 17개. 시드 있음 6/17(옛·새 판정 같음), 시드 없음 재현기 그대로 0/17, 왕복 시간 초기화 1/17. 원래 링크 계획이면 µs 17/17, ms 8/17(재연결 순간의 재송신이 ms 절삭으로 재연결 앞에 놓임). `docs/experiments/driven-01.md`. 실물 로그 경로는 남음
 - [ ] v3.1 WP5b 맞춤 방식 재설계: `drive --fit`(`src/replayspect/fit.py`). 응답 지연은 계산, 로그의 연결 사건은 사실, 미지수는 요청 도착 시각(첫 선택은 응답이 허락하는 구간의 중간, 한 번에 한 이동, 실행 상한). 설명 불가·유실·중복 보고, `--branches`. 개발용 17개에서 5개 재현(성적 아님). 측정은 새 사건으로 지시 후
-- [ ] v3.1 WP5c 테스트베드 1단계: `examples/testbed-uno/`(Uno 펌웨어 `lift_device.h`, Orin 클라이언트·링크, 규칙 파일). 적합성 테스트(네이티브 컴파일, 파이썬 모델과 대조), `drive --link-delay`·`--residuals`. 실물 실행(장치 로그 끔/켬)은 운영자 몫으로 대기
+- [x] v3.1 WP5c 테스트베드 1단계: `examples/testbed-uno/`(Uno 펌웨어 `lift_device.h`, Orin 클라이언트·링크, 규칙 파일). 적합성 테스트(네이티브 컴파일, 파이썬 모델과 대조), `drive --link-delay`·`--residuals`. 실물 실행(장치 로그 끔/켬) 완료, 결과는 `examples/testbed-uno/README.md` "Stage 1 result"
+- [x] v3.1 WP5c 2단계 testbed-01: 실물 로그 39개(대조 3, 장애 1개 24, 2개 8, 어려움 4), 맞춤기 그대로, 공개 범위 0–5 s. 재현 37/39(ms 38), 대부분 첫 선택. 정답 장애 46개 중 19개 찾음, 복원 105개 중 19개 맞음. 놓친 유실 12개 모두 긴 지연으로 읽음. 요청 중복은 ACK 중복으로 읽힘. 끊김 시작 때 이동 중인 요청을 끊김 유실로 보지 않는 틈(T12). `docs/experiments/testbed-01.md`
 - [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)
