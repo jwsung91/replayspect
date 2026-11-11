@@ -99,137 +99,200 @@ and the plan's base is `fixed`.
 
 ## Fitting by fixing what the log shows (`--fit`)
 
-`drive --fit` replaces search over delays with arithmetic. The script never reacts to a reply, so
-a reply's delay changes nothing on the device: it only sets when the client receives it. What the
-device does depends only on when requests arrive and on the disconnects. So:
+`drive --fit` explains a client log with the fewest link faults. It reports every explanation
+with that many faults, and which faults all of them share.
 
-1. **First run.** Requests arrive at chosen times; the device runs. Its sends and their times do
-   not depend on reply delays.
-2. **Fit.** Each device send is paired with a logged receive of the same reply and request id, in
-   time order. Its delay is the logged receive time minus the send time.
-   - A device send with no logged receive was lost (a drop).
-   - A receive left over after its send was used is a duplicate copy.
+### The two runs
+
+The script never reacts to a reply, so a reply's delay changes nothing on the device: it only sets
+when the client receives it. What the device does depends only on when requests arrive and on the
+disconnects. So for each **arrival choice** (when each request attempt reaches the device, or that
+it is lost, plus an optional duplicate):
+
+1. **First run.** Requests arrive as chosen; the device runs. Its sends and their times do not
+   depend on reply delays.
+2. **Reply pairing.** For each reply name and request id, the device's sends are paired with the
+   logged receives by a **minimum-fault assignment**.
+   - A receive is either the first copy of a send or a duplicate of a send already received.
+   - The order may change, because each message has its own delay.
+   - A send with no receive was lost.
+   - Every assignment that ties for the fewest faults is kept.
    - A receive no device send can explain is **unexplained**: the link can lose and copy what the
      device sent, not invent it.
-   - A send that would arrive after the log ends is left in flight.
-3. **Check run.** The plan is run and judged like any driven replay.
+   - Pairing in time order instead would read a lost `DONE` followed by a normal one as one long
+     delay.
+   - A key with more than 6 sends or receives is paired in order (counted in the result).
+3. **Check run.** Each plan is run and judged like any driven replay. There is one check run per
+   tied pairing, at most 8 per choice.
 
-**Disconnects are facts.** `incident text` writes the link's disconnects and reconnects as
-`link down` / `link up` lines, and the rules turn them into client `state` events
-(`DISCONNECTED`, `CONNECTED`). The fit uses them as the plan's disconnects. A resend logged in the
-same millisecond as the reconnect runs after it.
+**Disconnects are facts.** `incident text` writes the link's disconnects and reconnects as `link
+down` / `link up` lines. The rules turn them into client `state` events (`DISCONNECTED`,
+`CONNECTED`), and the fit uses them as the plan's disconnects.
+- A resend logged in the same millisecond as the reconnect runs after it.
+- A request sent just before a logged disconnect is lost with it, because the link drops what is
+  in flight. This is not a fault.
 
-**Request arrivals are the one unknown.**
+### Faults and the usual delay
 
-- **First choice.** A probe run, with every attempt at the minimum delay, shows how long after an
-  arrival the device sends each reply. Each logged reply bounds the arrival
-  (`receive − delay max − lag ≤ arrival ≤ receive − delay min − lag`). Replies are numbered by the
-  device sends that reached the link. The first choice is the middle of the interval all bounds
-  allow.
-- **Moves.** When something stays unexplained, the fit tries one move at a time, in a fixed order:
-  1. drop an attempt, or let a dropped one arrive;
-  2. drop every attempt of a request before the mismatch;
-  3. move an arrival to just after a device event inside the attempt's delay range;
-  4. duplicate an attempt, with the copy arriving just after a device event.
+**What counts as a fault:** a drop, a duplicate, or a delay above the **limit** (in either
+direction).
 
-  The moves aim at the earliest unexplained receive, poll replies included. Attempts of the same
-  request id come first, latest first. When everything is explained but the contracts differ,
-  command attempts are tried earliest first.
-- **Score.** The first move that lowers the score is kept. The score compares, in order:
-  1. unexplained receives, polls left out;
-  2. whether the check run's lines match;
-  3. whether the violated contracts match;
-  4. unexplained poll replies;
-  5. link faults.
+**What does not count:**
+- a message lost in a logged disconnect, when the delay it needs is within the limit;
+- a reply still in flight at the end of the log.
 
-  Poll replies are not judged, but they show the device's state at an arrival.
-- **Determinism.** The same log gives the same fit: candidates come in a fixed order and the first
-  improvement wins.
+**Identity.** A fault is identified by its kind and `(dir, msg, req_id, k)`. Its value (the delay,
+or the extra delay of a duplicate) is reported but is not part of the identity. Two explanations
+with the same faults are the same explanation.
 
-**Ranges are parameters.** `--c2s-delay`, `--s2c-delay` and `--dup-extra` default to the system's
-link profile, which suits simulator logs. A real serial link can answer in a few milliseconds,
-below the profile's 10 ms minimum.
+**`--usual-delay C2S S2C`** sets the usual delay per direction. A delay above it plus the tolerance
+is a fault. For example, the hardware testbed uses 4 ms each (stage 1); with a 25 ms tolerance the
+limit is 29 ms.
 
-**Caps.** `--fit-runs` (default 120) caps the fit, and `--branch-runs` caps the branch check. The
-report says when a cap was reached. A move evaluation costs one run, plus the check run when
-nothing is unexplained.
+**Without `--usual-delay`** (simulator logs):
+- arrivals default to the range's low end (10 ms for the lift and the turntable);
+- the limit is the range's high end (1,500 ms for both);
+- so any delay inside the range is normal, and only drops and duplicates are faults.
 
-**Two kinds of "unexplained".**
+**Default arrival.** Each attempt arrives at the time closest to `send + usual` at which:
+- its own delay is within the limit, and
+- the delays of the replies it caused are within the limit.
 
-- **Unexplained** (status `unexplained`): every choice in the fitter's choice space was run, and
-  some receive stays unexplained. Only this kind can be read as evidence about the device.
-  - The choice space gives each request attempt these choices: dropped; arriving at its minimum
-    delay; or arriving just after a device event in its delay range, each with or without a
-    duplicate whose copy arrives just after a device event.
-  - The device events come from the run where the moves stopped, polls included. So the space
-    stands in for the continuous range, and "every choice" means every choice in this space.
-  - The space is run only when it fits in the runs left, which in practice means short logs.
-  - A long log is almost always incomplete. A judgement that needs a complete enumeration
-    (`unexplained`) holds only for a window cut around an incident.
-  - Poll requests are not varied in the enumeration. A poll does not change the device's state:
-    the lift and turntable models answer `STATUS` and do nothing else. So a poll's arrival cannot
-    change any command reply, and the enumeration is complete for command replies. This assumes
-    quiet requests are read-only.
+The interval comes from a probe run with every attempt at the minimum delay. Replies are numbered
+by the device sends that reached the link.
+- If no such time exists, the attempt arrives at `send + usual`.
+- An attempt sent while the link was down is lost at once.
+- The ranges (`--c2s-delay`, `--s2c-delay`, `--dup-extra`, default the link profile) stay as wide
+  as given. The default arrival is the usual value, not the middle of the range: with a 0–5 s range
+  the middle put retries after the move had ended, and invented `DONE` drops.
 
-**Windows (`--window auto` or `--window T0 T1`).** A window is fitted on its own:
+### The search
 
-- The script stops at the window's end, and receives before its start are not judged.
-- Moves and enumeration change only attempts sent inside the window; the rest keep the first
-  choice.
-- The run still starts at time 0, because the device has no start state yet. A window after an
-  earlier anomaly may therefore not fit.
-- In a window, `unexplained` means every choice for the window's command attempts was run, with
-  everything outside fixed.
+**Units.** The search units are the anomalous commands, plus any command with a receive the default
+leaves unexplained. A command is anomalous when it:
+- was sent more than once;
+- closed with `ERROR`, or got an `ERROR` reply;
+- got the same reply twice;
+- got its `ACK` more than 50 ms after the send;
+- had an `ACK`→`DONE` gap more than 50 ms over the log's median gap.
 
-`auto` picks windows from the log alone, around the anomalies below. Each window runs from 1 s
-before the command's first send to 1 s after it closed. Overlapping windows are merged.
+Attempts of other commands, and polls, keep the default.
 
-- A command sent more than once.
-- A command closed with `ERROR`, or an `ERROR` reply.
-- The same reply received twice.
-- An `ACK` more than 50 ms after the send.
-- An `ACK`→`DONE` gap more than 50 ms over the log's median gap.
-- A logged disconnect.
-- **Incomplete** (status `incomplete`): the fit did not get to the end. Either no single move
-  improved, or the run cap was reached, or the choice space was too large to run (its size is
-  reported). What stays unexplained is a limit of the fitter, not evidence about the device. When
-  it cannot be told whether the enumeration was complete, the result is incomplete.
+**Options per attempt:**
+- the default;
+- dropped;
+- arriving at its minimum delay;
+- arriving just after a device event in its delay range;
+- arriving at an **anchored** time, where a logged reply of its request would have the usual delay
+  (using the device's lag after an arrival, read off the run);
+- arriving just after a logged disconnect begins;
+- duplicated, with the copy at an anchored time.
 
-**More than one explanation.** A client log may fit two explanations that differ inside the
-device: one with a contract violation and one without. Two development logs did exactly that: every
-client receive matched, with and without the device's `C3` violation.
+**How a unit is searched:**
+- **Order.** Choices run in order of how many attempts leave the default.
+- **Skipping.** A choice whose request-side faults alone exceed the fewest faults found so far is
+  skipped. The reply side can only add faults, so the skipped choices cannot tie.
+- **What "minimal" means.** When the unit's choices are exhausted, every explanation with the
+  fewest faults in this option space has been run.
+- **`--plus-one`.** The search continues to one fault more, as a diagnostic.
+- **Judging.** Each unit is judged:
+  - from a quiet point before its first send;
+  - up to the next unit's first send, or the end of the log; the cut log's horizon is the cut;
+  - with the earlier units fixed at their first minimal explanation.
+- **Arrivals after the cut** are not offered. What they cause would not be seen, so they would
+  look free of reply faults.
 
-- The report lists the violated-contract sets of the explanations that matched every receive,
-  among the choices tried.
-- Without `--expect` it does not choose between them: "more than one violation outcome fits the
-  log: none is chosen".
-- `--branches` also runs every single move from the fitted choice, so such alternatives are looked
-  for.
-- **The number of matching explanations is not their likelihood.** On those two logs the true
-  answer was the one violation explanation among 36. Candidates are not ranked by count.
+**Combining the units:**
+- Each unit's explanations are recounted on the whole log, with the other units at their first
+  explanation.
+- The combinations of the units' sets are run on the whole log: all of them when there are at most
+  50, otherwise the first.
+- If a unit or a combination fails, the units are searched together on the whole log.
+
+**Caps.** `--fit-runs` (default 2000) caps the fit. Each unit gets a fair share of what is left,
+with some kept for the whole-log runs. A choice costs one run plus its check runs. `--branch-runs`
+caps the branch check.
+
+**Determinism.** The same log gives the same result: options and choices come in a fixed order.
+
+### Result
+
+- **Reproduced:** at least one explanation reproduces every receive.
+  - `minimal shown` holds when every unit's choices were exhausted and every combination run
+    reproduced. Otherwise the set is the best found and the report says so.
+  - With `--plus-one`, the count at one fault more is shown as complete or not.
+- **Unexplained:** a receive no choice explains. Only this kind can be read as evidence about the
+  device. It is reported in two cases:
+  - nothing with that request id was ever sent;
+  - every choice of a unit was run, every earlier unit reproduced, and the receive stays
+    unexplained. A unit that started from a state no explanation of the earlier commands gives
+    proves nothing.
+- **Incomplete** (`cap`): nothing reproduced within the cap. What stays unexplained is a limit of
+  the fitter, not evidence about the device.
 
 **Report:**
-
+- the fewest faults `f*`, and the number of explanations with that many (and with `--plus-one`, with
+  one more);
+- **determined:** faults in every explanation;
+- **not determined:** per request id, the alternatives, e.g. `r-0002: dup c2s MOVE_DOWN k0 | dup s2c
+  ACK k0`;
 - receives fitted;
 - explained by loss: link faults. A device that does not send a reply looks the same as a lost
   reply, so this line is not evidence that there is no defect;
-- explained by duplicate;
-- in flight at the end of the log;
-- unexplained, with poll replies counted apart and each log line named;
+- duplicates, late messages, losses to logged disconnects, in flight at the end;
+- unexplained receives, with poll replies counted apart and each log line named;
+- **observed slow round trips** (from the log, not the fit; see below);
 - explanations matching every receive, by violated contracts;
 - with `--branches`, attempts with a branch point;
 - runs used.
 
+`--fit-out PATH` writes all of this as JSON, with every unit's explanations.
+
+**Observed slow round trips.** For each request attempt (polls left out), the fit looks at the gap
+from its send to the first `ACK` of that id received before the next attempt.
+- A gap longer than the log's median gap by more than the limit is listed, with the request id and
+  the excess.
+- This is computed from the log alone and kept apart from determined / not determined.
+- It exists because the limit applies per direction. A request about 40 ms late can be split into
+  a request and an `ACK` that are each within a 29 ms limit, so it is no fault. Its round trip is
+  still 40 ms over the median.
+
+**More than one violation outcome.** A client log may fit explanations that differ inside the
+device: one with a contract violation and one without. Two development logs did exactly that.
+- Without `--expect` the fit does not choose between them: "more than one violation outcome fits
+  the log: none is chosen".
+- **The number of matching explanations is not their likelihood.**
+
 **Branch points** (`--branches`, for a reproduced fit): each arriving command attempt is moved to
 just after every device event inside the interval its replies allow. If some move stops the fit
-reproducing, the device's behaviour depends on an arrival time the log does not fix. That is
-where a device defect can hide. This replaces `--sensitivity`. `--rtt` and `--sensitivity` stay
-until the fit passes a measurement.
+reproducing, the device's behaviour depends on an arrival time the log does not fix. That is where
+a device defect can hide.
+
+**Windows (`--window auto` or `--window T0 T1`).** A window is also fitted on its own.
+- The script stops at the window's end, and receives before its start are not judged.
+- Only commands first sent inside the window are searched.
+- `auto` picks windows around the anomalous commands above and around logged disconnects. Each
+  window runs from 1 s before to 1 s after, and overlapping windows are merged.
+
+**What "minimal" does not mean:**
+- **The fewest faults is a choice, not the truth.** A log whose real faults are not the fewest is
+  always misread. One example is a request duplicate plus a lost `ACK`, which reads as one late
+  `ACK`.
+- **"Every minimal explanation" holds within the option points above.** It is not a statement over
+  every real-valued timing. A test draws random arrivals off those points and checks that none
+  explains a short log with fewer faults; that is not a proof.
+- **Copies are anchored only.** A duplicate copy is placed only at anchored times, on the reasoning
+  that a copy matters through the reply it causes. A device whose copies change state would need
+  more points.
+- **Polls keep the default.** A fault on a poll request is read on the reply side.
 
 **Unexplained as evidence.** With a correct device model, a receive the model sends under no
 arrival choice is evidence of a device defect, without naming one.
 
 ## Development record of `--fit` (not a result)
+
+The record below is for the first design, which used moves and a midpoint first choice. The
+minimal-explanation design replaced it after testbed-01.
 
 This was tuned on the 17 driven-01 logs, which are now development material. None of these numbers
 is a measurement.
@@ -278,8 +341,9 @@ The count is a first, concrete measure of how ambiguous a log is.
 - **The client's view of a disconnect can come late.** A real client may learn of it only after a
   timeout, so its logged `link down` is later than the real one. Messages in between are then
   explained as losses.
-- **The fit changes one thing at a time.** A log that needs two arrivals or drops changed together
-  can end unexplained or at the cap.
+- **The fit's units are searched one after another.** A log whose commands interact beyond what
+  the combination check catches is searched jointly, which costs runs; a long, faulty log can end at
+  the cap with the minimal set not shown.
 
 - **Client side only, one source.** A device-side log, or a log that starts in the middle of an
   operation, needs a start state for the device. The device starts in its initial state at the
@@ -287,5 +351,5 @@ The count is a first, concrete measure of how ambiguous a log is.
 - **A defect in the client becomes a recorded fact.** The script replays what the client did, so
   the simulation cannot contain a client-side defect. Such a defect shows as a contract violation
   on the recorded events. Only device-side defects need the model to differ.
-- **The pairing of replies to attempts is a heuristic.** A lost reply shifts it; the search then
-  has to correct it.
+- **Reply pairing is searched only for small keys.** A reply key with more than 6 sends or
+  receives is paired in time order.

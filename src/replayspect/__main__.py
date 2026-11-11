@@ -181,7 +181,7 @@ def _drive(args: argparse.Namespace) -> int:
     from replayspect.incident import TOLERANCE_US
     from replayspect.sim.link import FaultPlan, LinkError
 
-    for p in (args.trace_out, args.plan_out):
+    for p in (args.trace_out, args.plan_out, args.fit_out):
         if p and Path(p).exists():
             print(f"drive: {p} exists; not overwriting it", file=sys.stderr)
             return 2
@@ -211,7 +211,7 @@ def _drive(args: argparse.Namespace) -> int:
                             set(args.expect) if args.expect else None, args.status_rule)
         fitres = None
         if args.fit:
-            from replayspect.fit import Ranges, fit_log
+            from replayspect.fit import Ranges, Usual, fit_log
 
             if args.plan or args.reconstruct:
                 raise ValueError("--fit cannot be combined with --plan or --reconstruct")
@@ -222,6 +222,12 @@ def _drive(args: argparse.Namespace) -> int:
             for name, (a, b) in (("c2s", ranges.c2s), ("s2c", ranges.s2c), ("dup", ranges.dup_extra)):
                 if a > b:
                     raise ValueError(f"{name} range starts after it ends")
+            usual = None
+            if args.usual_delay:
+                uc, us_ = (parse_time_us(x) for x in args.usual_delay)
+                if not (ranges.c2s[0] <= uc <= ranges.c2s[1] and ranges.s2c[0] <= us_ <= ranges.s2c[1]):
+                    raise ValueError("--usual-delay must lie inside the delay ranges")
+                usual = Usual.given(uc, us_, tol)
             if args.window:
                 from replayspect.fit import anomaly_windows
 
@@ -239,10 +245,14 @@ def _drive(args: argparse.Namespace) -> int:
 
                 for a, b, _ in wins:
                     wr = fit_log(setup, ranges, args.fit_runs, branches=args.branches,
-                                 branch_cap=args.branch_runs, window=(a, b))
+                                 branch_cap=args.branch_runs, window=(a, b), usual=usual, plus_one=args.plus_one)
                     print("\n".join(_rl(wr)))
-            fitres = fit_log(setup, ranges, args.fit_runs, branches=args.branches, branch_cap=args.branch_runs)
+            fitres = fit_log(setup, ranges, args.fit_runs, branches=args.branches, branch_cap=args.branch_runs,
+                             usual=usual, plus_one=args.plus_one)
             plan, res = fitres.fit.plan, None
+            if args.fit_out:
+                with Path(args.fit_out).open("x", encoding="utf-8") as fh:
+                    fh.write(json.dumps(fitres.to_dict(), indent=2, sort_keys=True) + "\n")
         elif args.reconstruct:
             if args.plan:
                 raise ValueError("--plan and --reconstruct cannot be combined")
@@ -604,7 +614,14 @@ def main(argv: list[str] | None = None) -> int:
                     "(default: the system's link profile; a real link can be faster)")
     dr.add_argument("--s2c-delay", nargs=2, metavar=("LO", "HI"), help="--fit: reply delay range (default: profile)")
     dr.add_argument("--dup-extra", nargs=2, metavar=("LO", "HI"), help="--fit: duplicate extra delay range (default: profile)")
-    dr.add_argument("--fit-runs", type=int, default=120, help="--fit: run cap for the fit (default 120)")
+    dr.add_argument("--fit-runs", type=int, default=2000, help="--fit: run cap for the fit (default 2000)")
+    dr.add_argument("--usual-delay", nargs=2, metavar=("C2S", "S2C"),
+                    help="--fit: the usual delay per direction: the default request arrival, and a delay above it "
+                         "plus the tolerance is a fault (default: arrivals at the range's low end, and no delay inside "
+                         "the range is a fault)")
+    dr.add_argument("--plus-one", action="store_true",
+                    help="--fit: also collect the explanations with one fault more than the fewest (a diagnostic)")
+    dr.add_argument("--fit-out", metavar="PATH", help="--fit: write the explanations as JSON (new file)")
     dr.add_argument("--window", nargs="+", metavar="T",
                     help="--fit: also fit windows, 'auto' (around retries, failures, error replies, repeated "
                          "replies, late ACK or DONE, disconnects) or T0 T1; the whole-log fit is still reported")
