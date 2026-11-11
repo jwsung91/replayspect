@@ -190,3 +190,11 @@ WP5c stage 2 code (for testbed-01):
   retries, failures, error replies, repeated replies, late `ACK` or `DONE`, and disconnects). Only
   the window's receives are judged, and only its attempts change. The enumeration no longer varies
   poll requests, which do not change the device state, so it is complete for command replies.
+
+Hardware experiment testbed-01 (`docs/experiments/testbed-01.md`): 39 real client logs from the
+Uno lift with known injected faults (3 controls, 24 single-fault, 8 two-fault, 4 hard), fitted
+with `drive --fit` as-is over public ranges of 0–5 s. 37 reproduce (38 at ms), almost all at the
+first choice. But only 19 of 46 injected faults are found, and 19 of 105 restored faults are
+right. Every missed loss was read as a long delay (12 of 12). A duplicated request reads as a
+duplicated `ACK`. A request in flight when a logged disconnect starts is not treated as lost to it
+(T12, incomplete). No window was unexplained.

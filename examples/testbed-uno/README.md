@@ -179,6 +179,17 @@ vocabulary:
 **Timestamps.** Client log times are written in microseconds. The accuracy is coarser: USB serial
 delivers bytes in bursts, and the client loop polls about every half millisecond.
 
+**Result:** [docs/experiments/testbed-01.md](../../docs/experiments/testbed-01.md) (39 runs).
+**Operator note:** on Ubuntu, ModemManager probes new `ttyACM` devices. During testbed-01 the
+board was silent until a udev rule told ModemManager to ignore it:
+
+```
+ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0062", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+Put it in `/etc/udev/rules.d/`, reload udev and replug the board. Use your board's vendor and
+product ids from `lsusb`.
+
 ## Not yet
 
 - **Stage 3:** a firmware defect switch.
