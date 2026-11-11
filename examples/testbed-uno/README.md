@@ -152,6 +152,34 @@ timestamps.
   opened. The link now drops NUL bytes.
 
 
-- **Stage 2:** fault plans in the link; the client then logs the `link down` / `link up` it observes.
+## Stage 2: fault plans (experiment testbed-01)
+
+`host/client.py --plan PLAN.json` makes the link apply a fault plan. Plans use the simulator's
+vocabulary:
+
+```json
+{"id": "T05", "faults": [{"dir": "s2c", "msg": "ACK", "req_id": "r-0002", "k": 0, "drop": true}],
+ "disconnects": [{"after": "c2s MOVE_UP r-0003 0", "offset_ms": 800, "duration_ms": 1500}]}
+```
+
+- **A fault** names one message by `(dir, msg, req_id, k)`, where `k` counts sends of the same
+  message and id. It gives exactly one of `delay_ms` (on top of the physical link), `drop`, or
+  `dup_extra_ms` (a second copy that much later).
+- **A disconnect** is anchored on an event, so it falls in the same phase whatever the think-time
+  seed:
+  - `after` is a c2s or s2c key; the window starts `offset_ms` (≥ 0) after that message passes
+    the link.
+  - Nothing passes in the window. A message sent in it, or held across its start, is lost.
+  - The client is told at the window's start and end, logs `link down` and `link up`, and
+    resends its open command after the reconnect.
+- **The truth file** (`--truth`, a JSON line per message and per window event, kept outside the
+  repository) records what the link actually did: `pass`, `drop`, `delay`, `dup`,
+  `lost_in_disconnect`, `disconnect` and `reconnect`, with times in µs since the client's start.
+
+**Timestamps.** Client log times are written in microseconds. The accuracy is coarser: USB serial
+delivers bytes in bursts, and the client loop polls about every half millisecond.
+
+## Not yet
+
 - **Stage 3:** a firmware defect switch.
 - **Two sources:** the client log and the device log together, with the clock between them estimated.

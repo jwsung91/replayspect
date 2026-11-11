@@ -166,6 +166,30 @@ nothing is unexplained.
   - The space is run only when it fits in the runs left, which in practice means short logs.
   - A long log is almost always incomplete. A judgement that needs a complete enumeration
     (`unexplained`) holds only for a window cut around an incident.
+  - Poll requests are not varied in the enumeration. A poll does not change the device's state:
+    the lift and turntable models answer `STATUS` and do nothing else. So a poll's arrival cannot
+    change any command reply, and the enumeration is complete for command replies. This assumes
+    quiet requests are read-only.
+
+**Windows (`--window auto` or `--window T0 T1`).** A window is fitted on its own:
+
+- The script stops at the window's end, and receives before its start are not judged.
+- Moves and enumeration change only attempts sent inside the window; the rest keep the first
+  choice.
+- The run still starts at time 0, because the device has no start state yet. A window after an
+  earlier anomaly may therefore not fit.
+- In a window, `unexplained` means every choice for the window's command attempts was run, with
+  everything outside fixed.
+
+`auto` picks windows from the log alone, around the anomalies below. Each window runs from 1 s
+before the command's first send to 1 s after it closed. Overlapping windows are merged.
+
+- A command sent more than once.
+- A command closed with `ERROR`, or an `ERROR` reply.
+- The same reply received twice.
+- An `ACK` more than 50 ms after the send.
+- An `ACK`→`DONE` gap more than 50 ms over the log's median gap.
+- A logged disconnect.
 - **Incomplete** (status `incomplete`): the fit did not get to the end. Either no single move
   improved, or the run cap was reached, or the choice space was too large to run (its size is
   reported). What stays unexplained is a limit of the fitter, not evidence about the device. When

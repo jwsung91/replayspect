@@ -179,3 +179,14 @@ Details:
 - **`pyserial`** is an optional extra (`[testbed]`).
 
 The first hardware run is the operator's.
+
+WP5c stage 2 code (for testbed-01):
+- **Fault link:** `host/fault_link.py` applies fault plans in the simulator's vocabulary:
+  per-message delay, drop or duplicate, and disconnect windows anchored on events. It writes what
+  it actually did to a truth file.
+- **Client:** logs the `link down` / `link up` it is told of, resends after a reconnect, and
+  timestamps in microseconds.
+- **Fitter:** `drive --fit --window auto|T0 T1` fits windows chosen from the log alone (around
+  retries, failures, error replies, repeated replies, late `ACK` or `DONE`, and disconnects). Only
+  the window's receives are judged, and only its attempts change. The enumeration no longer varies
+  poll requests, which do not change the device state, so it is complete for command replies.
