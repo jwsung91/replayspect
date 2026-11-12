@@ -142,8 +142,15 @@ direction).
 - a reply still in flight at the end of the log.
 
 **Identity.** A fault is identified by its kind and `(dir, msg, req_id, k)`. Its value (the delay,
-or the extra delay of a duplicate) is reported but is not part of the identity. Two explanations
-with the same faults are the same explanation.
+or the extra delay of a duplicate) is not part of the identity. Two explanations with the same
+faults are the same explanation.
+- The values they differ in (another reply pairing, another arrival point) are kept as a range per
+  fault, lowest to highest, for example `delay s2c ACK r-0001 k0 2.035-2.510s`. The value is part
+  of what the log leaves open.
+- Each end of a range is a value that reproduced the whole log. Up to 4 other arrival choices
+  with the same faults are run on the whole log for this.
+- The range is per fault. The ends of two faults need not go together: the low end of one may
+  come from another pairing than the low end of the other.
 
 **`--usual-delay C2S S2C`** sets the usual delay per direction. A delay above it plus the tolerance
 is a fault. For example, the hardware testbed uses 4 ms each (stage 1); with a 25 ms tolerance the
@@ -178,8 +185,8 @@ leaves unexplained. A command is anomalous when it:
 
 **Polls with a fault are units too.** A poll whose reply the default reads as lost or repeated, or
 leaves unexplained, is searched like a command. A poll does not change the device, so a lost request
-and a lost reply look the same from the client. The search finds both and reports the poll as not
-determined: `s-0008: drop c2s STATUS k0 | drop s2c STATUS_REPLY k0`. A repeated reply ties with a
+and a lost reply look the same from the client. The search finds both and reports the poll among
+the alternatives: `s-0008: drop c2s STATUS k0 | drop s2c STATUS_REPLY k0`. A repeated reply ties with a
 repeated request when the device state is the same at both times.
 - Poll replies are left out of the match, so an explanation that leaves a logged reply of the unit
   unexplained is not taken: a lost request does not explain a reply that was received.
@@ -249,9 +256,11 @@ caps the branch check.
 **Report:**
 - the fewest faults `f*`, and the number of explanations with that many (and with `--plus-one`, with
   one more);
-- **determined:** faults in every explanation;
-- **not determined:** per request id, the alternatives, e.g. `r-0002: dup c2s MOVE_DOWN k0 | dup s2c
-  ACK k0`;
+- **common to every minimal explanation:** faults in every explanation with `f*` faults, each with
+  its value range. Common is not the same as true: when the real faults are not the fewest, a
+  common fault can be wrong (testbed-01 T14 and T17, testbed-02 N01, N02 and R03);
+- **alternatives (the minimal explanations differ):** per request id, the alternatives, e.g.
+  `r-0002: dup c2s MOVE_DOWN k0 | dup s2c ACK k0`;
 - receives fitted;
 - explained by loss: link faults. A device that does not send a reply looks the same as a lost
   reply, so this line is not evidence that there is no defect;
@@ -263,13 +272,15 @@ caps the branch check.
 - with `--random-check N`, the random-arrival check (below);
 - runs used.
 
-`--fit-out PATH` writes all of this as JSON, with every unit's explanations.
+`--fit-out PATH` writes all of this as JSON, with every unit's explanations. Fault lists are under
+`common` and `alternatives`; each fault has `value_range_us` (`[lowest, highest]`, or null for a
+drop).
 
 **Observed slow round trips.** For each request attempt (polls left out), the fit looks at the gap
 from its send to the first `ACK` of that id received before the next attempt.
 - A gap longer than the log's median gap by more than the limit is listed, with the request id and
   the excess.
-- This is computed from the log alone and kept apart from determined / not determined.
+- This is computed from the log alone and kept apart from the common faults and the alternatives.
 - It exists because the limit applies per direction. A request about 40 ms late can be split into
   a request and an `ACK` that are each within a 29 ms limit, so it is no fault. Its round trip is
   still 40 ms over the median.

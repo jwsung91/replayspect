@@ -263,3 +263,20 @@ material for them, not a measurement.
   than `f*` (`random_arrivals`). It is a check, not a proof.
 - **Tests.** The brute-force control now covers every command and the polls with a fault, and
   synthetic logs of the R04, S03 and lost-poll shapes are added.
+
+## WP5b fit: value ranges and names
+
+- **Value ranges (R04).** Explanations with the same faults are merged, as before. The values they
+  differ in (another reply pairing, another arrival point) are now kept as a range per fault, each
+  end found on the whole log. Up to 4 other arrival choices with the same faults are run on the
+  whole log for this. In R04 the truth (`ACK` k0 2.5 s, k1 40 ms) has the same faults as an `f*+1`
+  explanation reported with the other pairing's values; its range now holds both pairings. Faults
+  outside the search units are merged by faults too: before, two pairings that differed only in
+  values counted as two explanations.
+- **Names.** "determined" is now "common to every minimal explanation", and "not determined" is
+  "alternatives (the minimal explanations differ)". A common fault is not shown to be true: in the
+  five development logs where one was wrong, the real faults were not the fewest. In
+  `--fit-out`, `determined`/`undetermined` are now `common`/`alternatives`, and each fault's
+  `value_us` is now `value_range_us` (`[lowest, highest]`, or null for a drop). The methods are
+  `FitResult.common()` and `FitResult.alternatives()`. Published experiment documents keep the
+  names they were written with.
