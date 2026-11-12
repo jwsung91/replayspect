@@ -22,8 +22,10 @@ follow by arithmetic:
 delay it needs is within that limit, and a reply still in flight at the end of the log. A fault is
 identified by kind and ``(dir, msg, req_id, k)``; its value (delay, extra delay) is not part of the
 identity. Two explanations with the same faults are the same explanation, and the values they differ
-in (another reply pairing, another arrival point) are reported as a range, lowest to highest, each
-end found on the whole log. The range is per fault: the ends of two faults need not go together.
+in (another reply pairing, another arrival point) are reported as the range seen, lowest to highest,
+each end found on the whole log. It is the range of the values in the explanations found, not every
+value that would fit: values between and beyond the option points are not tried. The range is per
+fault: the ends of two faults need not go together.
 
 **Disconnects are facts** when the client logged them (``DISCONNECTED`` / ``CONNECTED`` state
 events). A request sent just before a logged disconnect, still in flight when it began, is lost
@@ -307,6 +309,7 @@ class FitResult:
     more: list[UnitSet] = field(default_factory=list)
     choice: Choice | None = None  # the arrival choice of the reported plan (the first explanation)
     random_check: dict[str, Any] | None = None  # :func:`random_arrivals`, when run
+    models: dict[str, Any] | None = None  # :func:`judge_models`, when other device models were fitted
 
     @property
     def reproduced(self) -> bool:
@@ -407,7 +410,7 @@ class FitResult:
     def to_dict(self) -> dict[str, Any]:
         def fl(fs):
             return [{"kind": k[0], "dir": k[1], "msg": k[2], "req_id": k[3], "k": k[4],
-                     "value_range_us": None if v is None else list(v)}
+                     "seen_range_us": None if v is None else list(v)}
                     for k, v in sorted(fs.items(), key=lambda kv: str(kv[0]))]
 
         return {
@@ -428,6 +431,7 @@ class FitResult:
             "outside": [fl(x) for x in self._outside_shown()],
             "slow_round_trips": self.slow,
             "random_check": self.random_check,
+            "models": self.models,
             "unexplained": [{"name": e.name, "req_id": e.req_id, "t_us": e.t_us} for e in self.fit.unexplained
                             if e.name not in self.quiet],
             "plan": self.fit.plan,
@@ -1482,6 +1486,75 @@ def _branch_points(setup: DrivenSetup, out: FitResult, choice: Choice, first: Tr
         out.outcomes[k] = out.outcomes.get(k, 0) + n
 
 
+def device_models(system) -> list[str]:
+    """The system's published device-side defects, the models ``judge_models`` may compare. Client
+    defects are not among them: in driven replay the client is the script."""
+    return [m for m, d in system.published_defects if d.startswith("device:")]
+
+
+def _settled(r: FitResult) -> bool:
+    """Reproduced, the minimal set complete, and no random draw found fewer faults."""
+    return r.status == "reproduced" and r.minimal_shown and not (r.random_check and r.random_check["fewer"])
+
+
+def judge_models(correct: FitResult, others: dict[str, FitResult]) -> dict[str, Any]:
+    """Compare the fewest faults under the correct device model with each defect model's.
+
+    A defect model **explains with fewer faults** when its fit is settled (reproduced, minimal set
+    complete, no random draw with fewer) and the correct model's is unexplained, or settled with more
+    faults. A tie is no accusation. A comparison where either fit is incomplete or not settled is
+    **undecided**. The accusation is a set: every defect model with the fewest faults among those
+    that explain with fewer, "A or B", as the fit reports alternatives. ``difference`` is the correct
+    model's ``f*`` minus theirs (None when the correct model is unexplained)."""
+    def row(r: FitResult) -> dict[str, Any]:
+        return {"status": r.status, "min_faults": r.min_faults, "explanations": r.n_explanations,
+                "minimal_shown": r.minimal_shown, "runs": r.runs,
+                "random_fewer": None if r.random_check is None else len(r.random_check["fewer"])}
+
+    ok_unexplained = correct.status == "unexplained"
+    fewer, undecided = [], []
+    for m, r in others.items():
+        if r.status == "unexplained":
+            continue
+        if _settled(r) and (ok_unexplained or (_settled(correct) and (r.min_faults or 0) < (correct.min_faults or 0))):
+            fewer.append(m)
+        elif not (_settled(r) and _settled(correct)):
+            undecided.append(m)
+    best = min((others[m].min_faults or 0 for m in fewer), default=None)
+    accused = sorted((m for m in fewer if others[m].min_faults == best), key=_model_order)
+    return {
+        "correct": row(correct), "models": {m: row(r) for m, r in others.items()},
+        "fewer": sorted(fewer, key=_model_order), "accused": accused, "accused_size": len(accused),
+        "difference": None if not accused or ok_unexplained else (correct.min_faults or 0) - (best or 0),
+        "undecided": sorted(undecided, key=_model_order),
+        "verdict": ("defect suspected: " + " or ".join(accused)) if accused else "correct model",
+        "fits": {m: r.to_dict() for m, r in others.items()},
+    }
+
+
+def _model_order(m: str) -> tuple:
+    return (len(m), m)
+
+
+def model_lines(d: dict[str, Any]) -> list[str]:
+    def one(name: str, r: dict[str, Any]) -> str:
+        st = (f"f* {r['min_faults']}, {r['explanations']} explanations" if r["status"] == "reproduced" else r["status"])
+        if r["status"] == "reproduced" and not r["minimal_shown"]:
+            st += ", minimal not shown"
+        if r["random_fewer"]:
+            st += f", random check found fewer ({r['random_fewer']})"
+        return f"  {name}: {st}"
+    lines = ["device models (the fewest faults each needs; a defect is accused only with fewer faults than the "
+             "correct model, and a tie is no accusation):", one("correct", d["correct"])]
+    lines += [one(m, r) for m, r in d["models"].items()]
+    v = d["verdict"]
+    if d["accused"]:
+        v += (" (the correct model is unexplained)" if d["difference"] is None
+              else f" ({d['difference']} fault{'s' if d['difference'] != 1 else ''} fewer)")
+    lines.append(f"verdict: {v}" + (f"; undecided: {', '.join(d['undecided'])}" if d["undecided"] else ""))
+    return lines
+
+
 def _show_fault(k: Fault, v: Span | None, with_id: bool = True) -> str:
     kind, d, msg, rid, n = k
     if v is None:
@@ -1512,11 +1585,12 @@ def report_lines(res: FitResult) -> list[str]:
             lines.append(f"unit combinations run on the whole log: {res.combinations[0]} of {res.combinations[1]} reproduce"
                          + (" (searched together after a failed combination)" if res.joint else ""))
         com = res.common()
-        lines.append("common to every minimal explanation: "
+        lines.append("common to every minimal explanation (values as seen in the explanations found, not every "
+                     "possible value): "
                      + ("; ".join(_show_fault(k, v) for k, v in sorted(com.items(), key=lambda kv: str(kv[0]))) or "none"))
         und = res.alternatives()
         if und:
-            lines.append("alternatives (the minimal explanations differ):")
+            lines.append("alternatives (the minimal explanations differ; values as seen in the explanations found):")
             for g, alts in und:
                 lines.append(f"  {g}: " + " | ".join("; ".join(_show_fault(k, v) for k, v in sorted(a.items(), key=lambda kv: str(kv[0])))
                                                    or "no fault" for a in alts))
@@ -1531,6 +1605,8 @@ def report_lines(res: FitResult) -> list[str]:
             f"{e.name} {e.req_id or '-'} at {e.t_us / 1e6:.6f}s" + (f" log line {e.log['line']}" if e.log else "")
             for e in f.unexplained[:5]) + (" ..." if len(f.unexplained) > 5 else "") + ")" if f.unexplained else ""),
     ]
+    if res.models is not None:
+        lines += model_lines(res.models)
     rc = res.random_check
     if rc is not None:
         lines.append(f"random arrivals (a check, not a proof): {rc['draws']} draws, {rc['reproduced']} reproduced, "
@@ -1552,5 +1628,5 @@ def report_lines(res: FitResult) -> list[str]:
 
 
 __all__ = ["anomaly_windows", "BRANCH_RUNS", "DOWN", "Explanation", "FIT_RUNS", "Fit", "FitResult", "Ranges", "UP",
-           "UnitSet", "Usual", "attempts_of", "fit_log", "fit_replies", "logged_disconnects", "random_arrivals",
-           "report_lines", "slow_round_trips"]
+           "UnitSet", "Usual", "attempts_of", "device_models", "fit_log", "fit_replies", "judge_models",
+           "logged_disconnects", "model_lines", "random_arrivals", "report_lines", "slow_round_trips"]

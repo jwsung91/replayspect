@@ -54,15 +54,18 @@ Implemented:
   checked against the model, and a client and fault link for a Jetson Orin;
   hardware runs without faults (stage 1) and with injected faults
   ([docs/experiments/testbed-01.md](docs/experiments/testbed-01.md),
-  [docs/experiments/testbed-02.md](docs/experiments/testbed-02.md))
+  [docs/experiments/testbed-02.md](docs/experiments/testbed-02.md)); a
+  compile-time switch for the public device-side defects, checked against the
+  model's mutants, with no hardware run yet
 - Driven replay of a client-side log: `drive` replays the log as a script,
   simulates the device and needs no seed; `drive --reconstruct` searches for
   the fault plan; `drive --fit` reports every explanation with the fewest link
   faults, split into faults common to every minimal explanation and alternatives,
-  with value ranges, plus the slow round trips observed in the log; a lost poll
-  is reported as a lost request or a lost reply; `--random-check` tests the
-  fewest-faults claim on any log with random arrivals
-  ([docs/driven-replay.md](docs/driven-replay.md))
+  with the value ranges seen, plus the slow round trips observed in the log; a
+  lost poll is reported as a lost request or a lost reply; `--random-check` tests
+  the fewest-faults claim on any log with random arrivals; `--models` fits the
+  log under each device defect model too and names the defects that need fewer
+  faults than the correct model ([docs/driven-replay.md](docs/driven-replay.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with

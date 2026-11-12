@@ -214,7 +214,7 @@ def test_a_request_dup_and_an_ack_dup_are_alternatives():
     assert group == "r-0001"
     assert sorted(k for a in alts for k in a) == [("dup", "c2s", "MOVE_UP", "r-0001", 0), ("dup", "s2c", "ACK", "r-0001", 0)]
     text = "\n".join(report_lines(res))
-    assert "alternatives (the minimal explanations differ)" in text and " | " in text and "fewest faults: 1" in text
+    assert "alternatives (the minimal explanations differ; values as seen" in text and " | " in text and "fewest faults: 1" in text
 
 
 def test_a_request_drop_is_common_to_every_minimal_explanation():
@@ -333,10 +333,10 @@ def test_merged_explanations_keep_the_range_of_their_values():
     d = res.to_dict()
     got = [x for u in d["units"] for e in u["plus_one"] for x in e if x["kind"] == "delay" and x["k"] == 1
            and x["msg"] == "ACK"]
-    assert got and got[0]["value_range_us"] == [lo1, hi1]
+    assert got and got[0]["seen_range_us"] == [lo1, hi1]
     (lo, hi), = res.common().values()
-    assert f"common to every minimal explanation: delay s2c ACK r-0001 k0 {lo / 1e6:.3f}-{hi / 1e6:.3f}s" \
-        in report_lines(res)
+    assert ("common to every minimal explanation (values as seen in the explanations found, not every possible "
+            f"value): delay s2c ACK r-0001 k0 {lo / 1e6:.3f}-{hi / 1e6:.3f}s") in report_lines(res)
 
 
 def test_the_random_arrival_check_finds_what_the_option_points_missed():
@@ -480,6 +480,60 @@ def test_the_fit_is_deterministic():
     assert (a.status, a.runs, a.fit.plan, a.to_dict()) == (b.status, b.runs, b.fit.plan, b.to_dict())
 
 
+# -- device models -----------------------------------------------------------------------------
+
+
+def models_of(setup, models=None):
+    from dataclasses import replace
+    ok = fit_log(setup, Ranges.of(setup), usual=USUAL)
+    others = {m: fit_log(replace(setup, mutants=(m,)), Ranges.of(setup), usual=USUAL)
+              for m in models or F.device_models(LIFT)}
+    return ok, others, F.judge_models(ok, others)
+
+
+def test_device_models_are_the_published_device_defects():
+    assert F.device_models(LIFT) == ["M1", "M2", "M3", "M4", "M5", "M9", "M10", "M11"]
+
+
+def test_a_defect_is_accused_when_the_correct_model_cannot_explain_and_ties_are_named_together():
+    # M2 records an id only at DONE: a copy of the request during the move runs again, so the client
+    # gets a second ACK and an ERROR. The correct device never sends that ERROR; M1 (no duplicate
+    # detection) does the same as M2 here, with the same one fault, so both are named.
+    plan = FaultPlan.from_dict({"base": "fixed", "faults": [f("c2s", "MOVE_UP", "r-0001", dup_extra_us=1_000_000)]})
+    log = logged(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000, mutants=("M2",)))
+    setup = DrivenSetup(LIFT, log, 14_000_000, tolerance_us=25_000)
+    ok, others, d = models_of(setup)
+    assert ok.status == "unexplained"
+    assert d["accused"] == ["M1", "M2"] and d["accused_size"] == 2 and d["difference"] is None
+    assert "M9" in d["fewer"] and others["M9"].min_faults > 1  # fewer than the correct model, not the fewest
+    assert d["verdict"] == "defect suspected: M1 or M2" and d["undecided"] == []
+    text = "\n".join(F.model_lines(d))
+    assert "verdict: defect suspected: M1 or M2 (the correct model is unexplained)" in text
+
+
+def test_a_tie_is_no_accusation():
+    # A request dup with no defect: M1 and M2 explain it as an ACK dup, one fault like the correct model.
+    ok, others, d = models_of(short([f("c2s", "MOVE_UP", "r-0001", dup_extra_us=300_000)]), ["M1", "M2", "M4"])
+    assert ok.min_faults == 1 and all(r.min_faults == 1 for r in others.values())
+    assert d["verdict"] == "correct model" and d["accused"] == [] and d["fewer"] == [] and d["difference"] is None
+
+
+def test_fewer_faults_counts_the_difference_and_an_unsettled_fit_is_undecided():
+    from dataclasses import replace
+    ok = fit_log(short([f("s2c", "ACK", "r-0001", drop=True), f("s2c", "DONE", "r-0002", drop=True)]),
+                 usual=USUAL)
+    assert ok.min_faults == 2
+    one, zero = replace(ok, min_faults=1), replace(ok, min_faults=0)
+    d = F.judge_models(ok, {"M4": one, "M10": zero, "M2": replace(ok, status="incomplete"),
+                            "M9": replace(zero, random_check={"fewer": [["x"]]})})
+    assert d["fewer"] == ["M4", "M10"] and d["accused"] == ["M10"] and d["difference"] == 2
+    assert d["undecided"] == ["M2", "M9"]  # incomplete; a random draw found fewer than its f*
+    assert ok.units
+    capped = replace(ok, units=[replace(u, minimal_shown=False) for u in ok.units])
+    d = F.judge_models(capped, {"M4": one})
+    assert d["accused"] == [] and d["undecided"] == ["M4"]  # the correct model's minimum is not shown
+
+
 def test_cli_drive_fit(tmp_path, capsys):
     plan = FaultPlan.from_dict({"base": "fixed", "faults": [f("c2s", "MOVE_UP", "r-0001", dup_extra_us=300_000)]})
     log, trace, out_json = tmp_path / "c.log", tmp_path / "c.jsonl", tmp_path / "fit.json"
@@ -494,8 +548,29 @@ def test_cli_drive_fit(tmp_path, capsys):
     assert "random arrivals (a check, not a proof): 30 draws" in out and "fewer than the fewest found: 0" in out
     d = json.loads(out_json.read_text())
     assert d["min_faults"] == 1 and d["explanations"] == 2 and d["minimal_shown"] and d["alternatives"] and d["common"] == []
+    assert d["models"] is None
     assert d["random_check"]["draws"] == 30 and d["random_check"]["fewer"] == []
     assert main(args + ["--fit-out", str(out_json)]) == 2  # exists: not overwritten
     assert main(["drive", str(trace), "--until", "14s", "--fit", "--usual-delay", "10s", "10ms"]) == 2
     assert main(["drive", str(trace), "--fit", "--reconstruct"]) == 2
     assert main(["drive", str(trace), "--fit", "--c2s-delay", "2s", "1s"]) == 2
+
+
+def test_cli_drive_fit_models(tmp_path, capsys):
+    plan = FaultPlan.from_dict({"base": "fixed", "faults": [f("c2s", "MOVE_UP", "r-0001", dup_extra_us=1_000_000)]})
+    log, trace, out_json = tmp_path / "c.log", tmp_path / "c.jsonl", tmp_path / "fit.json"
+    log.write_text(text_log(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000, mutants=("M2",)).events, "client"))
+    assert main(["ingest", str(log), "--rules", str(RULES), "--out", str(trace)]) == 0
+    capsys.readouterr()
+    args = ["drive", str(trace), "--until", "14s", "--fit", "--tolerance", "25ms", "--usual-delay", "10ms", "10ms"]
+    main(args + ["--models", "M2,M10", "--random-check", "20", "--fit-out", str(out_json)])
+    out = capsys.readouterr().out
+    assert "  correct: unexplained" in out and "  M2: f* 1, 1 explanations" in out and "  M10: unexplained" in out
+    assert "verdict: defect suspected: M2 (the correct model is unexplained)" in out
+    d = json.loads(out_json.read_text())["models"]
+    assert d["accused"] == ["M2"] and d["models"]["M2"]["random_fewer"] == 0 and d["fits"]["M2"]["min_faults"] == 1
+    for bad in (["--models", "M6"], ["--models", "M2", "--mutant", "M4"], ["--models", ","]):
+        assert main(args + bad) == 2
+    assert "client defects are not compared" in capsys.readouterr().err
+    assert main(args + ["--models", "device"]) in (0, 1)
+    assert "  M11: " in capsys.readouterr().out

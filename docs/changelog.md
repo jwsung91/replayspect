@@ -280,3 +280,22 @@ material for them, not a measurement.
   `value_us` is now `value_range_us` (`[lowest, highest]`, or null for a drop). The methods are
   `FitResult.common()` and `FitResult.alternatives()`. Published experiment documents keep the
   names they were written with.
+
+## Stage 3 code: device models and the firmware defect switch
+
+- **`drive --fit --models M1,M2,...`** (or `--models device`) fits the log under each published
+  device defect model as well, with the same settings, and compares the fewest faults (see
+  `docs/driven-replay.md`). A defect is accused only when its model needs fewer faults than the
+  correct model, or the correct model cannot explain the log. A tie is no accusation. Defects tied
+  at the fewest are named together ("M1 or M2"). A comparison with an incomplete or unsettled fit
+  is undecided. Client defects are not offered. `judge_models`, `model_lines`, `device_models`.
+- **Firmware defect switch.** `-DLIFT_DEFECT=N` builds the model's device defect MN (1, 2, 4, 5,
+  9, 10, 11; M3 needs disconnects the device never sees on serial). The conformance test runs
+  every script under every switch against the model's mutant.
+- **Where it fired.** The device log says `defect fired MN REQ_ID` where the defect's own branch
+  changes what the device does, and `build defect=...` at boot.
+- **The answer stays out of the client log.** `READY` no longer carries `defect=none`, and the
+  client drops any `defect=` field from its header.
+- **Seen ranges.** The value ranges of #29 are named for what they are: the values seen in the
+  minimal explanations found, not every value that would fit. The report says so, and the JSON key
+  is `seen_range_us`.
