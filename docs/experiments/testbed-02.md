@@ -9,6 +9,9 @@ Given only the client log, it returns every explanation with the fewest link fau
 faults common to all of them ("determined"), the alternatives ("not determined"), the explanations
 with one fault more (`f*+1`), and a list of slow round trips read from the log alone.
 
+*Note added later:* "determined" is now called "common to every minimal explanation" and "not
+determined" "alternatives"; this document keeps the names it was written with.
+
 The questions:
 
 1. Is the truth in the set?

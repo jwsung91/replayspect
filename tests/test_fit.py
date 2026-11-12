@@ -205,24 +205,24 @@ def test_a_lost_reply_followed_by_a_normal_one_is_one_drop_not_a_long_delay():
 # -- the minimal explanations -------------------------------------------------------------------
 
 
-def test_a_request_dup_and_an_ack_dup_are_not_determined():
+def test_a_request_dup_and_an_ack_dup_are_alternatives():
     setup = short([f("c2s", "MOVE_UP", "r-0001", dup_extra_us=300_000)])
     res = fit_log(setup, Ranges.of(setup), usual=USUAL)
     assert res.reproduced and res.minimal_shown and res.min_faults == 1 and res.n_explanations == 2
-    assert res.determined() == {}
-    (group, alts), = res.undetermined()
+    assert res.common() == {}
+    (group, alts), = res.alternatives()
     assert group == "r-0001"
     assert sorted(k for a in alts for k in a) == [("dup", "c2s", "MOVE_UP", "r-0001", 0), ("dup", "s2c", "ACK", "r-0001", 0)]
     text = "\n".join(report_lines(res))
-    assert "not determined" in text and " | " in text and "fewest faults: 1" in text
+    assert "alternatives (the minimal explanations differ)" in text and " | " in text and "fewest faults: 1" in text
 
 
-def test_a_request_drop_is_determined():
+def test_a_request_drop_is_common_to_every_minimal_explanation():
     setup = short([f("c2s", "MOVE_UP", "r-0001", drop=True)])
     res = fit_log(setup, Ranges.of(setup), usual=USUAL, plus_one=True)
     assert res.reproduced and res.minimal_shown and res.plus_one_shown
     assert res.min_faults == 1 and res.n_explanations == 1
-    assert set(res.determined()) == {("drop", "c2s", "MOVE_UP", "r-0001", 0)}
+    assert set(res.common()) == {("drop", "c2s", "MOVE_UP", "r-0001", 0)}
     assert "with one fault more: " in "\n".join(report_lines(res))
 
 
@@ -312,7 +312,31 @@ def test_a_retry_answered_before_the_first_attempt_is_one_late_reply():
     assert [e.name for e in setup.log if e.req_id == "r-0001" and e.kind == "recv"] == ["ACK", "ACK", "DONE"]
     res = fit_log(setup, WIDE, usual=USUAL)
     assert res.reproduced and res.minimal_shown and res.min_faults == 1
-    assert res.determined() == {("delay", "s2c", "ACK", "r-0001", 0): 2_500_000}
+    (k, (lo, hi)), = res.common().items()
+    assert k == ("delay", "s2c", "ACK", "r-0001", 0) and lo <= 2_500_000 <= hi and hi - lo <= 50_000
+
+
+def test_merged_explanations_keep_the_range_of_their_values():
+    # R04's truth (both ACKs late: 2.5 s and 40 ms) has the same faults as the f*+1 explanation of the
+    # other pairing (about 2.04 s and 0.5 s). Merged by faults, the explanation keeps both pairings'
+    # values as a range per fault, so the truth's values are inside it.
+    plan = FaultPlan.from_dict({"base": "fixed", "delays": [{**f("s2c", "ACK", "r-0001"), "delay_us": 2_500_000},
+                                                            {**f("s2c", "ACK", "r-0001", 1), "delay_us": 40_000}]})
+    setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000)), 14_000_000,
+                        tolerance_us=25_000)
+    res = fit_log(setup, WIDE, usual=USUAL, plus_one=True)
+    k0, k1 = ("delay", "s2c", "ACK", "r-0001", 0), ("delay", "s2c", "ACK", "r-0001", 1)
+    both = [x.spans for u in res.units for x in u.plus_one if set(x.faults) == {k0, k1}]
+    assert len(both) == 1
+    (lo0, hi0), (lo1, hi1) = both[0][k0], both[0][k1]
+    assert lo0 <= 2_100_000 and 2_500_000 <= hi0 and lo1 <= 40_000 and 450_000 <= hi1
+    d = res.to_dict()
+    got = [x for u in d["units"] for e in u["plus_one"] for x in e if x["kind"] == "delay" and x["k"] == 1
+           and x["msg"] == "ACK"]
+    assert got and got[0]["value_range_us"] == [lo1, hi1]
+    (lo, hi), = res.common().values()
+    assert f"common to every minimal explanation: delay s2c ACK r-0001 k0 {lo / 1e6:.3f}-{hi / 1e6:.3f}s" \
+        in report_lines(res)
 
 
 def test_the_random_arrival_check_finds_what_the_option_points_missed():
@@ -338,8 +362,8 @@ def test_a_lost_poll_is_a_lost_request_or_a_lost_reply():
     setup = short([f("c2s", "STATUS", "s-0002", drop=True)])
     res = fit_log(setup, Ranges.of(setup), usual=USUAL)
     assert res.reproduced and res.minimal_shown and res.min_faults == 1 and res.n_explanations == 2
-    assert res.determined() == {}
-    (group, alts), = res.undetermined()
+    assert res.common() == {}
+    (group, alts), = res.alternatives()
     assert group == "s-0002"
     assert sorted(k for a in alts for k in a) == [("drop", "c2s", "STATUS", "s-0002", 0),
                                                   ("drop", "s2c", "STATUS_REPLY", "s-0002", 0)]
@@ -352,8 +376,8 @@ def test_a_late_poll_reply_is_a_late_request_or_a_late_reply_never_a_lost_reques
     setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000)), 14_000_000,
                         tolerance_us=25_000)
     res = fit_log(setup, WIDE, usual=USUAL)
-    assert res.reproduced and res.min_faults == 1 and res.determined() == {}
-    (group, alts), = res.undetermined()
+    assert res.reproduced and res.min_faults == 1 and res.common() == {}
+    (group, alts), = res.alternatives()
     assert group == "s-0002"
     assert sorted(k for a in alts for k in a) == [("delay", "c2s", "STATUS", "s-0002", 0),
                                                   ("delay", "s2c", "STATUS_REPLY", "s-0002", 0)]
@@ -465,11 +489,11 @@ def test_cli_drive_fit(tmp_path, capsys):
     args = ["drive", str(trace), "--until", "14s", "--fit", "--tolerance", "25ms", "--usual-delay", "10ms", "10ms"]
     assert main(args + ["--plus-one", "--fit-out", str(out_json), "--branches", "--random-check", "30"]) == 0
     out = capsys.readouterr().out
-    assert "fit: reproduced" in out and "fewest faults: 1" in out and "not determined" in out
+    assert "fit: reproduced" in out and "fewest faults: 1" in out and "alternatives (" in out
     assert "attempts with a branch point" in out
     assert "random arrivals (a check, not a proof): 30 draws" in out and "fewer than the fewest found: 0" in out
     d = json.loads(out_json.read_text())
-    assert d["min_faults"] == 1 and d["explanations"] == 2 and d["minimal_shown"] and d["undetermined"]
+    assert d["min_faults"] == 1 and d["explanations"] == 2 and d["minimal_shown"] and d["alternatives"] and d["common"] == []
     assert d["random_check"]["draws"] == 30 and d["random_check"]["fewer"] == []
     assert main(args + ["--fit-out", str(out_json)]) == 2  # exists: not overwritten
     assert main(["drive", str(trace), "--until", "14s", "--fit", "--usual-delay", "10s", "10ms"]) == 2

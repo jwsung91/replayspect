@@ -20,8 +20,10 @@ follow by arithmetic:
 **Faults.** A drop, a duplicate, or a delay above the usual delay plus the tolerance
 (:class:`Usual`), in either direction. Not faults: a message lost in a logged disconnect when the
 delay it needs is within that limit, and a reply still in flight at the end of the log. A fault is
-identified by kind and ``(dir, msg, req_id, k)``; its value (delay, extra delay) is reported but is
-not part of the identity. Two explanations with the same faults are the same explanation.
+identified by kind and ``(dir, msg, req_id, k)``; its value (delay, extra delay) is not part of the
+identity. Two explanations with the same faults are the same explanation, and the values they differ
+in (another reply pairing, another arrival point) are reported as a range, lowest to highest, each
+end found on the whole log. The range is per fault: the ends of two faults need not go together.
 
 **Disconnects are facts** when the client logged them (``DISCONNECTED`` / ``CONNECTED`` state
 events). A request sent just before a logged disconnect, still in flight when it began, is lost
@@ -52,8 +54,9 @@ explanation. The units' sets are then combined and the combinations are run on t
 of them when there are at most :data:`COMBINATIONS_RUN`, otherwise the first); if one fails, the
 units are searched together.
 
-**Report.** The fewest faults ``f*``, the number of explanations, the faults common to all of them
-("determined") and, per request id, the alternatives ("not determined"). Apart from the fit, the
+**Report.** The fewest faults ``f*``, the number of explanations, the faults common to every minimal
+explanation (common, not shown to be true: see below) and, per request id, the alternatives where
+the minimal explanations differ. Apart from the fit, the
 **observed slow round trips**: request-to-``ACK`` gaps longer than the log's median by more than
 the limit, computed from the log alone (:func:`slow_round_trips`).
 
@@ -95,8 +98,24 @@ PAIR_MAX = 6
 PAIRINGS_MAX = 8
 #: The units' explanation sets are all run on the whole log when there are at most this many combinations.
 COMBINATIONS_RUN = 50
+#: Other arrival choices kept per explanation that give the same faults with other values; each is run
+#: on the whole log to widen the value ranges (:attr:`Explanation.spans`).
+SPAN_CHOICES = 4
 
 Fault = tuple  # (kind, dir, msg, req_id, k)
+Span = tuple  # (lowest, highest) value in microseconds; None for a drop
+
+
+def _widen(spans: dict[Fault, Span], fd: dict[Fault, int | None]) -> None:
+    for k, v in fd.items():
+        if v is not None:
+            lo, hi = spans.get(k, (v, v))
+            spans[k] = (min(lo, v), max(hi, v))
+
+
+def _union(spans) -> Span | None:
+    got = [x for x in spans if x is not None]
+    return (min(x[0] for x in got), max(x[1] for x in got)) if got else None
 
 
 @dataclass(frozen=True)
@@ -213,9 +232,27 @@ class Fit:
 
 @dataclass
 class Explanation:
-    faults: dict[Fault, int | None]  # the unit's faults (identity -> value)
+    faults: dict[Fault, int | None]  # the unit's faults (identity -> first value found)
     choice: dict[tuple, tuple[int | None, int | None]]  # the unit's attempts: key -> (delay, dup extra)
     violated: tuple[str, ...] = ()
+    #: per fault with a value, the lowest and highest value among the merged explanations (same faults,
+    #: another reply pairing or arrival point), each found on the whole log: what the log leaves open
+    spans: dict[Fault, Span] = field(default_factory=dict)
+    #: other arrival choices with the same faults (at most SPAN_CHOICES), run on the whole log for spans
+    others: list[dict[tuple, tuple[int | None, int | None]]] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        _widen(self.spans, self.faults)
+
+    def merge(self, fd: dict[Fault, int | None], choice: dict | None = None) -> None:
+        """Fold in an explanation with the same faults: widen the spans, keep its choice if new."""
+        _widen(self.spans, fd)
+        if choice is not None and choice != self.choice and choice not in self.others \
+                and len(self.others) < SPAN_CHOICES:
+            self.others.append(choice)
+
+    def shown(self) -> dict[Fault, Span | None]:
+        return {k: self.spans.get(k) for k in self.faults}
 
 
 @dataclass
@@ -261,6 +298,7 @@ class FitResult:
     min_faults: int | None = None  # f*
     units: list[UnitSet] = field(default_factory=list)
     outside: list[dict[Fault, int | None]] = field(default_factory=list)  # tied pairings of faults outside the units
+    outside_spans: list[dict[Fault, Span]] = field(default_factory=list)  # value ranges of ``outside``, same order
     plus_one: bool = False  # the f*+1 level was asked for
     combinations: tuple[int, int] = (0, 0)  # (run on the whole log and reproduced, total)
     joint: bool = False  # the units were searched together after a combination failed
@@ -313,52 +351,63 @@ class FitResult:
             rest *= max(1, len(v.explanations))
         return total + sum(len(u.plus_one) for u in self.more) * rest
 
-    def determined(self) -> dict[Fault, int | None]:
-        """Faults in every minimal explanation, with the first explanation's values."""
-        out: dict[Fault, int | None] = {}
+    def _outside_shown(self) -> list[dict[Fault, Span | None]]:
+        spans = self.outside_spans or [{} for _ in self.outside]
+        return [{k: sp.get(k) for k in o} for o, sp in zip(self.outside, spans)]
+
+    def common(self) -> dict[Fault, Span | None]:
+        """Faults in every minimal explanation, each with its value range over all of them (None: a drop).
+        Common to the minimal explanations, not shown to be true: a log whose real faults are not the
+        fewest is misread here too."""
+        out: dict[Fault, Span | None] = {}
         if not self.reproduced:
             return out
-        for u in self.units:
-            if u.explanations:
-                common = set(u.explanations[0].faults)
-                for x in u.explanations[1:]:
-                    common &= set(x.faults)
-                out.update({k: u.explanations[0].faults[k] for k in common})
+        sets = [[x.shown() for x in u.explanations] for u in self.units if u.explanations]
         if self.outside:
-            common = set(self.outside[0])
-            for x in self.outside[1:]:
-                common &= set(x)
-            out.update({k: self.outside[0][k] for k in common})
+            sets.append(self._outside_shown())
+        for xs in sets:
+            same = set(xs[0])
+            for x in xs[1:]:
+                same &= set(x)
+            for k in same:
+                out[k] = _union(x[k] for x in xs)
         return out
 
-    def undetermined(self) -> list[tuple[str, list[dict[Fault, int | None]]]]:
-        """Per request id (or unit), the alternatives: each explanation's faults minus the common ones."""
-        groups: list[tuple[str, list[dict[Fault, int | None]]]] = []
+    def alternatives(self) -> list[tuple[str, list[dict[Fault, Span | None]]]]:
+        """Per request id (or unit), the minimal explanations' faults minus the common ones, with ranges."""
+        groups: list[tuple[str, list[dict[Fault, Span | None]]]] = []
         if not self.reproduced:
             return groups
         for u in self.units:
             if len(u.explanations) > 1:
-                common = set(u.explanations[0].faults)
+                same = set(u.explanations[0].faults)
                 for x in u.explanations[1:]:
-                    common &= set(x.faults)
-                groups.append((", ".join(u.req_ids), [{k: v for k, v in x.faults.items() if k not in common}
+                    same &= set(x.faults)
+                groups.append((", ".join(u.req_ids), [{k: v for k, v in x.shown().items() if k not in same}
                                                       for x in u.explanations]))
         if len(self.outside) > 1:
-            common = set(self.outside[0])
-            for x in self.outside[1:]:
-                common &= set(x)
+            outs = self._outside_shown()
+            same = set(outs[0])
+            for x in outs[1:]:
+                same &= set(x)
             by: dict[str, list[dict]] = {}
-            for x in self.outside:
-                for rid in sorted({k[3] or "-" for k in x if k not in common}):
-                    alt = {k: v for k, v in x.items() if k not in common and (k[3] or "-") == rid}
-                    if alt not in by.setdefault(rid, []):
-                        by[rid].append(alt)
+            for x in outs:
+                for rid in sorted({k[3] or "-" for k in x if k not in same}):
+                    alt = {k: v for k, v in x.items() if k not in same and (k[3] or "-") == rid}
+                    got = by.setdefault(rid, [])
+                    old = next((g for g in got if g.keys() == alt.keys()), None)
+                    if old is None:
+                        got.append(alt)
+                    else:
+                        for k in old:
+                            old[k] = _union([old[k], alt[k]])
             groups += [(rid, alts) for rid, alts in by.items() if len(alts) > 1]
         return groups
 
     def to_dict(self) -> dict[str, Any]:
         def fl(fs):
-            return [{"kind": k[0], "dir": k[1], "msg": k[2], "req_id": k[3], "k": k[4], "value_us": v}
+            return [{"kind": k[0], "dir": k[1], "msg": k[2], "req_id": k[3], "k": k[4],
+                     "value_range_us": None if v is None else list(v)}
                     for k, v in sorted(fs.items(), key=lambda kv: str(kv[0]))]
 
         return {
@@ -367,16 +416,16 @@ class FitResult:
             "minimal_shown": self.minimal_shown, "plus_one": self.plus_one, "plus_one_explanations": self.n_plus_one,
             "plus_one_shown": self.plus_one_shown, "combinations": list(self.combinations), "joint": self.joint,
             "usual": None if self.usual is None else vars(self.usual),
-            "determined": fl(self.determined()),
-            "undetermined": [{"group": g, "alternatives": [fl(a) for a in alts]} for g, alts in self.undetermined()],
+            "common": fl(self.common()),
+            "alternatives": [{"group": g, "alternatives": [fl(a) for a in alts]} for g, alts in self.alternatives()],
             "units": [{"req_ids": list(u.req_ids), "why": list(u.why), "f": u.f, "minimal_shown": u.minimal_shown,
                        "plus_one_shown": u.plus_one_shown, "exhausted": u.exhausted, "choices_run": u.choices_run,
-                       "explanations": [fl(x.faults) for x in u.explanations],
-                       "plus_one": [fl(x.faults) for x in u.plus_one]} for u in self.units],
+                       "explanations": [fl(x.shown()) for x in u.explanations],
+                       "plus_one": [fl(x.shown()) for x in u.plus_one]} for u in self.units],
             "plus_one_outside_units": [{"req_ids": list(u.req_ids), "plus_one_shown": u.plus_one_shown,
-                                        "choices_run": u.choices_run, "plus_one": [fl(x.faults) for x in u.plus_one]}
+                                        "choices_run": u.choices_run, "plus_one": [fl(x.shown()) for x in u.plus_one]}
                                        for u in self.more],
-            "outside": [fl(x) for x in self.outside],
+            "outside": [fl(x) for x in self._outside_shown()],
             "slow_round_trips": self.slow,
             "random_check": self.random_check,
             "unexplained": [{"name": e.name, "req_id": e.req_id, "t_us": e.t_us} for e in self.fit.unexplained
@@ -1061,6 +1110,8 @@ def _search_unit(runner: _Runner, base: Choice, attempts: list[Attempt], rids: s
             ident = frozenset(uf)
             if ident not in found:
                 found[ident] = (f, Explanation(uf, choice.of(keys), violated))
+            else:
+                found[ident][1].merge(uf, choice.of(keys))
             if best[0] is None or f < best[0]:
                 best[0] = f
     unit.exhausted = complete and best[0] is None
@@ -1120,7 +1171,10 @@ def _one_more(runner: _Runner, base: Choice, attempts: list[Attempt], rid: str, 
             if frozenset(k for k in fd if str(k[3]) != rid) not in rest:
                 continue
             mine = {k: v for k, v in fd.items() if str(k[3]) == rid}
-            found.setdefault(frozenset(mine), Explanation(mine, choice.of(keys), violated))
+            if frozenset(mine) in found:
+                found[frozenset(mine)].merge(mine)
+            else:
+                found[frozenset(mine)] = Explanation(mine, choice.of(keys), violated)
     unit.plus_one = list(found.values())
     unit.minimal_shown = True
     unit.plus_one_shown = unit.exhausted = complete
@@ -1225,7 +1279,12 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
             if not u.explanations:
                 continue
             got: dict[frozenset, tuple[int, Explanation]] = {}
-            for x in u.explanations + u.plus_one:
+            # the cut log's values are not kept: each choice (and the others with the same faults) is
+            # run on the whole log, so the spans hold only values that reproduce the whole log
+            cands = [y for x in u.explanations + u.plus_one
+                     for y in [replace(x, spans={}, others=[])] + [replace(x, choice=c, spans={}, others=[])
+                                                                    for c in x.others]]
+            for x in cands:
                 picks = [p for j, p in enumerate(firsts) if j != i and p is not None] + [x]
                 ev = runner.evaluate_all(compose(picks))
                 if ev is None:
@@ -1236,7 +1295,10 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
                 for fd, ok, violated in ev.results:
                     if ok:
                         uf = {k: v for k, v in fd.items() if str(k[3]) in u.req_ids}
-                        got.setdefault(frozenset(uf), (len(uf), Explanation(uf, x.choice, violated)))
+                        if frozenset(uf) in got:
+                            got[frozenset(uf)][1].merge(uf)
+                        else:
+                            got[frozenset(uf)] = (len(uf), Explanation(uf, x.choice, violated))
             if not got:
                 u.explanations, u.plus_one, u.f = [], [], None
                 continue
@@ -1289,13 +1351,18 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
     reproduced = any(ok for _, ok, _ in final.results) and all(u.explanations for u in units)
     unit_ids = set().union(*(set(u.req_ids) for u in units)) if units else set()
     if reproduced:
-        outside = []
+        outside: list[dict[Fault, int | None]] = []
+        outside_spans: list[dict[Fault, Span]] = []
         for fd, ok, _ in final.results:
             if ok:
                 o = {k: v for k, v in fd.items() if str(k[3]) not in unit_ids}
-                if o not in outside:
+                i = next((j for j, p in enumerate(outside) if p.keys() == o.keys()), None)
+                if i is None:
                     outside.append(o)
-        out = result("reproduced", fit, units=units, outside=outside, combinations=combos, joint=joint, choice=choice)
+                    outside_spans.append({})
+                _widen(outside_spans[-1 if i is None else i], o)
+        out = result("reproduced", fit, units=units, outside=outside, outside_spans=outside_spans,
+                     combinations=combos, joint=joint, choice=choice)
         out.min_faults = sum(u.f or 0 for u in units) + min((len(o) for o in outside), default=0)
         if plus_one:
             # one fault more on a command outside the units (the units' own f*+1 is above)
@@ -1415,9 +1482,13 @@ def _branch_points(setup: DrivenSetup, out: FitResult, choice: Choice, first: Tr
         out.outcomes[k] = out.outcomes.get(k, 0) + n
 
 
-def _show_fault(k: Fault, v: int | None, with_id: bool = True) -> str:
+def _show_fault(k: Fault, v: Span | None, with_id: bool = True) -> str:
     kind, d, msg, rid, n = k
-    val = "" if v is None else (f" {v / 1e6:.3f}s" if kind == "delay" else f" +{v / 1e6:.3f}s")
+    if v is None:
+        val = ""
+    else:
+        val = f"{v[0] / 1e6:.3f}s" if v[0] == v[1] else f"{v[0] / 1e6:.3f}-{v[1] / 1e6:.3f}s"
+        val = " " + ("" if kind == "delay" else "+") + val
     return f"{kind} {d} {msg}{' ' + str(rid) if with_id else ''} k{n}{val}"
 
 
@@ -1440,12 +1511,12 @@ def report_lines(res: FitResult) -> list[str]:
         if res.combinations[1] > 1:
             lines.append(f"unit combinations run on the whole log: {res.combinations[0]} of {res.combinations[1]} reproduce"
                          + (" (searched together after a failed combination)" if res.joint else ""))
-        det = res.determined()
-        lines.append("determined (in every explanation): "
-                     + ("; ".join(_show_fault(k, v) for k, v in sorted(det.items(), key=lambda kv: str(kv[0]))) or "none"))
-        und = res.undetermined()
+        com = res.common()
+        lines.append("common to every minimal explanation: "
+                     + ("; ".join(_show_fault(k, v) for k, v in sorted(com.items(), key=lambda kv: str(kv[0]))) or "none"))
+        und = res.alternatives()
         if und:
-            lines.append("not determined (the log does not decide):")
+            lines.append("alternatives (the minimal explanations differ):")
             for g, alts in und:
                 lines.append(f"  {g}: " + " | ".join("; ".join(_show_fault(k, v) for k, v in sorted(a.items(), key=lambda kv: str(kv[0])))
                                                    or "no fault" for a in alts))
