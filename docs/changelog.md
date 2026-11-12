@@ -299,3 +299,12 @@ material for them, not a measurement.
 - **Seen ranges.** The value ranges of #29 are named for what they are: the values seen in the
   minimal explanations found, not every value that would fit. The report says so, and the JSON key
   is `seen_range_us`.
+
+## Fit: memory bounded by the run count
+
+The fit's run cache kept every run's simulated trace and plans until the fit ended, so memory grew
+with the number of runs: a defect model that cannot explain a log runs to the 20,000-run cap and went
+past 4 GB (two simulator jobs were killed for running out of memory). The runner now keeps the 32
+most recent runs whole. Older runs keep their results; their trace and plans are rebuilt
+deterministically, without counting a run, when asked for. Results are unchanged (same `--fit-out`,
+runs, branch points and random check on the logs compared); the same fit now peaks at 250 MB.

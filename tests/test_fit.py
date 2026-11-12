@@ -480,6 +480,26 @@ def test_the_fit_is_deterministic():
     assert (a.status, a.runs, a.fit.plan, a.to_dict()) == (b.status, b.runs, b.fit.plan, b.to_dict())
 
 
+def test_dropped_traces_are_rebuilt_and_change_nothing(monkeypatch):
+    # The runner keeps only the most recent runs whole (memory grew with the run count to several GB);
+    # an older run's trace and plans are rebuilt when asked for. Keeping one changes no result.
+    setup = short([f("c2s", "MOVE_UP", "r-0001", drop=True), f("s2c", "DONE", "r-0002", dup_extra_us=200_000)])
+    full = fit_log(setup, Ranges.of(setup), usual=USUAL, plus_one=True, branches=True)
+    runners = []
+    init = F._Runner.__init__
+
+    def keep(self, *a, **k):
+        init(self, *a, **k)
+        runners.append(self)
+    monkeypatch.setattr(F._Runner, "__init__", keep)
+    monkeypatch.setattr(F, "TRACES_KEPT", 1)
+    lean = fit_log(setup, Ranges.of(setup), usual=USUAL, plus_one=True, branches=True)
+    assert lean.to_dict() == full.to_dict() and lean.runs == full.runs
+    r = max(runners, key=lambda x: len(x.cache))
+    assert len(r.cache) > 10 and sum(e.trace is not None for e in r.cache.values()) <= 2
+    assert all(e.fit.plan is None for e in r.cache.values() if e.trace is None)
+
+
 # -- device models -----------------------------------------------------------------------------
 
 
