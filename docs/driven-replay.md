@@ -176,7 +176,17 @@ leaves unexplained. A command is anomalous when it:
 - got its `ACK` more than 50 ms after the send;
 - had an `ACK`→`DONE` gap more than 50 ms over the log's median gap.
 
-Attempts of other commands, and polls, keep the default.
+**Polls with a fault are units too.** A poll whose reply the default reads as lost or repeated, or
+leaves unexplained, is searched like a command. A poll does not change the device, so a lost request
+and a lost reply look the same from the client. The search finds both and reports the poll as not
+determined: `s-0008: drop c2s STATUS k0 | drop s2c STATUS_REPLY k0`. A repeated reply ties with a
+repeated request when the device state is the same at both times.
+- Poll replies are left out of the match, so an explanation that leaves a logged reply of the unit
+  unexplained is not taken: a lost request does not explain a reply that was received.
+- A poll the option space cannot explain keeps the default, as all polls did before, and its
+  unexplained reply is reported apart.
+
+Attempts of other commands, and the other polls, keep the default.
 
 **Options per attempt:**
 - the default;
@@ -185,6 +195,9 @@ Attempts of other commands, and polls, keep the default.
 - arriving just after a device event in its delay range;
 - arriving at an **anchored** time, where a logged reply of its request would have the usual delay
   (using the device's lag after an arrival, read off the run);
+- for each logged reply of its request, arriving at the time nearest the usual delay at which both
+  the attempt's delay and that reply's delay are within the limit. This holds whichever send the
+  reply is paired with, so it covers a retry answered before the first attempt (testbed-02 R04);
 - arriving just after a logged disconnect begins;
 - duplicated, with the copy at an anchored time.
 
@@ -194,7 +207,10 @@ Attempts of other commands, and polls, keep the default.
   skipped. The reply side can only add faults, so the skipped choices cannot tie.
 - **What "minimal" means.** When the unit's choices are exhausted, every explanation with the
   fewest faults in this option space has been run.
-- **`--plus-one`.** The search continues to one fault more, as a diagnostic.
+- **`--plus-one`.** The search continues to one fault more, as a diagnostic. After the fit, every
+  command outside the units (with no fault in the minimal explanations) is also searched for one
+  fault more, on the whole log, with the units at their first explanation. So a log the default
+  explains (no unit) still has an `f*+1` set. Polls without a fault are not searched for it.
 - **Judging.** Each unit is judged:
   - from a quiet point before its first send;
   - up to the next unit's first send, or the end of the log; the cut log's horizon is the cut;
@@ -244,6 +260,7 @@ caps the branch check.
 - **observed slow round trips** (from the log, not the fit; see below);
 - explanations matching every receive, by violated contracts;
 - with `--branches`, attempts with a branch point;
+- with `--random-check N`, the random-arrival check (below);
 - runs used.
 
 `--fit-out PATH` writes all of this as JSON, with every unit's explanations.
@@ -256,6 +273,13 @@ from its send to the first `ACK` of that id received before the next attempt.
 - It exists because the limit applies per direction. A request about 40 ms late can be split into
   a request and an `ACK` that are each within a 29 ms limit, so it is no fault. Its round trip is
   still 40 ms over the median.
+
+**Random-arrival check (`--random-check N`, for a reproduced fit).** N draws, each redrawing one
+command's attempts at random: dropped, near the fitted arrival (±60 ms), inside the interval its
+replies allow, or anywhere in the range, sometimes with a duplicate. The other attempts keep the
+reported plan's arrivals. A draw that reproduces the log with fewer faults than `f*` means the option
+points missed a smaller explanation, and the report counts such draws. It works on any log, real
+ones included. It is a check, not a proof: no draw finding fewer does not show `f*` is the minimum.
 
 **More than one violation outcome.** A client log may fit explanations that differ inside the
 device: one with a contract violation and one without. Two development logs did exactly that.
@@ -280,11 +304,13 @@ a device defect can hide.
   `ACK`.
 - **"Every minimal explanation" holds within the option points above.** It is not a statement over
   every real-valued timing. A test draws random arrivals off those points and checks that none
-  explains a short log with fewer faults; that is not a proof.
+  explains a short log with fewer faults, and `--random-check` does the same on any log; that is
+  not a proof.
 - **Copies are anchored only.** A duplicate copy is placed only at anchored times, on the reasoning
   that a copy matters through the reply it causes. A device whose copies change state would need
   more points.
-- **Polls keep the default.** A fault on a poll request is read on the reply side.
+- **Polls without a fault keep the default.** A poll with a fault is a unit, and its lost request
+  and lost reply are both reported.
 
 **Unexplained as evidence.** With a correct device model, a receive the model sends under no
 arrival choice is evidence of a device defect, without naming one.

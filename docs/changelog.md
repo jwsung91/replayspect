@@ -241,3 +241,25 @@ was not predicted to miss, it is in the set in 36 of 37. Determined command faul
 1-fault explanation that lies between its arrival points and reported `f*` 2. The `f*+1` level is
 searched only inside anomalous commands. Slow round trips list the 40 ms delays that the minimal
 set absorbs.
+
+## WP5b fit: fixes after testbed-02
+
+Four changes to `drive --fit`, from what testbed-02 showed. The 87 testbed logs are development
+material for them, not a measurement.
+- **Arrival points from any reply pairing (R04).** For each logged reply of its request, an attempt
+  may also arrive at the time nearest the usual delay where both its delay and that reply's delay
+  are within the limit, whichever send the reply is paired with. A retry answered before the first
+  attempt is now one late reply, not two faults.
+- **Lost polls are not decided.** A poll with a fault in the default is a search unit. A poll does
+  not change the device, so a lost request and a lost reply tie and both are reported (likewise a
+  late or repeated request and reply). An explanation that leaves a logged reply of the unit
+  unexplained is not taken, because poll replies are left out of the match. A poll the option
+  space cannot explain keeps the default, as before.
+- **`f*+1` outside the units (S03).** With `--plus-one`, every command outside the units with no
+  fault is searched for one fault more on the whole log, so a log the default explains still has
+  an `f*+1` set.
+- **`--random-check N`.** The random-arrival test as a check on any log, real ones included: draws
+  of one command's arrivals off the option points, reporting any that reproduce with fewer faults
+  than `f*` (`random_arrivals`). It is a check, not a proof.
+- **Tests.** The brute-force control now covers every command and the polls with a fault, and
+  synthetic logs of the R04, S03 and lost-poll shapes are added.

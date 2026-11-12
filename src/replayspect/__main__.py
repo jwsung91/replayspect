@@ -249,6 +249,10 @@ def _drive(args: argparse.Namespace) -> int:
                     print("\n".join(_rl(wr)))
             fitres = fit_log(setup, ranges, args.fit_runs, branches=args.branches, branch_cap=args.branch_runs,
                              usual=usual, plus_one=args.plus_one)
+            if args.random_check and fitres.reproduced:
+                from replayspect.fit import random_arrivals
+
+                fitres.random_check = random_arrivals(setup, fitres, ranges, fitres.usual, args.random_check)
             plan, res = fitres.fit.plan, None
             if args.fit_out:
                 with Path(args.fit_out).open("x", encoding="utf-8") as fh:
@@ -622,6 +626,9 @@ def main(argv: list[str] | None = None) -> int:
     dr.add_argument("--plus-one", action="store_true",
                     help="--fit: also collect the explanations with one fault more than the fewest (a diagnostic)")
     dr.add_argument("--fit-out", metavar="PATH", help="--fit: write the explanations as JSON (new file)")
+    dr.add_argument("--random-check", type=int, metavar="N",
+                    help="--fit, when reproduced: N draws of one command's arrivals at random, off the option points; "
+                         "a draw that reproduces with fewer faults than the fewest found is reported (a check, not a proof)")
     dr.add_argument("--window", nargs="+", metavar="T",
                     help="--fit: also fit windows, 'auto' (around retries, failures, error replies, repeated "
                          "replies, late ACK or DONE, disconnects) or T0 T1; the whole-log fit is still reported")

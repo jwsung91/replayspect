@@ -64,6 +64,11 @@ def flat(res):
             for o in outs:
                 for combo in product(*others):
                     plus.add(frozenset(set().union(o, set(x.faults), *combo)))
+    for u in res.more:  # one fault more on a command outside the units
+        for x in u.plus_one:
+            for o in outs:
+                for combo in product(*sets):
+                    plus.add(frozenset(set().union(o, set(x.faults), *combo)))
     return minimal, plus
 
 
@@ -75,14 +80,18 @@ def brute(setup, usual=USUAL):
     dis = logged_disconnects(setup.log, "client", setup.until_us)
     r = _Runner(setup, ranges, dis, 10**9, usual)
     default = F._default_choice(setup, atts, r)
-    first = r.evaluate_all(default).first
-    cmds = F._commands(setup.log, "client", q)
-    ua = [a for a in atts if cmds.get(a.req_id, (0, 0, []))[2] and a.key[0] not in q and not F._sent_while_down(a, dis)]
+    ev0 = r.evaluate_all(default)
+    first = ev0.first
+    polls = F._poll_units(setup, ev0.fit)
+    # every command attempt, and the attempts of polls with a fault in the default
+    ua = [a for a in atts if (a.key[0] not in q or a.req_id in polls) and not F._sent_while_down(a, dis)]
     opts = [F._options(setup, first, a, default.delay(a.key), ranges, usual, dis, setup.log[-1].t_us - setup.tolerance_us)
             for a in ua]
     found = {}
     for combo in product(*opts):
         ev = r.evaluate_all(default.assign({a.key: (o[0], o[1]) for a, o in zip(ua, combo)}))
+        if ev.fit.unexplained:  # a receive nothing explains (a poll reply, which the match leaves out)
+            continue
         for fd, ok, _ in ev.results:
             if ok:
                 found[frozenset(fd)] = len(fd)
@@ -225,6 +234,8 @@ CASES = {
     "done lost, then a normal one": [f("s2c", "ACK", "r-0001", drop=True), f("s2c", "DONE", "r-0001", drop=True)],
     "fault on a retry": [f("c2s", "MOVE_UP", "r-0001", drop=True), f("c2s", "MOVE_UP", "r-0001", 1, dup_extra_us=300_000)],
     "two units": [f("c2s", "MOVE_UP", "r-0001", drop=True), f("s2c", "ACK", "r-0002", dup_extra_us=200_000)],
+    "poll request lost": [f("c2s", "STATUS", "s-0002", drop=True)],
+    "poll reply duplicated": [f("s2c", "STATUS_REPLY", "s-0002", dup_extra_us=300_000)],
 }
 
 
@@ -284,6 +295,84 @@ def test_no_random_arrival_explains_the_log_with_fewer_faults(name):
                 reproduced += 1
                 assert len(fd) >= res.min_faults, (name, fd)
     assert reproduced > 0  # the draws do reach reproducing explanations
+
+
+WIDE = Ranges((0, 5_000_000), (0, 5_000_000), (0, 5_000_000))
+
+
+def test_a_retry_answered_before_the_first_attempt_is_one_late_reply():
+    # R04 (testbed-02): the first ACK is 2.5 s late, so the client retries; the retry's ACK (40 ms
+    # late, under the limit with a late enough retry) is received first. One fault: the first ACK's
+    # delay. It needs the retry to arrive inside the window where both its delay and its ACK's are
+    # within the limit, paired with the first receive; the in-order bounds leave that window empty.
+    plan = FaultPlan.from_dict({"base": "fixed", "delays": [{**f("s2c", "ACK", "r-0001"), "delay_us": 2_500_000},
+                                                            {**f("s2c", "ACK", "r-0001", 1), "delay_us": 40_000}]})
+    setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000)), 14_000_000,
+                        tolerance_us=25_000)
+    assert [e.name for e in setup.log if e.req_id == "r-0001" and e.kind == "recv"] == ["ACK", "ACK", "DONE"]
+    res = fit_log(setup, WIDE, usual=USUAL)
+    assert res.reproduced and res.minimal_shown and res.min_faults == 1
+    assert res.determined() == {("delay", "s2c", "ACK", "r-0001", 0): 2_500_000}
+
+
+def test_the_random_arrival_check_finds_what_the_option_points_missed():
+    # The check on its own: given the fit R04 got before the fix (f* 2, the retry at the usual
+    # delay), draws of the retry's arrival find the 1-fault explanation. Given the fit, none is fewer.
+    from dataclasses import replace
+    plan = FaultPlan.from_dict({"base": "fixed", "delays": [{**f("s2c", "ACK", "r-0001"), "delay_us": 2_500_000},
+                                                            {**f("s2c", "ACK", "r-0001", 1), "delay_us": 40_000}]})
+    setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000)), 14_000_000,
+                        tolerance_us=25_000)
+    res = fit_log(setup, WIDE, usual=USUAL)
+    assert res.min_faults == 1
+    ok = F.random_arrivals(setup, res, WIDE, USUAL, 100)
+    assert ok["reproduced"] > 0 and ok["fewer"] == [] and ok["fewest"] == 1
+    old = replace(res, min_faults=2, choice=res.choice.with_delay(("MOVE_UP", "r-0001", 1), USUAL.c2s))
+    got = F.random_arrivals(setup, old, WIDE, USUAL, 100)
+    assert got["fewer"] and all(len(x) == 1 for x in got["fewer"])
+    assert "fewer than the fewest found: " in "\n".join(report_lines(replace(old, random_check=got)))
+
+
+def test_a_lost_poll_is_a_lost_request_or_a_lost_reply():
+    # A poll changes nothing on the device: a lost request and a lost reply look the same.
+    setup = short([f("c2s", "STATUS", "s-0002", drop=True)])
+    res = fit_log(setup, Ranges.of(setup), usual=USUAL)
+    assert res.reproduced and res.minimal_shown and res.min_faults == 1 and res.n_explanations == 2
+    assert res.determined() == {}
+    (group, alts), = res.undetermined()
+    assert group == "s-0002"
+    assert sorted(k for a in alts for k in a) == [("drop", "c2s", "STATUS", "s-0002", 0),
+                                                  ("drop", "s2c", "STATUS_REPLY", "s-0002", 0)]
+
+
+def test_a_late_poll_reply_is_a_late_request_or_a_late_reply_never_a_lost_request():
+    # Poll replies are left out of the match, so a lost request would pass with the logged reply
+    # unexplained. The search does not take it: the link cannot invent a reply (testbed-02 S13).
+    plan = FaultPlan.from_dict({"base": "fixed", "delays": [{**f("s2c", "STATUS_REPLY", "s-0002"), "delay_us": 300_000}]})
+    setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=2, until_us=14_000_000)), 14_000_000,
+                        tolerance_us=25_000)
+    res = fit_log(setup, WIDE, usual=USUAL)
+    assert res.reproduced and res.min_faults == 1 and res.determined() == {}
+    (group, alts), = res.undetermined()
+    assert group == "s-0002"
+    assert sorted(k for a in alts for k in a) == [("delay", "c2s", "STATUS", "s-0002", 0),
+                                                  ("delay", "s2c", "STATUS_REPLY", "s-0002", 0)]
+
+
+def test_one_fault_more_is_searched_outside_the_anomalous_commands():
+    # S03 (testbed-02): a request 40 ms late is absorbed (f* 0, nothing anomalous, no unit). The
+    # f*+1 level still searches every command, and the late request is there.
+    plan = FaultPlan.from_dict({"base": "fixed", "delays": [{**f("c2s", "MOVE_DOWN", "r-0002"), "delay_us": 40_000}]})
+    setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=3, until_us=20_000_000)), 20_000_000,
+                        tolerance_us=25_000)
+    res = fit_log(setup, Ranges.of(setup), usual=USUAL, plus_one=True)
+    assert res.reproduced and res.min_faults == 0 and res.units == [] and res.plus_one_shown
+    _, plus = flat(res)
+    late = [x for x in plus if {k[:4] for k in x} == {("delay", "c2s", "MOVE_DOWN", "r-0002")}]
+    assert late and res.n_plus_one == len(plus)
+    vals = [v for u in res.more for x in u.plus_one for k, v in x.faults.items() if k[0] == "delay" and k[1] == "c2s"
+            and k[3] == "r-0002"]
+    assert any(abs(v - 40_000) <= 25_000 for v in vals)
 
 
 def test_a_request_in_flight_when_a_logged_disconnect_begins_is_lost_with_it():
@@ -374,12 +463,14 @@ def test_cli_drive_fit(tmp_path, capsys):
     assert main(["ingest", str(log), "--rules", str(RULES), "--out", str(trace)]) == 0
     capsys.readouterr()
     args = ["drive", str(trace), "--until", "14s", "--fit", "--tolerance", "25ms", "--usual-delay", "10ms", "10ms"]
-    assert main(args + ["--plus-one", "--fit-out", str(out_json), "--branches"]) == 0
+    assert main(args + ["--plus-one", "--fit-out", str(out_json), "--branches", "--random-check", "30"]) == 0
     out = capsys.readouterr().out
     assert "fit: reproduced" in out and "fewest faults: 1" in out and "not determined" in out
     assert "attempts with a branch point" in out
+    assert "random arrivals (a check, not a proof): 30 draws" in out and "fewer than the fewest found: 0" in out
     d = json.loads(out_json.read_text())
     assert d["min_faults"] == 1 and d["explanations"] == 2 and d["minimal_shown"] and d["undetermined"]
+    assert d["random_check"]["draws"] == 30 and d["random_check"]["fewer"] == []
     assert main(args + ["--fit-out", str(out_json)]) == 2  # exists: not overwritten
     assert main(["drive", str(trace), "--until", "14s", "--fit", "--usual-delay", "10s", "10ms"]) == 2
     assert main(["drive", str(trace), "--fit", "--reconstruct"]) == 2
