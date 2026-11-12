@@ -306,11 +306,17 @@ model's. Client defects are not offered: in driven replay the client is the scri
 - **The accusation is a set.** Every defect model with the fewest faults among those that explain
   with fewer is named: `defect suspected: M1 or M2`. The log does not choose between them, as with
   alternative faults.
-- **Undecided:** a comparison where either fit is incomplete or not settled. It is listed apart and
-  is not an accusation.
-- The report gives each model's `f*` (or status), the verdict, and the difference in faults (none
-  when the correct model is unexplained). `--fit-out` adds `models`, with each model's whole fit
-  under `fits`.
+- **A defect model that does not reproduce is not a candidate:** neither one that ends
+  `unexplained`, nor one the run cap ends before anything reproduced. The second is a practical rule,
+  not a proof: more runs might reproduce it with fewer faults. The report names every fit the cap
+  ended (`ended by the run cap: ...`), so a reader sees what a "no accusation" rests on.
+- **Undecided:** a defect model that reproduced but is not settled (its minimal set is not shown, or a
+  random draw found fewer faults), or one that reproduced while the correct model's fit is not
+  settled (and not unexplained). Undecided is not an accusation. With no accusation and an
+  undecided model, the verdict is `undecided`.
+- The report gives each model's `f*` (or status), the verdict, the difference in faults (none when
+  the correct model is unexplained) and the fits the cap ended. `--fit-out` adds `models`, with
+  `capped` and `capped_count` and each model's whole fit under `fits`.
 - **What it does not see:** a defect that shows only in the content of poll replies (for the lift,
   M5) never changes the fewest faults, because poll replies are not compared.
 - **What one log cannot tell:** a device that skips a reply once looks exactly like a lost reply. The
