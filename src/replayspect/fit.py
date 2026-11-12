@@ -751,7 +751,8 @@ class _Eval:
 
     def drop(self) -> None:
         """Drop what is large and can be rebuilt: the trace, the plan and the tied pairings' plans (the
-        check runs are done, their results are in ``results`` and ``fit.match``)."""
+        check runs are done, their results are in ``results`` and ``fit.match``). It changes this
+        ``fit`` in place, so a ``Fit`` handed out of the runner must be a copy (``replace``)."""
         self.trace = None
         self.fit.plan, self.fit.alternatives = None, []  # type: ignore[assignment]
 
@@ -802,7 +803,7 @@ class _Runner:
 
     def evaluate(self, choice: Choice) -> tuple[Fit, Trace] | None:
         ev = self.evaluate_all(choice)
-        return None if ev is None else (ev.whole().fit, ev.first)
+        return None if ev is None else (replace(ev.whole().fit), ev.first)
 
     def evaluate_all(self, choice: Choice) -> _Eval | None:
         """One run, plus a check run per tied pairing when no receive (polls left out) is unexplained."""
@@ -1393,8 +1394,8 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
             combos = (1, 1) if final is not None and any(ok for _, ok, _ in final.results) else (0, 1)
 
     if final is None:
-        return result("incomplete", ev0.whole().fit, units=units, incomplete_reason="cap")
-    fit = final.whole().fit
+        return result("incomplete", replace(ev0.whole().fit), units=units, incomplete_reason="cap")
+    fit = replace(final.whole().fit)  # a copy: a later drop of the cached entry must not reach the result
     reproduced = any(ok for _, ok, _ in final.results) and all(u.explanations for u in units)
     unit_ids = set().union(*(set(u.req_ids) for u in units)) if units else set()
     if reproduced:

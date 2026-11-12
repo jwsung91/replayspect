@@ -500,6 +500,20 @@ def test_dropped_traces_are_rebuilt_and_change_nothing(monkeypatch):
     assert all(e.fit.plan is None for e in r.cache.values() if e.trace is None)
 
 
+def test_a_dropped_cache_entry_does_not_reach_the_returned_result(monkeypatch):
+    # The final choice's entry can be dropped by the runs that follow it (here the f*+1 search outside
+    # the units). Dropping clears that entry's plan, so the result must hold a copy, not the entry's
+    # own Fit (on all 87 development logs this changed 81 results' plan to None before the fix).
+    plan = FaultPlan.from_dict({"base": "fixed", "delays": [{**f("c2s", "MOVE_DOWN", "r-0002"), "delay_us": 40_000}]})
+    setup = DrivenSetup(LIFT, logged(run_lift(1, plan=plan, n_commands=3, until_us=20_000_000)), 20_000_000,
+                        tolerance_us=25_000)
+    full = fit_log(setup, Ranges.of(setup), usual=USUAL, plus_one=True)
+    monkeypatch.setattr(F, "TRACES_KEPT", 1)
+    lean = fit_log(setup, Ranges.of(setup), usual=USUAL, plus_one=True)
+    assert lean.more and lean.fit.plan is not None and lean.fit.plan == full.fit.plan
+    assert lean.to_dict() == full.to_dict()
+
+
 # -- device models -----------------------------------------------------------------------------
 
 
