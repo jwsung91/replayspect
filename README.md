@@ -53,7 +53,8 @@ Implemented:
 - Hardware testbed for the lift (`examples/testbed-uno`): Arduino Uno firmware
   checked against the model, and a client and fault link for a Jetson Orin;
   hardware runs without faults (stage 1) and with injected faults
-  ([docs/experiments/testbed-01.md](docs/experiments/testbed-01.md))
+  ([docs/experiments/testbed-01.md](docs/experiments/testbed-01.md),
+  [docs/experiments/testbed-02.md](docs/experiments/testbed-02.md))
 - Driven replay of a client-side log: `drive` replays the log as a script,
   simulates the device and needs no seed; `drive --reconstruct` searches for
   the fault plan; `drive --fit` reports every explanation with the fewest link
