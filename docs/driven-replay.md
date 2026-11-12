@@ -144,9 +144,12 @@ direction).
 **Identity.** A fault is identified by its kind and `(dir, msg, req_id, k)`. Its value (the delay,
 or the extra delay of a duplicate) is not part of the identity. Two explanations with the same
 faults are the same explanation.
-- The values they differ in (another reply pairing, another arrival point) are kept as a range per
-  fault, lowest to highest, for example `delay s2c ACK r-0001 k0 2.035-2.510s`. The value is part
-  of what the log leaves open.
+- The values they differ in (another reply pairing, another arrival point) are kept as the range
+  seen per fault, lowest to highest, for example `delay s2c ACK r-0001 k0 2.035-2.510s`. The value
+  is part of what the log leaves open.
+- **The range is what was seen, not what is possible.** It spans the values in the minimal
+  explanations found, at the option points tried. A value outside it is not shown to be
+  impossible, and neither is one between the points.
 - Each end of a range is a value that reproduced the whole log. Up to 4 other arrival choices
   with the same faults are run on the whole log for this.
 - The range is per fault. The ends of two faults need not go together: the low end of one may
@@ -273,8 +276,8 @@ caps the branch check.
 - runs used.
 
 `--fit-out PATH` writes all of this as JSON, with every unit's explanations. Fault lists are under
-`common` and `alternatives`; each fault has `value_range_us` (`[lowest, highest]`, or null for a
-drop).
+`common` and `alternatives`; each fault has `seen_range_us` (`[lowest, highest]` as seen in the
+explanations found, or null for a drop).
 
 **Observed slow round trips.** For each request attempt (polls left out), the fit looks at the gap
 from its send to the first `ACK` of that id received before the next attempt.
@@ -291,6 +294,29 @@ replies allow, or anywhere in the range, sometimes with a duplicate. The other a
 reported plan's arrivals. A draw that reproduces the log with fewer faults than `f*` means the option
 points missed a smaller explanation, and the report counts such draws. It works on any log, real
 ones included. It is a check, not a proof: no draw finding fewer does not show `f*` is the minimum.
+
+**Device models (`--models M1,M2,...` or `--models device`).** The log is also fitted under each
+listed device defect model of the system (its published defects whose description starts with
+`device:`), with the same settings, and the fewest faults each needs is compared with the correct
+model's. Client defects are not offered: in driven replay the client is the script.
+- **A defect model explains with fewer faults** when its fit is settled (reproduced, minimal set
+  complete, and with `--random-check` no draw found fewer) and the correct model's fit is
+  unexplained, or settled with more faults.
+- **A tie is no accusation.** A defect is a heavier claim than a link fault.
+- **The accusation is a set.** Every defect model with the fewest faults among those that explain
+  with fewer is named: `defect suspected: M1 or M2`. The log does not choose between them, as with
+  alternative faults.
+- **Undecided:** a comparison where either fit is incomplete or not settled. It is listed apart and
+  is not an accusation.
+- The report gives each model's `f*` (or status), the verdict, and the difference in faults (none
+  when the correct model is unexplained). `--fit-out` adds `models`, with each model's whole fit
+  under `fits`.
+- **What it does not see:** a defect that shows only in the content of poll replies (for the lift,
+  M5) never changes the fewest faults, because poll replies are not compared.
+- **What one log cannot tell:** a device that skips a reply once looks exactly like a lost reply. The
+  defect model needs one fault fewer, and a real loss at that place gives the same log. Telling them
+  apart needs repeated runs (a defect fails the same way every time, a loss does not), which this
+  comparison does not do.
 
 **More than one violation outcome.** A client log may fit explanations that differ inside the
 device: one with a contract violation and one without. Two development logs did exactly that.

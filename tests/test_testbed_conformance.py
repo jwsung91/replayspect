@@ -1,9 +1,10 @@
-"""WP5c stage 1: the Uno firmware's state machine (lift_device.h) against the Python lift model.
+"""WP5c: the Uno firmware's state machine (lift_device.h) against the Python lift model.
 
 The header is compiled natively with the harness and fed the same timed message sequences as the
-model (src/replayspect/sut/lift.py, no defect). Replies and state changes must match. Scripts
-avoid an input arriving in the same millisecond as a timer: there the firmware runs timers first
-and the model runs what it scheduled first (a documented difference).
+model (src/replayspect/sut/lift.py). Replies and state changes must match, with no defect and with
+each defect switch (``-DLIFT_DEFECT=N`` against the model's mutant MN, stage 3). Scripts avoid an
+input arriving in the same millisecond as a timer: there the firmware runs timers first and the
+model runs what it scheduled first (a documented difference).
 """
 
 import shutil
@@ -34,6 +35,8 @@ SCRIPTS = {
         (7000, "MOVE_DOWN r-0003"), (8000, "MOVE_UP r-0004"),    # opposite while moving: illegal
         (9001, "STATUS s-0002"), (15000, "END")],
     "two_new_ids_within_50ms": [(0, "MOVE_UP r-0001"), (30, "MOVE_UP r-0002"), (6000, "END")],
+    "old_ids_again": [(0, "MOVE_UP r-0001"), (4000, "MOVE_DOWN r-0002"), (8000, "MOVE_UP r-0001"),
+                      (8500, "MOVE_DOWN r-0002"), (9000, "MOVE_UP r-0003"), (13000, "END")],
     "six_commands_with_polls": [x for n in range(6) for x in (
         (n * 7000 + 13, f"{'MOVE_UP' if n % 2 == 0 else 'MOVE_DOWN'} r-{n + 1:04d}"),
         (n * 7000 + 1007, f"STATUS s-{3 * n + 1:04d}"), (n * 7000 + 2507, f"STATUS s-{3 * n + 2:04d}"),
@@ -41,12 +44,28 @@ SCRIPTS = {
 }
 
 
+#: The defect switches: the public device-side lift defects (M3 needs disconnects, which serial lacks).
+DEFECTS = (1, 2, 4, 5, 9, 10, 11)
+
+
 @pytest.fixture(scope="module")
-def harness(tmp_path_factory):
-    out = tmp_path_factory.mktemp("fw") / "harness"
-    subprocess.run([CXX, "-std=c++11", "-Wall", "-Wextra", "-Werror", "-O1", "-o", str(out),
-                    str(FW / "harness" / "harness.cpp")], check=True)
-    return out
+def build(tmp_path_factory):
+    """The harness built with ``-DLIFT_DEFECT=n`` (0: none), compiled once per defect."""
+    d, built = tmp_path_factory.mktemp("fw"), {}
+
+    def get(n=0):
+        if n not in built:
+            out = d / f"harness{n}"
+            subprocess.run([CXX, "-std=c++11", "-Wall", "-Wextra", "-Werror", "-O1", f"-DLIFT_DEFECT={n}", "-o",
+                            str(out), str(FW / "harness" / "harness.cpp")], check=True)
+            built[n] = out
+        return built[n]
+    return get
+
+
+@pytest.fixture(scope="module")
+def harness(build):
+    return build(0)
 
 
 def firmware(harness, script):
@@ -74,12 +93,12 @@ class _Channel:
         self.outs.append((self.sched.now_us // 1000, f"{msg.name} {msg.req_id}{fields}"))
 
 
-def model(script):
+def model(script, mutants=frozenset()):
     sched = Scheduler(0)
     trace = Trace(lambda: sched.now_us)
     outs = []
     ch = _Channel(sched, outs)
-    LiftDevice(sched, trace, ch, frozenset())
+    LiftDevice(sched, trace, ch, mutants)
     end = 0
     for t, line in script:
         if line == "END":
@@ -100,10 +119,61 @@ def test_firmware_matches_the_model(harness, name):
     assert fw_states == m_states
 
 
+@pytest.mark.parametrize("n", DEFECTS)
+@pytest.mark.parametrize("name", sorted(SCRIPTS))
+def test_each_defect_switch_matches_the_model_mutant(build, n, name):
+    fw_outs, fw_states, _ = firmware(build(n), SCRIPTS[name])
+    m_outs, m_states = model(SCRIPTS[name], frozenset({f"M{n}"}))
+    assert fw_outs == m_outs
+    assert fw_states == m_states
+
+
+#: Where each defect's own branch changes what the device does, by script: (time ms, request id) of
+#: "defect fired". Later effects of an earlier firing (a stored result it caused) are not marked.
+FIRED = {
+    (1, "retries_and_repeats"): [(20, "r-0001"), (1500, "r-0001"), (4000, "r-0001"), (5200, "r-0002")],
+    # not recorded until DONE or ERROR: the repeat runs again and its ERROR is stored, so the
+    # repeat at 1500 is answered ERROR from the table; a later effect, not the defect's branch again
+    (2, "retries_and_repeats"): [(20, "r-0001")],
+    (4, "retries_and_repeats"): [(8050, "r-0004")],  # MOVE_UP taken while moving down
+    (5, "retries_and_repeats"): [(2001, "s-0001"), (9001, "s-0002")],  # STATUS during a move
+    (9, "retries_and_repeats"): [(20, "r-0001")],  # within the 50 ms before execution
+    (10, "retries_and_repeats"): [(5200, "r-0002")],  # a refused id again: DONE
+    (11, "retries_and_repeats"): [],  # every repeat is of the most recent id
+    (11, "old_ids_again"): [(8000, "r-0001"), (8500, "r-0002")],
+    (1, "old_ids_again"): [(8000, "r-0001"), (8500, "r-0002")],
+    (2, "basic"): [], (4, "basic"): [], (10, "six_commands_with_polls"): [],
+}
+
+
+@pytest.mark.parametrize("n,name", sorted(FIRED))
+def test_the_device_log_says_where_the_defect_fired(build, n, name):
+    _, _, raw = firmware(build(n), SCRIPTS[name])
+    lines = raw.splitlines()
+    assert lines[1] == f"0 LOG build defect=M{n}"
+    got = [(int(t), body.split()[-1]) for t, kind, body in (x.split(" ", 2) for x in lines)
+           if kind == "LOG" and body.startswith("defect fired ")]
+    assert got == FIRED[(n, name)]
+    assert all(f"LOG defect fired M{n} " in x for x in lines if "defect fired" in x)
+
+
+def test_no_defect_build_never_fires(harness):
+    for name in SCRIPTS:
+        assert "defect" not in firmware(harness, SCRIPTS[name])[2].split("\n", 2)[2]
+
+
+def test_defect_3_and_unknown_numbers_do_not_build(tmp_path):
+    for n in (3, 6, 12):
+        res = subprocess.run([CXX, "-std=c++11", f"-DLIFT_DEFECT={n}", "-o", str(tmp_path / "x"),
+                              str(FW / "harness" / "harness.cpp")], capture_output=True, text=True)
+        assert res.returncode != 0 and "LIFT_DEFECT" in res.stderr
+
+
 def test_firmware_says_ready_with_its_build_options_and_logs_its_side(harness):
     _, _, raw = firmware(harness, SCRIPTS["basic"])
     lines = raw.splitlines()
-    assert lines[0] == "0 OUT READY log=1 defect=none"
+    assert lines[0] == "0 OUT READY log=1"  # never the defect: READY reaches the client log
+    assert lines[1] == "0 LOG build defect=none"
     assert "0 LOG recv MOVE_UP r-0001" in lines and "50 LOG effect motor_start r-0001 dir=up" in lines
     assert "3050 LOG state UP r-0001 from=MOVING_UP on=arrived" in lines
 
@@ -127,6 +197,6 @@ def test_log_off_build_keeps_replies_and_errors(tmp_path):
                    check=True)
     raw = subprocess.run([str(exe)], input="0 MOVE_UP r-0001\n10 MOVE_UP\nEND 4000\n", capture_output=True,
                          text=True, check=True).stdout.splitlines()
-    assert raw[0] == "0 OUT READY log=0 defect=none"
-    assert [r for r in raw if " LOG " in r] == ["10 LOG error no_req_id MOVE_UP"]
+    assert raw[0] == "0 OUT READY log=0"
+    assert [r for r in raw if " LOG " in r] == ["0 LOG build defect=none", "10 LOG error no_req_id MOVE_UP"]
     assert "3050 OUT DONE r-0001" in raw

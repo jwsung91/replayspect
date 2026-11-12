@@ -215,6 +215,19 @@ def _drive(args: argparse.Namespace) -> int:
 
             if args.plan or args.reconstruct:
                 raise ValueError("--fit cannot be combined with --plan or --reconstruct")
+            models = []
+            if args.models:
+                from replayspect.fit import device_models
+
+                if args.mutant or args.variant:
+                    raise ValueError("--models compares against the correct model: not with --mutant or --variant")
+                offered = device_models(system)
+                models = offered if args.models == "device" else [m.strip() for m in args.models.split(",") if m.strip()]
+                bad = [m for m in models if m not in offered]
+                if bad or not models:
+                    raise ValueError(f"--models: {', '.join(bad) or 'none given'} not among the published device "
+                                     f"defects ({', '.join(offered) or 'none'}); client defects are not compared, "
+                                     "the client is the script")
             r = Ranges.of(setup)
             ranges = Ranges(tuple(parse_time_us(x) for x in args.c2s_delay) if args.c2s_delay else r.c2s,
                             tuple(parse_time_us(x) for x in args.s2c_delay) if args.s2c_delay else r.s2c,
@@ -253,6 +266,19 @@ def _drive(args: argparse.Namespace) -> int:
                 from replayspect.fit import random_arrivals
 
                 fitres.random_check = random_arrivals(setup, fitres, ranges, fitres.usual, args.random_check)
+            if models:
+                from dataclasses import replace as _replace
+
+                from replayspect.fit import judge_models, random_arrivals
+
+                others = {}
+                for m in models:
+                    ms = _replace(setup, mutants=(m,))
+                    r_m = fit_log(ms, ranges, args.fit_runs, usual=usual, plus_one=args.plus_one)
+                    if args.random_check and r_m.reproduced:
+                        r_m.random_check = random_arrivals(ms, r_m, ranges, r_m.usual, args.random_check)
+                    others[m] = r_m
+                fitres.models = judge_models(fitres, others)
             plan, res = fitres.fit.plan, None
             if args.fit_out:
                 with Path(args.fit_out).open("x", encoding="utf-8") as fh:
@@ -629,6 +655,10 @@ def main(argv: list[str] | None = None) -> int:
     dr.add_argument("--random-check", type=int, metavar="N",
                     help="--fit, when reproduced: N draws of one command's arrivals at random, off the option points; "
                          "a draw that reproduces with fewer faults than the fewest found is reported (a check, not a proof)")
+    dr.add_argument("--models", metavar="M1,M2,...",
+                    help="--fit: also fit the log under each listed device defect model (or 'device': every "
+                         "published device-side defect) and compare the fewest faults each needs with the correct "
+                         "model's; a defect is accused only with fewer faults, and tied defects are named together")
     dr.add_argument("--window", nargs="+", metavar="T",
                     help="--fit: also fit windows, 'auto' (around retries, failures, error replies, repeated "
                          "replies, late ACK or DONE, disconnects) or T0 T1; the whole-log fit is still reported")

@@ -6,7 +6,7 @@ ingests and reproduces. The work order is
 
 | Part | Runs on | Files |
 | --- | --- | --- |
-| Device: the `lift.v0` state machine, no defect | Arduino Uno | `firmware/lift_uno/` (`lift_device.h` is plain C++; `lift_uno.ino` wraps serial I/O and `millis()`) |
+| Device: the `lift.v0` state machine, no defect unless built with one (stage 3) | Arduino Uno | `firmware/lift_uno/` (`lift_device.h` is plain C++; `lift_uno.ino` wraps serial I/O and `millis()`) |
 | Client: commands, retries, timeouts, polling, the log | Jetson Orin | `host/client.py` |
 | Link: passes lines through (stage 1) and records what it did | Jetson Orin | `host/fault_link.py` |
 | Rules to ingest the client log | development machine | `rules/testbed-client.yaml` |
@@ -31,8 +31,10 @@ is lit while the lift moves.
 | --- | --- |
 | request (client to device) | `MOVE_UP r-0001`, `STATUS s-0003` |
 | reply (device to client) | `ACK r-0001`, `DONE r-0001`, `ERROR r-0002 reason=illegal`, `STATUS_REPLY s-0003 state=MOVING_UP` |
-| boot (device) | `READY log=1 defect=none`: once after reset, with the build options |
+| boot (device) | `READY log=1`: once after reset, with the device log option. It never names a defect: `READY` reaches the client log |
+| boot, device log | `# 0 build defect=none` (or `defect=M4`): the build's defect switch, written whether or not the device log is on |
 | device log (device) | `# 12395 state MOVING_UP r-0001 from=DOWN on=MOVE_UP`: the device clock (`millis()`), then a trace-like event |
+| defect fired, device log | `# 8050 defect fired M4 r-0004`: the defect's own branch changed what the device did (stage 3; always written) |
 
 Opening the port resets the Uno, so every run starts in `DOWN`. The client sends nothing before
 `READY`. The link sends `#` lines to the device log file, with the Orin receive time in front, and
@@ -64,13 +66,15 @@ Where the firmware cannot follow the model exactly:
 5. **The result table and the queue are bounded** (table above). Overflow is always logged.
 6. **No connection on the device side.** Disconnects are emulated by the link (stage 2), and the
    device keeps running. The model's device also does nothing on reconnect when no defect is on,
-   so the two behave the same.
+   so the two behave the same. For the same reason there is no switch for M3 (resend the last
+   `DONE` after a reconnect).
 
 The conformance test (`tests/test_testbed_conformance.py`) compiles `lift_device.h` natively and
 checks that its replies and state changes equal the Python model's. The scripts cover retries,
 repeats after `DONE` and after a refusal, polls during a move, an opposite command while moving,
-two new ids within 50 ms, unknown messages, and six commands with polls. It needs only a C++
-compiler, not the board.
+two new ids within 50 ms, repeats of older ids, unknown messages, and six commands with polls. It
+runs every script with no defect and with each defect switch against the model's mutant, and
+checks where the device log says each defect fired. It needs only a C++ compiler, not the board.
 
 ## A run is invalid when
 
@@ -191,7 +195,30 @@ ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0062", ENV{ID_MM_DEVICE_IGNORE}="1"
 Put it in `/etc/udev/rules.d/`, reload udev and replug the board. Use your board's vendor and
 product ids from `lsusb`.
 
+## Stage 3: the defect switch
+
+`-DLIFT_DEFECT=N` builds the public device-side lift defect MN of the model
+(`src/replayspect/sut/lift.py`): 1, 2, 4, 5, 9, 10 or 11. The default 0 is no defect; any other number
+does not compile. Compile it like the device log option:
+
+```bash
+arduino-cli compile --fqbn arduino:avr:uno \
+  --build-property "compiler.cpp.extra_flags=-DLIFT_DEFECT=4" examples/testbed-uno/firmware/lift_uno
+```
+
+- **The answer stays out of the client log.** `READY` does not name the defect. The build names it
+  only in the device log (`build defect=M4`). The client also leaves out any `defect=` field from
+  an older build's `READY` when it writes its header.
+- **Where it fired.** Each time the defect's own branch changes what the device does, the device
+  log gets `defect fired MN REQ_ID`, after any reply of that step. Later effects of an earlier
+  firing, such as a stored result it caused, are not marked again. A run whose device log has no
+  such line did not touch the defect.
+- **The build line and the fired lines are written even with the device log off,** like error
+  lines. With the log on (the testbed's setting), they add a line on the serial link where they
+  occur.
+- **Memory:** the switch adds an 8-entry table of the ids a correct device would know, about 130 B
+  of RAM. Not yet compiled for the board.
+
 ## Not yet
 
-- **Stage 3:** a firmware defect switch.
 - **Two sources:** the client log and the device log together, with the clock between them estimated.

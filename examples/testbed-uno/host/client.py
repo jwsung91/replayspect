@@ -98,7 +98,9 @@ class Client:
     # -- life cycle ---------------------------------------------------------------------------
 
     def start(self, now: int, ready_line: str) -> None:
-        self.firmware = " ".join(ready_line.split()[1:]) or "unknown"
+        # the build options READY names, minus any defect field: an older build named its defect
+        # there, and the client log must not carry the answer (stage 3)
+        self.firmware = " ".join(t for t in ready_line.split()[1:] if not t.startswith("defect=")) or "unknown"
         self.write(f"# testbed client: firmware {self.firmware}; think_seed={self.seed}; plan={self.link.plan_id}; "
                    f"commands={self.commands}; run_s={self.run_us // 1_000_000}; started={self.clock.stamp(now)}", now)
         self.started_at = now
