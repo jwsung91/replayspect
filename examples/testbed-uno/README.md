@@ -179,7 +179,8 @@ vocabulary:
 **Timestamps.** Client log times are written in microseconds. The accuracy is coarser: USB serial
 delivers bytes in bursts, and the client loop polls about every half millisecond.
 
-**Result:** [docs/experiments/testbed-01.md](../../docs/experiments/testbed-01.md) (39 runs).
+**Results:** [docs/experiments/testbed-01.md](../../docs/experiments/testbed-01.md) (39 runs) and
+[docs/experiments/testbed-02.md](../../docs/experiments/testbed-02.md) (48 runs, the minimal-explanation fit).
 **Operator note:** on Ubuntu, ModemManager probes new `ttyACM` devices. During testbed-01 the
 board was silent until a udev rule told ModemManager to ignore it:
 

@@ -231,3 +231,13 @@ A fault is a drop, a duplicate, or a delay above the usual delay plus the tolera
   - Random off-grid arrivals never explain a short log with fewer faults; this is not a proof.
 - **testbed-01.** The 39 logs are now development material, not a measurement. The measurement is
   testbed-02, registered separately.
+
+Hardware experiment testbed-02 (`docs/experiments/testbed-02.md`): 48 real client logs from the
+Uno lift (3 controls, 34 single, 5 retry, 3 deliberately non-minimal, 3 mixed), fitted with the
+minimal-explanation fit at `20cb5a0`, unchanged during and after the runs. All 48 reproduce with
+the minimal set complete, and no log is called unexplained (the main indicator). Where the truth
+was not predicted to miss, it is in the set in 36 of 37. Determined command faults are real in
+17 of 21; poll-request faults read as reply faults, as expected. In R04 the search missed a
+1-fault explanation that lies between its arrival points and reported `f*` 2. The `f*+1` level is
+searched only inside anomalous commands. Slow round trips list the 40 ms delays that the minimal
+set absorbs.
