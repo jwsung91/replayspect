@@ -59,7 +59,9 @@ Implemented:
   simulates the device and needs no seed; `drive --reconstruct` searches for
   the fault plan; `drive --fit` reports every explanation with the fewest link
   faults, split into determined faults and undetermined alternatives, plus the
-  slow round trips observed in the log ([docs/driven-replay.md](docs/driven-replay.md))
+  slow round trips observed in the log; a lost poll is reported as a lost request
+  or a lost reply; `--random-check` tests the fewest-faults claim on any log with
+  random arrivals ([docs/driven-replay.md](docs/driven-replay.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with

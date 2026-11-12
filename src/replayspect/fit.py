@@ -34,19 +34,23 @@ range.
 
 **Search.** The search units are the anomalous commands (the rule of :func:`anomaly_windows`:
 retry, error, error reply, the same reply twice, late ``ACK``, late ``DONE``), plus any command
-with a receive the default leaves unexplained. Attempts of other commands keep the default. In
-each unit, in time order, each attempt has these options: the default; dropped; arriving at its
-minimum delay, just after a device event, at an *anchored* time (where a logged reply of its
-request would have the usual delay), or just after a logged disconnect begins; duplicated, with
-the copy anchored the same way. Choices are run in order of how many attempts leave the default.
-A choice whose request-side faults alone exceed the fewest faults found so far is skipped (the
-reply side can only add faults), so when the unit's choices are exhausted every explanation with
-the fewest faults in that option space has been run. With ``plus_one`` the search keeps going to
-one fault more, as a diagnostic. Each unit is judged on the log up to just after the command,
-from its first send, with the earlier units fixed at their first minimal explanation. The units'
-sets are then combined and the combinations are run on the whole log (all of them when there are
-at most :data:`COMBINATIONS_RUN`, otherwise the first); if one fails, the units are searched
-together.
+with a receive the default leaves unexplained, plus any poll with a fault in the default (a poll
+does not change the device, so its lost request and lost reply tie and both are reported). Attempts
+of other commands and polls keep the default. In each unit, in time order, each attempt has these
+options: the default; dropped; arriving at its minimum delay, just after a device event, at an
+*anchored* time (where a logged reply of its request would have the usual delay), at the time
+nearest the usual delay where both its delay and a logged reply's delay are within the limit
+(whichever send that reply is paired with), or just after a logged disconnect begins; duplicated,
+with the copy anchored the same way. Choices are run in order of how many attempts leave the
+default. A choice whose request-side faults alone exceed the fewest faults found so far is skipped
+(the reply side can only add faults), so when the unit's choices are exhausted every explanation
+with the fewest faults in that option space has been run. With ``plus_one`` the search keeps going
+to one fault more, as a diagnostic, and every command outside the units with no fault is then
+searched for one fault more on the whole log (:func:`_one_more`). Each unit is judged on the log up
+to just after the command, from its first send, with the earlier units fixed at their first minimal
+explanation. The units' sets are then combined and the combinations are run on the whole log (all
+of them when there are at most :data:`COMBINATIONS_RUN`, otherwise the first); if one fails, the
+units are searched together.
 
 **Report.** The fewest faults ``f*``, the number of explanations, the faults common to all of them
 ("determined") and, per request id, the alternatives ("not determined"). Apart from the fit, the
@@ -55,9 +59,10 @@ the limit, computed from the log alone (:func:`slow_round_trips`).
 
 **What "minimal" does not mean.** The fewest faults is a choice, not the truth: a log whose real
 faults are not the fewest is always misread. "Every minimal explanation" holds within the option
-points above, not over every real-valued timing. A duplicate copy is placed only at anchored
-times, on the reasoning that a copy matters through the reply it causes; a device whose copies
-change state would need more points.
+points above, not over every real-valued timing; :func:`random_arrivals` checks it with draws off
+those points, which is not a proof. A duplicate copy is placed only at anchored times, on the
+reasoning that a copy matters through the reply it causes; a device whose copies change state would
+need more points.
 
 **What "explained by loss" does not mean.** A device that fails to send a reply looks exactly like
 a reply lost on the link. A log explained with drops is not shown to be free of defects.
@@ -69,6 +74,7 @@ attempt has a branch point (the device's behaviour depends on an arrival time th
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field, replace
 from itertools import combinations, product
 from typing import Any, Iterator, Sequence
@@ -259,6 +265,10 @@ class FitResult:
     combinations: tuple[int, int] = (0, 0)  # (run on the whole log and reproduced, total)
     joint: bool = False  # the units were searched together after a combination failed
     slow: list[dict[str, Any]] = field(default_factory=list)  # observed slow round trips (from the log)
+    #: commands outside the units searched for one fault more (``plus_one``); each has the empty explanation
+    more: list[UnitSet] = field(default_factory=list)
+    choice: Choice | None = None  # the arrival choice of the reported plan (the first explanation)
+    random_check: dict[str, Any] | None = None  # :func:`random_arrivals`, when run
 
     @property
     def reproduced(self) -> bool:
@@ -275,7 +285,8 @@ class FitResult:
 
     @property
     def plus_one_shown(self) -> bool:
-        return self.plus_one and self.minimal_shown and all(u.plus_one_shown for u in self.units)
+        return (self.plus_one and self.minimal_shown and all(u.plus_one_shown for u in self.units)
+                and all(u.plus_one_shown for u in self.more))
 
     @property
     def n_explanations(self) -> int:
@@ -297,7 +308,10 @@ class FitResult:
                 if j != i:
                     n *= max(1, len(v.explanations))
             total += n
-        return total
+        rest = max(1, len(self.outside))
+        for v in self.units:
+            rest *= max(1, len(v.explanations))
+        return total + sum(len(u.plus_one) for u in self.more) * rest
 
     def determined(self) -> dict[Fault, int | None]:
         """Faults in every minimal explanation, with the first explanation's values."""
@@ -359,8 +373,12 @@ class FitResult:
                        "plus_one_shown": u.plus_one_shown, "exhausted": u.exhausted, "choices_run": u.choices_run,
                        "explanations": [fl(x.faults) for x in u.explanations],
                        "plus_one": [fl(x.faults) for x in u.plus_one]} for u in self.units],
+            "plus_one_outside_units": [{"req_ids": list(u.req_ids), "plus_one_shown": u.plus_one_shown,
+                                        "choices_run": u.choices_run, "plus_one": [fl(x.faults) for x in u.plus_one]}
+                                       for u in self.more],
             "outside": [fl(x) for x in self.outside],
             "slow_round_trips": self.slow,
+            "random_check": self.random_check,
             "unexplained": [{"name": e.name, "req_id": e.req_id, "t_us": e.t_us} for e in self.fit.unexplained
                             if e.name not in self.quiet],
             "plan": self.fit.plan,
@@ -872,13 +890,20 @@ def _options(setup: DrivenSetup, first: Trace, a: Attempt, d0: int | None, range
         return 1 if d > usual.c2s_limit else 0
 
     lags = _reply_lags(first, a.req_id)
+    poll = a.key[0] in quiet
     recv = [e for e in setup.log if e.actor == setup.actor and e.kind == "recv" and e.req_id == a.req_id
-            and e.name not in quiet]
+            and (poll or e.name not in quiet)]
     cand = {lo}
     cand |= {t + 1 - a.t_us for t in _cut_points(first, a.t_us + lo, a.t_us + hi, quiet)}
     for r in recv:
         for lag in lags.get(r.name, {0}) | {0}:
             cand.add(r.t_us - usual.s2c - lag - a.t_us)
+            # the arrival nearest the usual delay at which both this attempt and a reply to it received
+            # at r are within the limits, whichever send that receive is paired with
+            w_lo = max(lo, r.t_us - usual.s2c_limit - lag - a.t_us)
+            w_hi = min(hi, usual.c2s_limit, r.t_us - ranges.s2c[0] - lag - a.t_us)
+            if w_lo <= w_hi:
+                cand.add(min(max(usual.c2s, w_lo), w_hi))
     cand |= {d["t_us"] + 1 - a.t_us for d in disconnects}
     out: list[tuple[int | None, int | None, int]] = [(d0, None, 0 if d0 is None else cost(d0))]
     out.append((None, None, 1))
@@ -993,6 +1018,13 @@ def _judge_start(log: Sequence[Event], actor: str, quiet: frozenset[str], t0: in
     return start
 
 
+def _leaves_unexplained(ev: _Eval, rids: set[str]) -> bool:
+    """A receive of one of ``rids`` that no device send explains, polls included. Driven replay leaves
+    poll replies out of the match, so without this a lost poll request would pass with its logged
+    reply unexplained. (Tied pairings leave the same number of receives of a key unexplained.)"""
+    return any(str(e.req_id) in rids for e in ev.fit.unexplained)
+
+
 def _search_unit(runner: _Runner, base: Choice, attempts: list[Attempt], rids: set[str | None], plus_one: bool,
                  why: Sequence[str] = (), last_arrival: int | None = None) -> UnitSet:
     """Every minimal explanation of one unit (and, with ``plus_one``, those with one fault more)."""
@@ -1019,6 +1051,8 @@ def _search_unit(runner: _Runner, base: Choice, attempts: list[Attempt], rids: s
             complete = False
             break
         unit.choices_run += 1
+        if _leaves_unexplained(ev, {str(r) for r in rids}):
+            continue
         for fd, ok, violated in ev.results:
             if not ok:
                 continue
@@ -1037,6 +1071,59 @@ def _search_unit(runner: _Runner, base: Choice, attempts: list[Attempt], rids: s
     unit.plus_one = [x for f, x in found.values() if f == best[0] + 1] if plus_one else []
     unit.minimal_shown = complete
     unit.plus_one_shown = complete and plus_one
+    return unit
+
+
+def _poll_units(setup: DrivenSetup, fit: Fit) -> dict[str, tuple[int, int, list[str]]]:
+    """Polls (attempts of a quiet message with a request id) with a fault in ``fit`` or a receive it
+    leaves unexplained: request id -> (first send, last event, why)."""
+    quiet = setup.system.quiet_messages
+    polls: dict[str, list[Event]] = {}
+    for e in setup.log:
+        if e.actor == setup.actor and e.req_id is not None and e.name in quiet and e.kind in ("send", "recv"):
+            polls.setdefault(e.req_id, []).append(e)
+    bad = {str(k[3]) for k in fit.faults} | {str(e.req_id) for e in fit.unexplained}
+    out = {}
+    for rid, es in polls.items():
+        sends = [e for e in es if e.kind == "send"]
+        if rid in bad and sends and any(e.t_us >= setup.judge_from_us for e in es):
+            out[rid] = (sends[0].t_us, max(e.t_us for e in es), ["poll"])
+    return out
+
+
+def _one_more(runner: _Runner, base: Choice, attempts: list[Attempt], rid: str, final: _Eval, f_star: int) -> UnitSet:
+    """The explanations with one fault more than ``f_star`` that move only ``rid``'s attempts away from
+    ``base`` (where ``rid`` has no fault) and leave every other request id's faults as in a minimal
+    explanation of ``final``. Searched on the whole log; the unit's ``explanations`` is the empty one."""
+    s = runner.setup
+    keys = [a.key for a in attempts]
+    unit = UnitSet((rid,), tuple(keys), 0, [Explanation({}, base.of(keys))], why=("one fault more",))
+    rest = [frozenset(k for k in fd if str(k[3]) != rid) for fd, ok, _ in final.results if ok]
+    d0 = dict(base.delays)
+    options = [_options(s, final.first, a, d0[a.key], runner.ranges, runner.usual, runner.disconnects)
+               for a in attempts]
+    found: dict[frozenset, Explanation] = {}
+    complete = True
+    for choice in _choices(base, keys, options, lambda: 1):
+        if choice == base:
+            continue
+        ev = runner.evaluate_all(choice)
+        if ev is None:
+            complete = False
+            break
+        unit.choices_run += 1
+        if _leaves_unexplained(ev, {rid}):
+            continue
+        for fd, ok, violated in ev.results:
+            if not ok or len(fd) != f_star + 1:
+                continue
+            if frozenset(k for k in fd if str(k[3]) != rid) not in rest:
+                continue
+            mine = {k: v for k, v in fd.items() if str(k[3]) == rid}
+            found.setdefault(frozenset(mine), Explanation(mine, choice.of(keys), violated))
+    unit.plus_one = list(found.values())
+    unit.minimal_shown = True
+    unit.plus_one_shown = unit.exhausted = complete
     return unit
 
 
@@ -1083,11 +1170,19 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
         if e.name not in quiet and e.t_us >= setup.judge_from_us and e.req_id in sent and e.req_id in in_win \
                 and e.req_id not in unit_rids:
             unit_rids.append(e.req_id)
+    # A poll with a fault in the default (a lost or repeated reply, or a reply nothing explains) is a
+    # unit too: a poll does not change the device, so a lost request and a lost reply look the same
+    # and only the search can say which explanations tie.
+    poll_rids: set[str] = set()
+    for rid, info in _poll_units(setup, ev0.fit).items():
+        if window is None or window[0] <= info[0] <= window[1]:
+            cmds[rid] = info
+            unit_rids.append(rid)
+            poll_rids.add(rid)
     unit_rids.sort(key=lambda r: cmds[r][0])
 
     def unit_attempts(rids) -> list[Attempt]:
-        return [a for a in all_attempts if a.req_id in rids and a.key[0] not in quiet
-                and not _sent_while_down(a, disconnects)]
+        return [a for a in all_attempts if a.req_id in rids and not _sent_while_down(a, disconnects)]
 
     choice = default
     units: list[UnitSet] = []
@@ -1108,6 +1203,10 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
         budget[1] = min(cap, budget[0] + share)
         u = _search_unit(ru, choice, unit_attempts({rid}), {rid}, plus_one, why, cut - setup.tolerance_us)
         budget[1] = cap
+        if rid in poll_rids and not u.explanations:
+            # a poll the option space cannot explain keeps the default, as polls did before: poll
+            # replies are not matched, and an unexplained one is reported apart
+            continue
         units.append(u)
         if u.explanations:
             choice = choice.assign(u.explanations[0].choice)
@@ -1132,6 +1231,8 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
                 if ev is None:
                     u.minimal_shown = u.plus_one_shown = False
                     return
+                if _leaves_unexplained(ev, set(u.req_ids)):
+                    continue
                 for fd, ok, violated in ev.results:
                     if ok:
                         uf = {k: v for k, v in fd.items() if str(k[3]) in u.req_ids}
@@ -1144,6 +1245,7 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
             u.plus_one = [x for n, x in got.values() if n == u.f + 1] if plus_one else []
 
     on_whole_log(units)
+    units = [u for u in units if u.explanations or not set(u.req_ids) <= poll_rids]
     if units and all(u.explanations for u in units):
         choice = compose([u.explanations[0] for u in units])
     final = runner.evaluate_all(choice)
@@ -1193,8 +1295,21 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
                 o = {k: v for k, v in fd.items() if str(k[3]) not in unit_ids}
                 if o not in outside:
                     outside.append(o)
-        out = result("reproduced", fit, units=units, outside=outside, combinations=combos, joint=joint)
+        out = result("reproduced", fit, units=units, outside=outside, combinations=combos, joint=joint, choice=choice)
         out.min_faults = sum(u.f or 0 for u in units) + min((len(o) for o in outside), default=0)
+        if plus_one:
+            # one fault more on a command outside the units (the units' own f*+1 is above)
+            free = [rid for rid in sorted(in_win - unit_ids, key=lambda r: cmds[r][0])
+                    if not any(str(k[3]) == rid for o in outside for k in o)]
+            for rid in free:
+                atts = unit_attempts({rid})
+                if not atts:
+                    continue
+                m = _one_more(runner, choice, atts, rid, final, out.min_faults)
+                out.more.append(m)
+                if not m.plus_one_shown:
+                    break
+            out.runs = budget[0]
     else:
         left = [e for e in fit.unexplained if e.name not in quiet and e.t_us >= setup.judge_from_us]
         never_sent = [e for e in left if e.req_id not in sent]
@@ -1208,6 +1323,62 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
     if branches and out.reproduced:
         _branch_points(setup, out, choice, final.first, all_attempts, ranges, disconnects, branch_cap, usual)
     return out
+
+
+def random_arrivals(setup: DrivenSetup, res: FitResult, ranges: Ranges, usual: Usual, draws: int = 400,
+                    seed: int = 0) -> dict[str, Any]:
+    """A check of ``res.min_faults``, not a proof: arrivals drawn at random, off the option points.
+
+    Each draw takes one command (a request id that is not a poll) and redraws its attempts: dropped
+    (15%), or arriving near its fitted arrival (+-60 ms), inside the interval its replies allow, or
+    anywhere in the range, with a duplicate 15% of the time. Every other attempt keeps the reported
+    plan's arrival. A draw that reproduces the log with fewer faults than ``f*`` shows an explanation
+    the option points missed. Returns the counts and those draws' faults (``fewer``).
+    """
+    if not res.reproduced or res.choice is None:
+        raise ValueError("the random-arrival check needs a reproduced fit")
+    rng = random.Random(seed)
+    quiet = setup.system.quiet_messages
+    disconnects = logged_disconnects(setup.log, setup.actor, setup.until_us)
+    runner = _Runner(setup, ranges, disconnects, 10**12, usual)
+    every = attempts_of(setup.log, setup.actor)
+    atts = [a for a in every if a.key[0] not in quiet and not _sent_while_down(a, disconnects)]
+    by: dict[str | None, list[Attempt]] = {}
+    for a in atts:
+        by.setdefault(a.req_id, []).append(a)
+    rids = sorted(by, key=str)
+    probe = runner.evaluate(Choice(tuple((a.key, ranges.c2s[0]) for a in every)))
+    bounds = _arrival_bounds(setup, atts, probe[1], ranges) if probe is not None else {}
+    base = res.choice
+    lo, hi = ranges.c2s
+    reproduced, fewest, fewer = 0, None, []
+    for _ in range(draws if rids else 0):
+        items = {}
+        for a in by[rng.choice(rids)]:
+            if rng.random() < 0.15:
+                items[a.key] = (None, None)
+                continue
+            b_lo, b_hi = bounds.get(a.key, (1, 0))
+            near = base.delay(a.key)
+            mode = rng.random()
+            if mode < 0.4:
+                d = (usual.c2s if near is None else near) + rng.randint(-60_000, 60_000)
+            elif b_lo <= b_hi and mode < 0.8:
+                d = rng.randint(b_lo, b_hi) - a.t_us
+            else:
+                d = rng.randint(lo, hi)
+            extra = rng.randint(*ranges.dup_extra) if rng.random() < 0.15 else None
+            items[a.key] = (min(max(d, lo), hi), extra)
+        ev = runner.evaluate_all(base.assign(items))
+        for fd, ok, _ in ev.results:
+            if ok:
+                reproduced += 1
+                fewest = len(fd) if fewest is None else min(fewest, len(fd))
+                if len(fd) < (res.min_faults or 0) and fd not in fewer:
+                    fewer.append(fd)
+    return {"draws": draws if rids else 0, "seed": seed, "runs": runner.runs, "reproduced": reproduced,
+            "fewest": fewest, "fewer": [[list(k) + [v] for k, v in sorted(fd.items(), key=lambda kv: str(kv[0]))]
+                                        for fd in fewer]}
 
 
 def _branch_points(setup: DrivenSetup, out: FitResult, choice: Choice, first: Trace, attempts: list[Attempt],
@@ -1289,6 +1460,12 @@ def report_lines(res: FitResult) -> list[str]:
             f"{e.name} {e.req_id or '-'} at {e.t_us / 1e6:.6f}s" + (f" log line {e.log['line']}" if e.log else "")
             for e in f.unexplained[:5]) + (" ..." if len(f.unexplained) > 5 else "") + ")" if f.unexplained else ""),
     ]
+    rc = res.random_check
+    if rc is not None:
+        lines.append(f"random arrivals (a check, not a proof): {rc['draws']} draws, {rc['reproduced']} reproduced, "
+                     f"fewest faults among them {'-' if rc['fewest'] is None else rc['fewest']}; "
+                     f"fewer than the fewest found: {len(rc['fewer'])}"
+                     + (" (the option points missed a smaller explanation)" if rc["fewer"] else ""))
     if res.slow:
         lines.append("observed slow round trips (from the log, not the fit): " + ", ".join(
             f"{s['msg']} {s['req_id']} k{s['k']} +{s['excess_us'] / 1000:.1f}ms" for s in res.slow))
@@ -1304,5 +1481,5 @@ def report_lines(res: FitResult) -> list[str]:
 
 
 __all__ = ["anomaly_windows", "BRANCH_RUNS", "DOWN", "Explanation", "FIT_RUNS", "Fit", "FitResult", "Ranges", "UP",
-           "UnitSet", "Usual", "attempts_of", "fit_log", "fit_replies", "logged_disconnects", "report_lines",
-           "slow_round_trips"]
+           "UnitSet", "Usual", "attempts_of", "fit_log", "fit_replies", "logged_disconnects", "random_arrivals",
+           "report_lines", "slow_round_trips"]
