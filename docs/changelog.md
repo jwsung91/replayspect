@@ -198,3 +198,36 @@ first choice. But only 19 of 46 injected faults are found, and 19 of 105 restore
 right. Every missed loss was read as a long delay (12 of 12). A duplicated request reads as a
 duplicated `ACK`. A request in flight when a logged disconnect starts is not treated as lost to it
 (T12, incomplete). No window was unexplained.
+
+## WP5b fit: minimal explanations (after testbed-01)
+
+`drive --fit` now reports every explanation with the fewest link faults instead of one plan.
+A fault is a drop, a duplicate, or a delay above the usual delay plus the tolerance.
+- **Usual delay and default arrival.** `--usual-delay C2S S2C` sets the usual delay; without it, on
+  simulator logs, no delay inside the profile range is a fault. An arrival the log does not bound
+  now defaults to the usual delay, not to the middle of the range.
+- **Reply pairing** is a minimum-fault assignment: order may change, and every tied assignment is
+  kept. Pairing in time order read a lost `DONE` followed by a normal one as one long delay.
+- **Search.** The search runs per anomalous command, in order of how many attempts leave the
+  default. A choice is skipped when its request-side faults exceed the best found (the reply side
+  only adds faults). The units' sets are recounted and combined on the whole log, and searched
+  together if a combination fails.
+- **Report.**
+  - `f*`, the number of explanations, the faults common to all ("determined") and per request id
+    the alternatives ("not determined", e.g. request dup or `ACK` dup).
+  - `--plus-one` adds the explanations with one fault more, as a diagnostic.
+  - A list of slow round trips observed in the log, kept apart from the fit.
+  - `--fit-out` writes it all as JSON.
+- **Status.** `minimal shown` says whether the search was complete. `unexplained` now needs every
+  choice of a unit run with every earlier unit reproduced.
+- **Disconnects.** A request in flight when a logged disconnect begins is lost with it, not a fault
+  (testbed-01 T12). A cut log's horizon is its cut (`DrivenSetup.end_us`).
+- **Removed.** The hill-climbing moves and the separate enumeration are gone, and the default run
+  cap is 2000.
+- **Tests.**
+  - On short synthetic logs, brute force over the same option space gives the same minimal and
+    one-more sets.
+  - The reply pairing equals an exhaustive assignment search on random small keys.
+  - Random off-grid arrivals never explain a short log with fewer faults; this is not a proof.
+- **testbed-01.** The 39 logs are now development material, not a measurement. The measurement is
+  testbed-02, registered separately.

@@ -56,7 +56,9 @@ Implemented:
   ([docs/experiments/testbed-01.md](docs/experiments/testbed-01.md))
 - Driven replay of a client-side log: `drive` replays the log as a script,
   simulates the device and needs no seed; `drive --reconstruct` searches for
-  the fault plan ([docs/driven-replay.md](docs/driven-replay.md))
+  the fault plan; `drive --fit` reports every explanation with the fewest link
+  faults, split into determined faults and undetermined alternatives, plus the
+  slow round trips observed in the log ([docs/driven-replay.md](docs/driven-replay.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with

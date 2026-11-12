@@ -211,9 +211,13 @@ class DrivenSetup:
     expect: set[str] | None = None
     status_rule: bool = False
     judge_from_us: int = 0  # a window: receives before it are not compared
+    #: a log cut at a known time: it is complete up to then, so that is the horizon
+    end_us: int | None = None
 
     @property
     def horizon_us(self) -> int:
+        if self.end_us is not None:
+            return self.end_us
         return (self.log[-1].t_us if self.log else 0) + self.tolerance_us
 
     def run(self, plan: FaultPlan | Mapping[str, Any], seed: int = DRIVEN_SEED) -> tuple[Trace, DrivenMatch]:
