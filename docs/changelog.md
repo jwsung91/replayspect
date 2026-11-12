@@ -309,3 +309,15 @@ most recent runs whole. Older runs keep their results; their trace and plans are
 deterministically, without counting a run, when asked for. Results are unchanged (same `--fit-out`,
 runs, branch points and random check on all 87 development logs); the same fit now peaks at 250 MB. A
 result keeps a copy of its fit: dropping the cached entry clears that entry's plan.
+
+## Device models: the cap rule
+
+`judge_models` now follows the testbed-03 judging rule.
+- **Before:** a defect model that the run cap ended before anything reproduced was listed as
+  undecided, and the verdict stayed "correct model".
+- **Now:** such a model is not a candidate. The report and `--fit-out` name every fit the cap ended
+  (`capped`, `capped_count`; the correct model's included). With no accusation and an undecided
+  model (reproduced but not settled, or the correct model not settled), the verdict is `undecided`.
+- **Effect on stored judgments:** on the 87 development logs, none. On the 102 judgments of the
+  testbed-03 simulator campaign, 4 change: the defect-off runs of four M4 plans lose "undecided: M4"
+  (the M4 model hit the cap); their verdict stays "correct model".

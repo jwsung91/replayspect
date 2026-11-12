@@ -552,7 +552,7 @@ def test_a_tie_is_no_accusation():
     assert d["verdict"] == "correct model" and d["accused"] == [] and d["fewer"] == [] and d["difference"] is None
 
 
-def test_fewer_faults_counts_the_difference_and_an_unsettled_fit_is_undecided():
+def test_fewer_faults_counts_the_difference_capped_models_are_no_candidates_and_unsettled_are_undecided():
     from dataclasses import replace
     ok = fit_log(short([f("s2c", "ACK", "r-0001", drop=True), f("s2c", "DONE", "r-0002", drop=True)]),
                  usual=USUAL)
@@ -561,11 +561,18 @@ def test_fewer_faults_counts_the_difference_and_an_unsettled_fit_is_undecided():
     d = F.judge_models(ok, {"M4": one, "M10": zero, "M2": replace(ok, status="incomplete"),
                             "M9": replace(zero, random_check={"fewer": [["x"]]})})
     assert d["fewer"] == ["M4", "M10"] and d["accused"] == ["M10"] and d["difference"] == 2
-    assert d["undecided"] == ["M2", "M9"]  # incomplete; a random draw found fewer than its f*
+    assert d["undecided"] == ["M9"]  # a random draw found fewer than its f*
+    assert d["capped"] == ["M2"] and d["capped_count"] == 1  # ended by the cap before reproducing: no candidate
     assert ok.units
     capped = replace(ok, units=[replace(u, minimal_shown=False) for u in ok.units])
     d = F.judge_models(capped, {"M4": one})
     assert d["accused"] == [] and d["undecided"] == ["M4"]  # the correct model's minimum is not shown
+    assert d["verdict"] == "undecided" and d["capped"] == ["correct"]
+    d = F.judge_models(ok, {"M4": replace(ok, status="incomplete"), "M10": replace(ok, status="unexplained")})
+    assert d["verdict"] == "correct model" and d["undecided"] == [] and d["capped"] == ["M4"]
+    assert "ended by the run cap: M4" in F.model_lines(d)[-1]
+    d = F.judge_models(ok, {"M4": replace(one, units=[replace(u, minimal_shown=False) for u in ok.units])})
+    assert d["verdict"] == "undecided" and d["undecided"] == ["M4"] and d["capped"] == ["M4"]
 
 
 def test_cli_drive_fit(tmp_path, capsys):

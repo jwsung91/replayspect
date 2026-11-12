@@ -1541,15 +1541,26 @@ def _settled(r: FitResult) -> bool:
     return r.status == "reproduced" and r.minimal_shown and not (r.random_check and r.random_check["fewer"])
 
 
+def _capped(r: FitResult) -> bool:
+    """The run cap ended the search: nothing reproduced, or the minimal set is not shown."""
+    return r.status == "incomplete" or (r.status == "reproduced" and not r.minimal_shown)
+
+
 def judge_models(correct: FitResult, others: dict[str, FitResult]) -> dict[str, Any]:
     """Compare the fewest faults under the correct device model with each defect model's.
 
-    A defect model **explains with fewer faults** when its fit is settled (reproduced, minimal set
-    complete, no random draw with fewer) and the correct model's is unexplained, or settled with more
-    faults. A tie is no accusation. A comparison where either fit is incomplete or not settled is
-    **undecided**. The accusation is a set: every defect model with the fewest faults among those
-    that explain with fewer, "A or B", as the fit reports alternatives. ``difference`` is the correct
-    model's ``f*`` minus theirs (None when the correct model is unexplained)."""
+    - A defect model is a **candidate** when its fit is settled (reproduced, minimal set complete, no
+      random draw with fewer) and the correct model's fit is unexplained, or settled with more faults.
+    - A defect model that ends **unexplained**, or **hits the cap without reproducing**, is not a
+      candidate. (The second is not proven: more runs might reproduce it with fewer faults. The
+      ``capped`` list says where it applies.)
+    - **Undecided:** a defect model that reproduced but is not settled, or any defect model that
+      reproduced while the correct model's fit is not settled and not unexplained.
+    - **Verdict:** the candidates with the fewest faults, "A or B", when there is one; otherwise
+      "undecided" when a model is undecided; otherwise "correct model". A tie is no accusation.
+    - ``difference`` is the correct model's ``f*`` minus the accused set's (None when the correct
+      model is unexplained). ``capped`` names every fit, the correct model's included, that the cap
+      ended."""
     def row(r: FitResult) -> dict[str, Any]:
         return {"status": r.status, "min_faults": r.min_faults, "explanations": r.n_explanations,
                 "minimal_shown": r.minimal_shown, "runs": r.runs,
@@ -1558,20 +1569,25 @@ def judge_models(correct: FitResult, others: dict[str, FitResult]) -> dict[str, 
     ok_unexplained = correct.status == "unexplained"
     fewer, undecided = [], []
     for m, r in others.items():
-        if r.status == "unexplained":
-            continue
-        if _settled(r) and (ok_unexplained or (_settled(correct) and (r.min_faults or 0) < (correct.min_faults or 0))):
+        if r.status != "reproduced":
+            continue  # unexplained, or the cap ended it before anything reproduced: not a candidate
+        if not _settled(r):
+            undecided.append(m)
+        elif ok_unexplained or (_settled(correct) and (r.min_faults or 0) < (correct.min_faults or 0)):
             fewer.append(m)
-        elif not (_settled(r) and _settled(correct)):
+        elif not _settled(correct):
             undecided.append(m)
     best = min((others[m].min_faults or 0 for m in fewer), default=None)
     accused = sorted((m for m in fewer if others[m].min_faults == best), key=_model_order)
+    capped = (["correct"] if _capped(correct) else []) + sorted((m for m, r in others.items() if _capped(r)),
+                                                                key=_model_order)
+    verdict = ("defect suspected: " + " or ".join(accused)) if accused else ("undecided" if undecided else "correct model")
     return {
         "correct": row(correct), "models": {m: row(r) for m, r in others.items()},
         "fewer": sorted(fewer, key=_model_order), "accused": accused, "accused_size": len(accused),
         "difference": None if not accused or ok_unexplained else (correct.min_faults or 0) - (best or 0),
-        "undecided": sorted(undecided, key=_model_order),
-        "verdict": ("defect suspected: " + " or ".join(accused)) if accused else "correct model",
+        "undecided": sorted(undecided, key=_model_order), "capped": capped, "capped_count": len(capped),
+        "verdict": verdict,
         "fits": {m: r.to_dict() for m, r in others.items()},
     }
 
@@ -1595,7 +1611,9 @@ def model_lines(d: dict[str, Any]) -> list[str]:
     if d["accused"]:
         v += (" (the correct model is unexplained)" if d["difference"] is None
               else f" ({d['difference']} fault{'s' if d['difference'] != 1 else ''} fewer)")
-    lines.append(f"verdict: {v}" + (f"; undecided: {', '.join(d['undecided'])}" if d["undecided"] else ""))
+    lines.append(f"verdict: {v}" + (f"; undecided: {', '.join(d['undecided'])}" if d["undecided"] else "")
+                 + (f"; ended by the run cap: {', '.join(d['capped'])} (a defect model the cap ended before it "
+                    "reproduced is not a candidate)" if d["capped"] else ""))
     return lines
 
 
