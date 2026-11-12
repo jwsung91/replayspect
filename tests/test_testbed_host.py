@@ -39,11 +39,11 @@ class FakeTime:
 class FakePort:
     """The lift model behind a link with a fixed delay each way, in milliseconds."""
 
-    def __init__(self, clock, delay_ms=3, extra=b""):
+    def __init__(self, clock, delay_ms=3, extra=b"", ready=b"READY log=1"):
         self.clock, self.delay = clock, delay_ms
         self.sched = Scheduler(0)
         self.trace = Trace(lambda: self.sched.now_us)
-        self.pending = [(0, b"READY log=1 defect=none\n" + extra)]
+        self.pending = [(0, ready + b"\n" + extra)]
         self.buf = b""
         port = self
 
@@ -81,10 +81,10 @@ class FakePort:
             self.sched.at_us((now + self.delay) * 1000, lambda n=name, r=rid: self.on_message(Message(n, r, {})))
 
 
-def run_client(run_s=90, extra=b"", seed=0, plan=None):
+def run_client(run_s=90, extra=b"", seed=0, plan=None, ready=b"READY log=1"):
     ft = FakeTime()
     clock = tb_client.Clock(WALL, ft)
-    port = FakePort(clock, extra=extra)
+    port = FakePort(clock, extra=extra, ready=ready)
     log, dlog, truth = io.StringIO(), io.StringIO(), io.StringIO()
     link = FaultLink(port, clock, truth, dlog, Plan(plan))
     c = tb_client.Client(link, clock, log, seed=seed, run_s=run_s)
@@ -106,7 +106,7 @@ def clean():
 def test_client_log_has_a_header_and_ingests_cleanly(clean):
     log, _, truth, valid = clean
     first, last = log.splitlines()[0], log.splitlines()[-1]
-    assert valid and "# testbed client: firmware log=1 defect=none; think_seed=0; plan=none" in first
+    assert valid and "# testbed client: firmware log=1; think_seed=0; plan=none" in first
     assert last.endswith("# end valid=yes")
     res = ingest_text(log.encode(), read_rules(RULES))
     assert not res.unmatched and res.ignored == 2
@@ -137,8 +137,16 @@ def test_device_error_or_reset_makes_the_run_invalid():
     log, dlog, _, valid = run_client(run_s=5, extra=b"# 3 error table_full r-0009\n")
     assert not valid and log.splitlines()[-1].endswith("valid=no reasons=device_errors=1")
     assert "error table_full" in dlog
-    log, _, _, valid = run_client(run_s=5, extra=b"READY log=1 defect=none\n")
+    log, _, _, valid = run_client(run_s=5, extra=b"READY log=1\n")
     assert not valid and "resets=1" in log.splitlines()[-1] and "READY again" in log
+
+
+def test_the_client_log_never_names_a_defect():
+    # Stage 3: the build's defect is the answer. The firmware names it only in the device log; a
+    # READY that still names one (an older build) is not copied into the client log either.
+    log, dlog, _, valid = run_client(run_s=3, ready=b"READY log=1 defect=M4", extra=b"# 0 build defect=M4\n")
+    assert valid and "defect" not in log and "firmware log=1;" in log.splitlines()[0]
+    assert "build defect=M4" in dlog
 
 
 def test_nul_bytes_around_a_reset_are_dropped():

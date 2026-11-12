@@ -2,8 +2,17 @@
 //
 // Plain C++ with no Arduino headers, so the same code runs on the Uno (lift_uno.ino) and natively
 // in the conformance harness (../harness/harness.cpp). Time is passed in, in milliseconds.
-// Behaviour follows docs/protocol-lift.md and the Python model (src/replayspect/sut/lift.py) with
-// no defect switched on. Where it cannot follow the model exactly, see examples/testbed-uno/README.md.
+// Behaviour follows docs/protocol-lift.md and the Python model (src/replayspect/sut/lift.py). Where
+// it cannot follow the model exactly, see examples/testbed-uno/README.md.
+//
+// Defect switch (stage 3): -DLIFT_DEFECT=N builds the public device-side lift defect MN of the model
+// (sut/lift.py MUTANTS): 1, 2, 4, 5, 9, 10 or 11; 0 (the default) is none. M3 (resend the last DONE
+// after a reconnect) is not offered: on serial the device never sees a disconnect.
+// The build is named only in the device log ("build defect=..."), never in READY, so the client log
+// does not carry the answer. Each time the defect's own branch changes what the device does, the
+// device log gets "defect fired MN REQ_ID", after any protocol line of that step (later effects of
+// it, such as a result it caused being answered from the table, are not marked again). Both lines are written whether or not
+// the device log is on, like error lines.
 //
 // Wire format, one line per message:  NAME REQ_ID [key=value ...]
 // Device log lines (when enabled):    # MILLIS KIND NAME [REQ_ID] [key=value ...]
@@ -15,6 +24,16 @@
 #ifndef LIFT_DEVICE_LOG
 #define LIFT_DEVICE_LOG 1
 #endif
+
+#ifndef LIFT_DEFECT
+#define LIFT_DEFECT 0
+#endif
+#if LIFT_DEFECT != 0 && LIFT_DEFECT != 1 && LIFT_DEFECT != 2 && LIFT_DEFECT != 4 && LIFT_DEFECT != 5 && \
+    LIFT_DEFECT != 9 && LIFT_DEFECT != 10 && LIFT_DEFECT != 11
+#error "LIFT_DEFECT: 0 (none) or a public device-side lift defect 1, 2, 4, 5, 9, 10, 11 (not 3: no disconnects on serial)"
+#endif
+#define LIFT_STR2(x) #x
+#define LIFT_STR(x) LIFT_STR2(x)
 
 namespace lift {
 
@@ -40,6 +59,12 @@ inline const char* state_name(State s) {
 
 inline const char* cmd_name(Cmd c) { return c == MOVE_UP ? "MOVE_UP" : "MOVE_DOWN"; }
 
+// MN of the model is switched on (see LIFT_DEFECT).
+inline bool defect(int n) { return LIFT_DEFECT == n; }
+// A result is recorded later than at acceptance (M2: at DONE; M9: at execution; M11: the table is
+// cleared), so recording an ERROR or DONE may have to add the id, as the model's dict does.
+inline bool late_record() { return defect(2) || defect(9) || defect(11); }
+
 // Where the device writes. line(): a protocol line (no newline). log(): a device log line body
 // (no "# millis" prefix, no newline); the sink adds the prefix.
 struct Sink {
@@ -52,11 +77,13 @@ class Device {
   explicit Device(Sink& out) : out_(out) {}
 
   void begin(uint32_t now) {
-    state_ = DOWN;
+    state_ = stable_ = DOWN;
     n_results_ = 0;
+    n_seen_ = 0;
     n_queue_ = 0;
     moving_ = false;
-    out_.line(LIFT_DEVICE_LOG ? "READY log=1 defect=none" : "READY log=0 defect=none");
+    out_.line(LIFT_DEVICE_LOG ? "READY log=1" : "READY log=0");
+    out_.log(now, LIFT_DEFECT == 0 ? "build defect=none" : "build defect=M" LIFT_STR(LIFT_DEFECT));
     if (LIFT_DEVICE_LOG) out_.log(now, "state DOWN from=- on=init");
   }
 
@@ -107,27 +134,30 @@ class Device {
     if (!has_id) { error(now, "no_req_id", name); return; }
     if (LIFT_DEVICE_LOG) logf(now, "recv ", name, id, "");
     if (is_status) {
-      send(now, "STATUS_REPLY", id, "state=", state_name(state_));
+      bool old = defect(5) && state_ != stable_;  // M5: during a move, the state before it
+      send(now, "STATUS_REPLY", id, "state=", state_name(old ? stable_ : state_));
+      if (old) fired(now, id);
       return;
     }
-    int8_t known = find(id);
+    // A correct device would answer a repeat from its table; M1, M2, M9 and M11 can miss it.
+    bool known_to_correct = seen(id);
+    int8_t known = defect(1) ? -1 : find(id);
     if (known >= 0) {
       Result r = table_[known].result;
       if (r == R_ACK) send(now, "ACK", id, "", "");
       else if (r == R_DONE) send(now, "DONE", id, "", "");
+      else if (defect(10)) { send(now, "DONE", id, "", ""); fired(now, id); }  // M10: DONE, not the ERROR
       else send(now, "ERROR", id, "reason=", "illegal");
       return;
     }
     if (n_queue_ >= QUEUE) { error(now, "queue_full", id); return; }
-    if (n_results_ >= TABLE) {
-      error(now, "table_full", id);  // not recorded: a repeat of this id would run again
-    } else {
-      strncpy(table_[n_results_].id, id, MAX_ID + 1);
-      table_[n_results_].id[MAX_ID] = 0;
-      table_[n_results_].result = R_ACK;
-      n_results_++;
+    if (defect(11)) n_results_ = 0;  // M11: only the most recent id is remembered
+    if (!defect(2) && !defect(9)) {
+      if (!record(id, R_ACK)) error(now, "table_full", id);  // not recorded: a repeat would run again
     }
+    see(id);
     send(now, "ACK", id, "", "");
+    if (known_to_correct) fired(now, id);
     Pending& q = queue_[n_queue_++];
     q.cmd = is_up ? MOVE_UP : MOVE_DOWN;
     strncpy(q.id, id, MAX_ID + 1);
@@ -162,15 +192,58 @@ class Device {
     return -1;
   }
 
-  void set_result(const char* id, Result r) {
+  // Set the id's result, adding the id if it is new; false when the table is full.
+  bool record(const char* id, Result r) {
     int8_t i = find(id);
-    if (i >= 0) table_[i].result = r;
+    if (i < 0) {
+      if (n_results_ >= TABLE) return false;
+      i = (int8_t)n_results_++;
+      strncpy(table_[i].id, id, MAX_ID + 1);
+      table_[i].id[MAX_ID] = 0;
+    }
+    table_[i].result = r;
+    return true;
+  }
+
+  // Update a recorded id's result (with no defect, every running id was recorded when accepted,
+  // unless the table was full; a defect that records later adds it here).
+  void set_result(uint32_t now, const char* id, Result r) {
+    if (late_record()) {
+      if (!record(id, r)) error(now, "table_full", id);
+    } else {
+      int8_t i = find(id);
+      if (i >= 0) table_[i].result = r;
+    }
+  }
+
+  // The ids a correct device would have recorded (every accepted id, while there is room): only
+  // used to tell when a defect makes the device miss a repeat.
+  bool seen(const char* id) const {
+    for (uint8_t i = 0; i < n_seen_; i++)
+      if (strcmp(seen_[i], id) == 0) return true;
+    return false;
+  }
+
+  void see(const char* id) {
+    if (seen(id) || n_seen_ >= TABLE) return;
+    strncpy(seen_[n_seen_], id, MAX_ID + 1);
+    seen_[n_seen_++][MAX_ID] = 0;
+  }
+
+  void fired(uint32_t now, const char* id) {
+    logf(now, "defect fired M" LIFT_STR(LIFT_DEFECT), "", id, "");
   }
 
   void execute(Cmd cmd, const char* id, uint32_t now) {
+    if (defect(9)) set_result(now, id, R_ACK);  // M9: recorded when it starts executing
     State need = cmd == MOVE_UP ? DOWN : UP;
-    if (state_ != need) {
-      set_result(id, R_ERROR);
+    bool legal = state_ == need;
+    if (defect(4) && moving_ && state_ == (cmd == MOVE_UP ? MOVING_DOWN : MOVING_UP)) {
+      legal = true;  // M4: the opposite move is taken; the running move is dropped and sends no DONE
+      fired(now, id);
+    }
+    if (!legal) {
+      set_result(now, id, R_ERROR);
       send(now, "ERROR", id, "reason=", "illegal");
       return;
     }
@@ -188,13 +261,14 @@ class Device {
     moving_ = false;
     if (LIFT_DEVICE_LOG) logf(now, "effect motor_stop ", travel_id_, "", "");
     set_state(now, travel_cmd_ == MOVE_UP ? UP : DOWN, "arrived", travel_id_);
-    set_result(travel_id_, R_DONE);
+    set_result(now, travel_id_, R_DONE);
     send(now, "DONE", travel_id_, "", "");
   }
 
   void set_state(uint32_t now, State s, const char* on, const char* id) {
     State old = state_;
     state_ = s;
+    if (s == DOWN || s == UP) stable_ = s;
     if (LIFT_DEVICE_LOG) {
       char buf[MAX_LINE + 1];
       snprint(buf, "state ", state_name(s), " ", id, " from=", state_name(old), " on=", on);
@@ -237,8 +311,11 @@ class Device {
 
   Sink& out_;
   State state_ = DOWN;
+  State stable_ = DOWN;  // the last state that was not a move (M5)
   Entry table_[TABLE];
   uint8_t n_results_ = 0;
+  char seen_[TABLE][MAX_ID + 1];
+  uint8_t n_seen_ = 0;
   Pending queue_[QUEUE];
   uint8_t n_queue_ = 0;
   bool moving_ = false;
