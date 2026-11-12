@@ -307,4 +307,5 @@ with the number of runs: a defect model that cannot explain a log runs to the 20
 past 4 GB (two simulator jobs were killed for running out of memory). The runner now keeps the 32
 most recent runs whole. Older runs keep their results; their trace and plans are rebuilt
 deterministically, without counting a run, when asked for. Results are unchanged (same `--fit-out`,
-runs, branch points and random check on the logs compared); the same fit now peaks at 250 MB.
+runs, branch points and random check on all 87 development logs); the same fit now peaks at 250 MB. A
+result keeps a copy of its fit: dropping the cached entry clears that entry's plan.
