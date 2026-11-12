@@ -80,9 +80,10 @@ attempt has a branch point (the device's behaviour depends on an arrival time th
 from __future__ import annotations
 
 import random
+from collections import deque
 from dataclasses import dataclass, field, replace
 from itertools import combinations, product
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 from replayspect.contract import judge
 from replayspect.driven import DrivenMatch, DrivenSetup, driven_match, run_driven
@@ -100,6 +101,10 @@ PAIR_MAX = 6
 PAIRINGS_MAX = 8
 #: The units' explanation sets are all run on the whole log when there are at most this many combinations.
 COMBINATIONS_RUN = 50
+#: Runs the runner keeps whole (the most recent). Every run's result stays cached, but its trace and its
+#: plans are dropped after this many newer runs and rebuilt (the run is deterministic; not counted
+#: again) if asked for: keeping them all made memory grow with the run count, to several GB near the cap.
+TRACES_KEPT = 32
 #: Other arrival choices kept per explanation that give the same faults with other values; each is run
 #: on the whole log to widen the value ranges (:attr:`Explanation.spans`).
 SPAN_CHOICES = 4
@@ -727,9 +732,32 @@ def fit_replies(setup: DrivenSetup, first: Trace, choice: Choice, disconnects: l
 @dataclass
 class _Eval:
     fit: Fit
-    first: Trace
+    trace: Trace | None  # the first run's trace, None once dropped (see TRACES_KEPT)
     #: per tied pairing: (faults, reproduced, violated)
     results: list[tuple[dict[Fault, int | None], bool, tuple[str, ...]]] = field(default_factory=list)
+    #: runs it again: the trace and its fit (for the plans dropped with the trace)
+    again: Callable[[], tuple[Trace, Fit]] | None = field(default=None, repr=False, compare=False)
+    keep: Callable[["_Eval"], None] | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def first(self) -> Trace:
+        if self.trace is None:
+            assert self.again is not None
+            self.trace, fit = self.again()
+            self.fit.plan, self.fit.alternatives = fit.plan, fit.alternatives
+            if self.keep is not None:
+                self.keep(self)
+        return self.trace
+
+    def drop(self) -> None:
+        """Drop what is large and can be rebuilt: the trace, the plan and the tied pairings' plans (the
+        check runs are done, their results are in ``results`` and ``fit.match``)."""
+        self.trace = None
+        self.fit.plan, self.fit.alternatives = None, []  # type: ignore[assignment]
+
+    def whole(self) -> "_Eval":
+        self.first  # noqa: B018 - rebuilds what was dropped
+        return self
 
 
 class _Runner:
@@ -742,6 +770,21 @@ class _Runner:
         self.budget = cap if isinstance(cap, list) else [0, cap]
         self.cache: dict[Choice, _Eval] = {}
         self.outcomes: dict[tuple[str, ...], int] = {}
+        self._kept: deque[_Eval] = deque()
+
+    def _keep(self, ev: _Eval) -> None:
+        self._kept.append(ev)
+        while len(self._kept) > TRACES_KEPT:
+            self._kept.popleft().drop()
+
+    def _first_run(self, choice: Choice) -> Trace:
+        s = self.setup
+        return run_driven(s.system, s.log, FaultPlan.from_dict(_first_plan(choice, self.disconnects)),
+                          s.until_us, s.mutants, s.actor)
+
+    def _again(self, choice: Choice) -> tuple[Trace, Fit]:
+        first = self._first_run(choice)
+        return first, fit_replies(self.setup, first, choice, self.disconnects, self.ranges, self.usual)
 
     @property
     def runs(self) -> int:
@@ -759,7 +802,7 @@ class _Runner:
 
     def evaluate(self, choice: Choice) -> tuple[Fit, Trace] | None:
         ev = self.evaluate_all(choice)
-        return None if ev is None else (ev.fit, ev.first)
+        return None if ev is None else (ev.whole().fit, ev.first)
 
     def evaluate_all(self, choice: Choice) -> _Eval | None:
         """One run, plus a check run per tied pairing when no receive (polls left out) is unexplained."""
@@ -768,10 +811,10 @@ class _Runner:
         s = self.setup
         if not self._run():
             return None
-        first = run_driven(s.system, s.log, FaultPlan.from_dict(_first_plan(choice, self.disconnects)),
-                           s.until_us, s.mutants, s.actor)
+        first = self._first_run(choice)
         fit = fit_replies(s, first, choice, self.disconnects, self.ranges, self.usual)
-        ev = _Eval(fit, first)
+        ev = _Eval(fit, first, again=lambda: self._again(choice), keep=self._keep)
+        self._keep(ev)
         if any(e.name not in s.system.quiet_messages and e.t_us >= s.judge_from_us for e in fit.unexplained):
             self.cache[choice] = ev
             return ev
@@ -1350,8 +1393,8 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
             combos = (1, 1) if final is not None and any(ok for _, ok, _ in final.results) else (0, 1)
 
     if final is None:
-        return result("incomplete", ev0.fit, units=units, incomplete_reason="cap")
-    fit = final.fit
+        return result("incomplete", ev0.whole().fit, units=units, incomplete_reason="cap")
+    fit = final.whole().fit
     reproduced = any(ok for _, ok, _ in final.results) and all(u.explanations for u in units)
     unit_ids = set().union(*(set(u.req_ids) for u in units)) if units else set()
     if reproduced:

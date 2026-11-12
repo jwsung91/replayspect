@@ -216,8 +216,18 @@ arduino-cli compile --fqbn arduino:avr:uno \
 - **The build line and the fired lines are written even with the device log off,** like error
   lines. With the log on (the testbed's setting), they add a line on the serial link where they
   occur.
-- **Memory:** the switch adds an 8-entry table of the ids a correct device would know, about 130 B
-  of RAM. Not yet compiled for the board.
+- **Memory** (compiled on the Orin, arduino-cli 1.6.0, arduino:avr 1.8.8, device log on, not
+  flashed): the testbed-02 build used 5,166 B flash and 841 B RAM. With the switch:
+
+  | Build | Flash | RAM |
+  | --- | --- | --- |
+  | no defect | 5,426 B | 993 B (48%) |
+  | M2 | 5,462 B | 991 B |
+  | M4 | 5,472 B | 991 B |
+  | M10 | 5,408 B | 993 B |
+
+  About 152 B more RAM: the 8-entry table of the ids a correct device would know (128 B), and the
+  new log strings, which sit in RAM on the Uno. 1,055 B are left for the stack.
 
 ## Not yet
 
