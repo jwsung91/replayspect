@@ -322,6 +322,23 @@ result keeps a copy of its fit: dropping the cached entry clears that entry's pl
   testbed-03 simulator campaign, 4 change: the defect-off runs of four M4 plans lose "undecided: M4"
   (the M4 model hit the cap); their verdict stays "correct model".
 
+## Hardware experiment testbed-03
+
+`docs/experiments/testbed-03.md`: 95 real client logs from the Uno lift, built with no defect (68)
+or with M2 (10), M4 (8) or M10 (9), judged by `drive --fit --models` at `4ab81e4`, unchanged during
+and after the runs. Every session was valid.
+- **Off build:** no defect accused outside the mimic group: 0 of 64 by the tool's output, 0 of the 62
+  runs judged by the rule's wording (in R014 and R037 no model reproduced). M3 was never accused.
+  The four M4 mimic runs accuse M4 by one fault, as predicted.
+- **Defect on, touched:** a defect accused in 15 of 15, the real one in the set each time. M2 always
+  comes with M1, M4 by one fault, M10 alone with the correct model unexplained.
+- **Without the real model:** M2 is reported as M1, M10 leaves the correct model unexplained, and M4
+  does not stand out.
+- **The search:** it did not finish on three off-build retry logs. In two of them no model reproduced
+  within the cap, and the tool printed "correct model" where the registered rule says undecided.
+- **Fitter measurement:** no wrong "unexplained"; truth in the minimal set in 58 of 60; common
+  command faults real in 42 of 46.
+
 ## Device models: a log the correct model does not settle is not judged
 
 `judge_models` printed "correct model" when the correct model's own fit was not settled and no

@@ -229,6 +229,9 @@ arduino-cli compile --fqbn arduino:avr:uno \
   About 152 B more RAM: the 8-entry table of the ids a correct device would know (128 B), and the
   new log strings, which sit in RAM on the Uno. 1,055 B are left for the stack.
 
+**Result:** [docs/experiments/testbed-03.md](../../docs/experiments/testbed-03.md) (95 runs: no
+defect, M2, M4, M10).
+
 ## Not yet
 
 - **Two sources:** the client log and the device log together, with the clock between them estimated.
