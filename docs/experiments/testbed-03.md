@@ -417,9 +417,14 @@ testbed-02:
 | Measurement + paired + no faults | 64 | **0** | 1 (R049) | 63 |
 | Mimic (M4) | 4 | 4: "M4", difference 1 each | 0 | 0 |
 
-- No run accused M3.
-- Two of the 63 "correct model" verdicts (R014 and R037) have no fit that reproduced. Under the
-  rule's wording they are undecided (Departures 1).
+**The main indicator, two readings.** No false accusation in either, but the denominators differ.
+
+- **By the tool's output** (the registered measure): **0 of 64**.
+- **By the rule's wording:** **0 of the 62 runs judged.** 2 runs (R014, R037) were not judged: no
+  model, the correct one included, reproduced the log, so no comparison took place. The tool printed
+  "correct model" for them (Departures 1). They are no evidence that no defect is accused.
+
+No run accused M3.
 
 **2. Defect on, touched (15 runs).** Every run accused a defect, and the real defect is in the
 accused set in 15 of 15.
@@ -470,7 +475,8 @@ defect-on runs.
 
 ## What the results show
 
-**No false accusation on the off build outside the mimic group (0 of 64).** M3 was never accused,
+**No false accusation on the off build outside the mimic group:** 0 of 64 by the tool's output,
+0 of the 62 runs judged by the rule's wording (R014 and R037 were not judged). M3 was never accused,
 although it cannot be built. A defect is accused only where a defect is present, or where a link
 loss was set up on purpose to look exactly like one.
 
@@ -516,7 +522,7 @@ Registered before the runs:
 
 | | Prediction | Result |
 | --- | --- | --- |
-| a | Main: false accusations outside the mimic plans 0 of 64; M3 accusations 0. | **Right:** 0 of 64; M3 0. |
+| a | Main: false accusations outside the mimic plans 0 of 64; M3 accusations 0. | **Right:** 0 of 64 by the tool's output; by the rule's wording 0 of the 62 runs judged, with 2 not judged (R014, R037). M3 0. |
 | b | Mimic plans: M4 accused in 4 of 4, difference 1 each. | **Right:** 4 of 4, difference 1 each. |
 | c | Undecided verdicts: 0. Fits ended by the cap: 4, the M4 model in the paired off runs of 306, 307, 308 and 310; none elsewhere. | **Wrong.** The cap struck in exactly those four runs, but ended 25 fits, not 4. In R014 (306), R037 (307) and R049 (308) it ended the correct model's fit too. Undecided: 1 (R049) by the tool, 3 by the rule's wording (Departures 1). |
 | d | Defect on, touched (15): accused 15 of 15; real defect in the set 15 of 15. M2 → "M1 or M2" in 4, "M1 or M2 or M9" in 1 (303); M4 → "M4" in 5 (difference 1); M10 → "M10" in 5 (correct model unexplained). | **Right:** every part. |
@@ -534,18 +540,21 @@ as written.
 
 ## Departures from the registration
 
-1. **The printed verdict differs from the rule's wording in two runs.**
-   - The registration says the verdict is undecided when the correct model's fit hits the cap. In
-     R014 and R037 the cap ended every fit, the correct model's included, and the tool printed
-     "correct model". The cap list was named in full.
-   - `judge_models` marks a run undecided only through a defect model that reproduced. When nothing
-     reproduced it falls through to "correct model".
-   - The registered analysis's own copy of the rule, which is checked against the tool on every run,
-     has the same gap. So the dry run could not show it, and the simulator never capped the correct
-     model.
-   - Per the registration, the measured verdict is the printed one. Under the rule's wording, the
-     off build has 3 undecided runs and 61 "correct model" out of 64.
-   - Neither reading has an accusation, so the main result is the same.
+1. **The tool printed "correct model" for runs it did not judge.** This is a defect of the tool,
+   and the registered `analyze.py`'s copy of the rule had the same gap.
+   - **What happened.** The registration says the verdict is undecided when the correct model's fit
+     hits the cap. In R014 and R037 the cap ended every fit, the correct model's included, and the
+     tool printed "correct model". The cap list was named in full.
+   - **Why.** `judge_models` marks a run undecided only through a defect model that reproduced. When
+     nothing reproduced, it falls through to "correct model". #33 made sure the cap is not reported
+     as innocence for a defect model, but missed the case where the correct model itself is capped.
+   - **Why the checks missed it.** The registered analysis checks its own copy of the rule against
+     the tool on every run, and that copy has the same gap. So the dry run could not show it. The
+     simulator never capped the correct model either.
+   - **How it is counted.** Per the registration, the measured verdict is the printed one: 0 false
+     accusations of 64. Under the rule's wording, 62 of the 64 runs were judged (0 false
+     accusations), and R014 and R037 were not judged. With R049, the off build then has 3 undecided
+     runs and 61 "correct model".
 2. **Flashing approvals.** The registration says the next build is flashed only after the operator
    approves. The operator approved the off and M2 builds one at a time. After M2's flash the
    operator approved M4 and M10 together, with stop conditions:
@@ -579,8 +588,8 @@ and the analysis ran once. After the last build the board was flashed back to th
 - **M3 exists neither as a build nor as a mimic on this link.** It stays among the compared models,
   and any M3 accusation is false. None happened.
 - **The mimic group has one kind only** (M4: a lost `DONE` of an interrupted move). False
-  accusations of other kinds were not provoked on purpose. The 64 other off-build runs and the 87
-  development logs are the only evidence about them.
+  accusations of other kinds were not provoked on purpose. The 62 judged off-build runs outside the
+  mimic group and the 87 development logs are the only evidence about them.
 - **Value ranges** are what was seen in the explanations found, not every possible value.
 - **Hardware timing:**
   - The plans were chosen with the simulator. Every planned class held on hardware (27 of 27).

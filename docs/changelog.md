@@ -327,8 +327,9 @@ result keeps a copy of its fit: dropping the cached entry clears that entry's pl
 `docs/experiments/testbed-03.md`: 95 real client logs from the Uno lift, built with no defect (68)
 or with M2 (10), M4 (8) or M10 (9), judged by `drive --fit --models` at `4ab81e4`, unchanged during
 and after the runs. Every session was valid.
-- **Off build:** no defect accused outside the mimic group (0 of 64), and M3 never. The four M4 mimic
-  runs accuse M4 by one fault, as predicted.
+- **Off build:** no defect accused outside the mimic group: 0 of 64 by the tool's output, 0 of the 62
+  runs judged by the rule's wording (in R014 and R037 no model reproduced). M3 was never accused.
+  The four M4 mimic runs accuse M4 by one fault, as predicted.
 - **Defect on, touched:** a defect accused in 15 of 15, the real one in the set each time. M2 always
   comes with M1, M4 by one fault, M10 alone with the correct model unexplained.
 - **Without the real model:** M2 is reported as M1, M10 leaves the correct model unexplained, and M4
