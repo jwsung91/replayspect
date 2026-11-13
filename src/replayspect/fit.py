@@ -1556,8 +1556,11 @@ def judge_models(correct: FitResult, others: dict[str, FitResult]) -> dict[str, 
       ``capped`` list says where it applies.)
     - **Undecided:** a defect model that reproduced but is not settled, or any defect model that
       reproduced while the correct model's fit is not settled and not unexplained.
-    - **Verdict:** the candidates with the fewest faults, "A or B", when there is one; otherwise
-      "undecided" when a model is undecided; otherwise "correct model". A tie is no accusation.
+    - **Verdict:** the candidates with the fewest faults, "A or B", when there is one. Otherwise
+      "undecided" when a model is undecided or the correct model's own fit is not settled (it ended
+      unexplained, the cap ended it, or a random draw found fewer): with no candidate, such a log
+      was not judged, and "correct model" would read as "no defect". Otherwise "correct model". A
+      tie is no accusation.
     - ``difference`` is the correct model's ``f*`` minus the accused set's (None when the correct
       model is unexplained). ``capped`` names every fit, the correct model's included, that the cap
       ended."""
@@ -1581,13 +1584,14 @@ def judge_models(correct: FitResult, others: dict[str, FitResult]) -> dict[str, 
     accused = sorted((m for m in fewer if others[m].min_faults == best), key=_model_order)
     capped = (["correct"] if _capped(correct) else []) + sorted((m for m, r in others.items() if _capped(r)),
                                                                 key=_model_order)
-    verdict = ("defect suspected: " + " or ".join(accused)) if accused else ("undecided" if undecided else "correct model")
+    verdict = (("defect suspected: " + " or ".join(accused)) if accused
+               else "undecided" if undecided or not _settled(correct) else "correct model")
     return {
         "correct": row(correct), "models": {m: row(r) for m, r in others.items()},
         "fewer": sorted(fewer, key=_model_order), "accused": accused, "accused_size": len(accused),
         "difference": None if not accused or ok_unexplained else (correct.min_faults or 0) - (best or 0),
         "undecided": sorted(undecided, key=_model_order), "capped": capped, "capped_count": len(capped),
-        "verdict": verdict,
+        "correct_settled": _settled(correct), "verdict": verdict,
         "fits": {m: r.to_dict() for m, r in others.items()},
     }
 
@@ -1611,6 +1615,12 @@ def model_lines(d: dict[str, Any]) -> list[str]:
     if d["accused"]:
         v += (" (the correct model is unexplained)" if d["difference"] is None
               else f" ({d['difference']} fault{'s' if d['difference'] != 1 else ''} fewer)")
+    elif not d["correct_settled"]:
+        st = d["correct"]["status"]
+        why = ("no defect model explains it with a settled fit" if st == "unexplained"
+               else "the run cap ended it" if st == "incomplete" or not d["correct"]["minimal_shown"]
+               else "a random draw found fewer faults")
+        v += f" (the correct model's fit is not settled: {st}, {why}; the log is not judged)"
     lines.append(f"verdict: {v}" + (f"; undecided: {', '.join(d['undecided'])}" if d["undecided"] else "")
                  + (f"; ended by the run cap: {', '.join(d['capped'])} (a defect model the cap ended before it "
                     "reproduced is not a candidate)" if d["capped"] else ""))

@@ -314,6 +314,11 @@ model's. Client defects are not offered: in driven replay the client is the scri
   random draw found fewer faults), or one that reproduced while the correct model's fit is not
   settled (and not unexplained). Undecided is not an accusation. With no accusation and an
   undecided model, the verdict is `undecided`.
+- **A log the correct model does not settle is not judged.** With no accusation, the verdict is
+  `undecided` whenever the correct model's own fit is not settled: it ended unexplained, the run cap
+  ended it, or a random draw found fewer faults. The verdict line says which ("the log is not
+  judged"). "Correct model" is printed only when the correct model's fit is settled, so it never
+  stands for a comparison that did not take place.
 - The report gives each model's `f*` (or status), the verdict, the difference in faults (none when
   the correct model is unexplained) and the fits the cap ended. `--fit-out` adds `models`, with
   `capped` and `capped_count` and each model's whole fit under `fits`.
