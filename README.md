@@ -56,7 +56,8 @@ Implemented:
   ([docs/experiments/testbed-01.md](docs/experiments/testbed-01.md),
   [docs/experiments/testbed-02.md](docs/experiments/testbed-02.md)); a
   compile-time switch for the public device-side defects, checked against the
-  model's mutants, with no hardware run yet
+  model's mutants and run on hardware with three of them
+  ([docs/experiments/testbed-03.md](docs/experiments/testbed-03.md))
 - Driven replay of a client-side log: `drive` replays the log as a script,
   simulates the device and needs no seed; `drive --reconstruct` searches for
   the fault plan; `drive --fit` reports every explanation with the fewest link
