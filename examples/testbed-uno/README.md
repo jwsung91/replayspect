@@ -314,6 +314,11 @@ where your firmware and the unchanged one differ on that log's inputs, with the 
 analyst's conformance check looks for too. It can come after the change's own branch: with M2 it
 came 50 ms later, when the repeat executed.
 
+**Result:** [docs/experiments/testbed-04.md](../../docs/experiments/testbed-04.md) (83 runs with the
+device log against the model, and 8 blind slots). The operator had no second computer and made,
+compiled and flashed the change on the Orin, which the analyst did not use from before the
+assignment's hash until after the submission.
+
 ## Not yet
 
 - **Two sources:** the client log and the device log together, with the clock between them estimated.

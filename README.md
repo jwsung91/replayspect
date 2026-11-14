@@ -70,7 +70,9 @@ Implemented:
 - Device logs: `device` checks the device's own log against the device model
   (each model conforms, or where it first differs) with no link and no fit, and
   with the client's log counts the messages lost on the link or copied; lines
-  outside an allow list never reach a result ([docs/device-log.md](docs/device-log.md))
+  outside an allow list never reach a result ([docs/device-log.md](docs/device-log.md));
+  run on hardware with public defects and a blind group of firmware changes the
+  analyst did not know ([docs/experiments/testbed-04.md](docs/experiments/testbed-04.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with

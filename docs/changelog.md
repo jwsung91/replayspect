@@ -473,3 +473,26 @@ kind as absent. Contracts about client events are not exercised.
   - M2 and M10 are caught by C8 (`DONE` and `ERROR` for one id) from the whole device log, 7 of 7
     and 6 of 6;
   - nothing is violated in the 9 defect-build runs where the defect did not fire.
+
+## Testbed: testbed-04 results, the device log against the model on hardware
+
+83 registered hardware runs (no defect 56, M2 12, M4 8, M10 7) were judged by `replayspect device` at
+`474432c`, unchanged, and the registered analysis ran once. Every session was valid and every plan
+realized. Every registered prediction held.
+- **No-defect build:** no false mismatch (0 of 56). The same-millisecond rule was needed in 2 runs,
+  both of which conform. The 2 ms window was never used.
+- **Telling cases apart:** M4 from a real loss at the same place, 12 of 12. A request copy from an
+  `ACK` copy, 12 of 12.
+- **Where the defect fired:** the first mismatch was on the firing's request in 21 of 21.
+- **Count check:** equal to the truth in 79 of 83; it missed only the 4 planned cancellations.
+- **M1 and M2:** told apart only where the run repeats a request after `DONE`.
+- **Contracts alone:** they caught M4 (C3) and M2 and M10 (C8) with no false violation.
+
+**The blind group.** The operator made two firmware changes the agent did not know and assigned
+them to 8 slots (5 changed, 3 unchanged). The agent's submission:
+- right in 8 of 8 slots, with no false mismatch;
+- in the 4 slots where a change acted, the request and the content both right;
+- no contract violated in any slot, so the contracts caught neither change.
+
+The source stayed on the Orin, protected by the agent not using it (a departure). Results, departures
+and limits are in `docs/experiments/testbed-04.md`; no code change.
