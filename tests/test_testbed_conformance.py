@@ -207,10 +207,11 @@ def test_log_off_build_keeps_replies_and_errors(tmp_path):
 
 # -- the device log against the model (stage 1 of two sources, replayspect.devicelog) ------------
 
-from replayspect.devicelog import conform, device_report, read_device_log  # noqa: E402
+from replayspect.devicelog import Completeness, conform, device_report, read_device_log  # noqa: E402
 from replayspect.runner import get_system  # noqa: E402
 
 LIFT = get_system("lift.v0")
+FULL = Completeness.parse(["device:recv,send,state,effect"])
 
 
 def device_log(raw):
@@ -221,7 +222,7 @@ def device_log(raw):
 
 @pytest.mark.parametrize("name", sorted(SCRIPTS))
 def test_a_no_defect_firmware_log_conforms_to_the_correct_model(harness, name):
-    c = conform(LIFT, read_device_log(device_log(firmware(harness, SCRIPTS[name])[2])))
+    c = conform(LIFT, read_device_log(device_log(firmware(harness, SCRIPTS[name])[2])), complete=FULL)
     assert c.conforms and c.first is None and c.matched == c.compared > 0 and c.max_late_us == 0
 
 
@@ -235,12 +236,12 @@ FIRST_AFTER_FIRED_MS = {(1, "retries_and_repeats"): 50, (2, "retries_and_repeats
 @pytest.mark.parametrize("n,name", sorted(k for k, v in FIRED.items() if v))
 def test_the_correct_model_first_leaves_a_defect_log_where_the_defect_fired(build, n, name):
     log = read_device_log(device_log(firmware(build(n), SCRIPTS[name])[2]))
-    c = conform(LIFT, log)
+    c = conform(LIFT, log, complete=FULL)
     t_fired, rid = FIRED[(n, name)][0]
     assert not c.conforms
     assert c.first["req_id"] == rid
     assert c.first["t_us"] == (t_fired + FIRST_AFTER_FIRED_MS.get((n, name), 0)) * 1000
-    assert conform(LIFT, log, (f"M{n}",)).conforms  # the defect's own model conforms
+    assert conform(LIFT, log, (f"M{n}",), complete=FULL).conforms  # the defect's own model conforms
 
 
 @pytest.mark.parametrize("n,name", sorted(FIRED))
@@ -251,7 +252,7 @@ def test_the_build_and_defect_lines_never_reach_the_result(build, n, name):
     assert "build defect=M" in text
     bare = "".join(x + "\n" for x in text.splitlines() if "defect" not in x)
     models = ["M1", "M2", "M4", "M5", "M9", "M10", "M11"]
-    full, stripped = (json.dumps(device_report(LIFT, read_device_log(x), models), sort_keys=True)
+    full, stripped = (json.dumps(device_report(LIFT, read_device_log(x), models, complete=FULL), sort_keys=True)
                       for x in (text, bare))
     assert full == stripped
     assert "defect" not in full  # a model's name appears only as a model compared

@@ -44,8 +44,22 @@ then compared with the log.
 - **Same-millisecond order:** when an input and a timer fall in the same millisecond, the timer runs
   first, as in the firmware (testbed-uno README, difference 3). Without this rule, 6 of the 155
   no-defect logs gave a false mismatch: a poll answered in the millisecond the move ended.
+  - The order is a switch (`same_ms="input-first"` in `conform`; the tool keeps timers-first), so an
+    analysis can show what the rule changes.
+  - On the 182 real logs it changes the correct model's result only in those 6 logs, and no defect
+    run's verdict or first mismatch.
+- **The declaration decides what absence means** (`--complete device:...`, default partial):
+  - The model is fed only when the device's receives are declared complete. Otherwise every model is
+    "not checked".
+  - A model event missing from the log is a mismatch only for an output kind (`send`, `state`,
+    `effect`) declared complete.
+  - A logged event the model does not make is always a mismatch. A device that starts a motor the
+    model would not start is caught even with only the receives declared.
+  - With nothing that can count (no output line, none declared), the result is "not checked", never
+    "conforms".
 - **The end of the log:** what the model does after the log ends, minus `--late`, is not compared.
-- **The result** for each model is "conforms", or the first mismatch:
+- **The result** for each model is "conforms", "not checked" (with the reason), or the first
+  mismatch:
   - the time and the request;
   - what the model does there and what the device did (either may be nothing);
   - the model's state just before;
@@ -69,8 +83,8 @@ id:
 A difference is a message lost on the link, or an extra copy. No clock is needed.
 
 - **Completeness:** each source declares which kinds it logs completely with `--complete`, for
-  example `device:send,recv` and `client:send,recv`. The default is partial, and nothing is inferred
-  from absence.
+  example `device:recv,send,state,effect` and `client:send,recv`. The default is partial, and
+  nothing is inferred from absence.
   - A loss needs the receiving side complete.
   - An extra copy needs the sending side complete.
   - A count is a lower bound ("at least") unless the other side is complete too.
@@ -115,8 +129,12 @@ Without a device log, nothing changes. `drive` and `drive --fit` are untouched.
 - **The count check says nothing about delays.** Telling which way a message was delayed, and by how
   much, needs the clocks aligned (stage 2).
 - **A partial device log:**
-  - Without receives, the model cannot be fed, so conformance is impossible.
-  - Without sends, outputs can be compared only through the link.
+  - Without receives, the model cannot be fed, so the result is "not checked".
+  - With receives but without sends, the model's sends cannot be checked here. Comparing them with
+    the client's receives would go through the link (stage 2).
+  - With state and effect lines alone, nothing is checked. An impossible transition (such as M4's
+    reversal) could be seen from them only with the inputs, or with a transition table the device
+    model does not publish.
   - Without a declared complete side, nothing is inferred from absence.
 - **The comparison window allows only the firmware's documented timing differences.** A defect whose
   only effect is a delay of a millisecond or two would pass.

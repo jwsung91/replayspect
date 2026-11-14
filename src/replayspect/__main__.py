@@ -354,8 +354,8 @@ def _device(args: argparse.Namespace) -> int:
                 raise ValueError(f"--models: {', '.join(bad) or 'none given'} not among the published device "
                                  f"defects ({', '.join(offered) or 'none'})")
         complete = Completeness.parse(args.complete)
-        if args.complete and not args.client:
-            raise ValueError("--complete applies to the count check, which needs --client")
+        if complete.client and not args.client:
+            raise ValueError("--complete client:... applies to the count check, which needs --client")
         late = parse_time_us(args.late)
         log = read_device_log(Path(args.log).read_text(encoding="utf-8"))
         if not log.events:
@@ -712,8 +712,10 @@ def main(argv: list[str] | None = None) -> int:
                     "every other line is skipped unseen, error lines make the log invalid). The device model "
                     "is fed what the device received, at the device's times, and its sends, state changes and "
                     "effects are compared with the log: the correct model and each --models defect, each "
-                    "'conforms' or its first mismatch. With --client, messages lost on the link or copied are "
-                    "counted per message and request id; absence counts only on a side declared --complete. "
+                    "'conforms', its first mismatch, or 'not checked'. Absence is evidence only for what is "
+                    "declared --complete: the model is fed only when the device's receives are, and a model "
+                    "event missing from the log counts only for a declared kind. With --client, messages lost "
+                    "on the link or copied are counted per message and request id, under the same rule. "
                     "Exit status 0 when the log is valid and the correct model conforms, 1 otherwise, 2 bad "
                     "input. See docs/device-log.md.")
     dv.add_argument("log", help="device log (the testbed firmware's '# <millis> ...' lines)")
@@ -721,8 +723,8 @@ def main(argv: list[str] | None = None) -> int:
     dv.add_argument("--models", metavar="M1,M2,...", help="also check these published device defects ('device': all)")
     dv.add_argument("--client", metavar="TRACE", help="the client's trace (from ingest), for the count check")
     dv.add_argument("--complete", action="append", default=[], metavar="SOURCE:KINDS",
-                    help="a source that logs these kinds completely, e.g. device:send,recv or client:send,recv "
-                         "(repeatable; default: partial, nothing is inferred from absence)")
+                    help="a source that logs these kinds completely: device: any of recv,send,state,effect; "
+                         "client:send,recv (repeatable; default: partial, nothing is inferred from absence)")
     dv.add_argument("--late", default="2ms", metavar="TIME",
                     help="how much later than the model a logged event may be (default 2ms)")
     dv.add_argument("--out", metavar="PATH", help="the report as JSON (a new file)")
