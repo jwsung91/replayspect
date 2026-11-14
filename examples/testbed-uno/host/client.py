@@ -57,8 +57,10 @@ class Clock:
 
 
 class Client:
-    def __init__(self, link: FaultLink, clock: Clock, log, seed: int = 0, commands: int = 6, run_s: int = 90):
+    def __init__(self, link: FaultLink, clock: Clock, log, seed: int = 0, commands: int = 6, run_s: int = 90,
+                 expect_build: str | None = None):
         self.link, self.clock, self.log = link, clock, log
+        self.expect_build = expect_build
         self.rng = random.Random(seed)
         self.seed, self.commands, self.run_us = seed, commands, run_s * 1_000_000
         self.counters = {"r": 0, "s": 0}
@@ -117,6 +119,9 @@ class Client:
             reasons.append(f"device_errors={len(self.link.errors)}")
         if self.resets:
             reasons.append(f"resets={self.resets}")
+        if self.expect_build is not None and self.link.build != self.expect_build:
+            # never names either build: the client log must not carry the answer
+            reasons.append("wrong_build" if self.link.build is not None else "no_build_line")
         self.write(f"# end valid={'no' if reasons else 'yes'}" + (f" reasons={','.join(reasons)}" if reasons else ""), now)
         return not reasons
 
@@ -207,6 +212,10 @@ def main(argv=None) -> int:
     ap.add_argument("--plan", default="none", help="link fault plan, a JSON file (default none: pass through)")
     ap.add_argument("--run-seconds", type=int, default=90)
     ap.add_argument("--commands", type=int, default=6)
+    ap.add_argument("--expect-build", metavar="DEFECT",
+                    help="the build the board must carry ('none', or e.g. 'M4'): the build line the link files "
+                         "in the truth file must say defect=DEFECT; otherwise the run is invalid (wrong_build or "
+                         "no_build_line, never naming a build) and the exit status is 3")
     args = ap.parse_args(argv)
     import serial  # pyserial
 
@@ -215,7 +224,7 @@ def main(argv=None) -> int:
         port = serial.Serial(args.port, args.baud, timeout=0)  # opening resets the Uno
         clock = Clock()
         link = FaultLink(port, clock, truth, dlog, Plan.load(args.plan))
-        client = Client(link, clock, log, args.seed, args.commands, args.run_seconds)
+        client = Client(link, clock, log, args.seed, args.commands, args.run_seconds, args.expect_build)
         deadline = time.monotonic() + 10
         while client.started_at is None:
             if time.monotonic() > deadline:
@@ -232,6 +241,9 @@ def main(argv=None) -> int:
         valid = client.finish(clock.now_us())
         port.close()
     print(f"run {'valid' if valid else 'INVALID'}: {args.log}, {args.device_log}")
+    if args.expect_build is not None and link.build != args.expect_build:
+        print("the build record does not match --expect-build: wrong build on the board")
+        return 3
     return 0 if valid else 1
 
 
