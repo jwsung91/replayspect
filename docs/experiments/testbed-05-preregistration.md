@@ -27,9 +27,10 @@ not know:
 - the list of candidates;
 - how many mutants there are, or how many slots carry one.
 
-The rules and their samples were made by the advisor session, and the operator chose from them. The
-advisor is also Claude, but it is not this session. This session saw neither the rules nor the
-samples.
+The advisor session made the rules. The advisor is also Claude, but it is not this session. The
+advisor's script generates the candidates and draws the slots with a recorded seed. The operator
+confirms the draw, then builds, flashes and runs. Nobody picks a change by hand. This session saw
+neither the rules nor the candidates.
 
 - **The operator's folder on the Orin** (`~/blind-op`): the analyst does not read it, at any time. It
   does not use the Orin at all from when it receives the assignment's hash until it hands over the
@@ -67,20 +68,28 @@ Each plan was checked in the simulator on the unchanged firmware: the run is val
 conforms, and no rev2 contract is violated (36 of 36). The pool file (`blind-plans.json`: plan id,
 seed, kind, what the link does) goes to the operator. Any plan may serve any build.
 
-### The operator decides, alone
+### The draw, on the operator's side
 
-- which builds carry a change, and what the change is;
+The advisor's script draws, with a recorded seed:
+- which builds carry a change, and which change;
 - slot → plan;
 - slot → build;
 - the run order.
 
-Before the first session, the operator writes all of this into a file on their side, with each build's
-file and `.hex` hashes and a one-sentence description of each change. The analyst receives only the
-file's sha256. The file is shown at scoring.
+The advisor also makes the operator's folder: `fw/bNN` for each build and `reference-firmware/` for
+scoring. The operator confirms the draw. Before the first session, the operator keeps on their side an
+assignment file with the draw, each build's file and `.hex` hashes, and a one-sentence description of
+each change. The analyst receives only the file's sha256. The file is shown at scoring.
+
+**A build that cannot run** is replaced before any session by the next candidate in the draw order.
+That means a build that does not compile for the Uno, or that fails the boot check. Replacements are
+listed in the results. A build that resets during a session stays: its run is invalid and reported
+(Scoring).
 
 ### Running
 
-All on the Orin, by the operator:
+The analyst copies the testbed folder (`host/`, `run_blind.sh`, the pool) to the Orin after the
+registration's hash is recorded. The rest is done on the Orin, by the operator:
 - **Build:** `bash blind_flash.sh build-all` compiles every `fw/bNN/lift_uno` into `hex/bNN` and prints
   flash and RAM use and the sha256 hashes.
 - **Flash, before every slot:** `bash blind_flash.sh flash bNN SHA` checks the `.hex` against its hash,
@@ -177,8 +186,9 @@ does not know the changes.
   device do one thing and log another, is not seen. Such slots are scored, and predicted missed.
 - **Contracts find only what a declared rule forbids.** A change that breaks no rule passes them,
   even when the model sees it.
-- **Mechanical changes can stop a run.** A changed build may fail to compile, fail its boot check, or
-  reset during a session. Such slots carry no evidence about the method.
+- **Mechanical changes can stop a run.** A build that fails to compile or fails its boot check is
+  replaced before any session (The draw). A build that resets during a session gives an invalid slot,
+  which carries no evidence about the method.
 - **The harness covers `lift_device.h` only** (`harness.cpp` includes it). A change elsewhere in the
   firmware is not reproduced by `fired_points.py`, and its slot is not scorable for S1 and S2.
 - **The blind's protection is a commitment:**
@@ -186,8 +196,14 @@ does not know the changes.
     for it.
   - The analyst knows each slot's plan from the client log header; that says nothing about the build.
   - The analyst wrote the scripts the operator runs.
-- **Who made the changes:** the advisor (also Claude) made the rules and samples. A bias in which
-  changes an LLM thinks of cannot be ruled out.
+- **Who made the changes:** the advisor (also Claude) wrote the rules. A bias in which changes an LLM
+  thinks of cannot be ruled out.
+- **The advisor knows the tool.** It has read the tool's code and the rev2 contracts (it reviewed #47
+  and #48), so the rules were written by someone who knows what the tool checks. Against this:
+  - the draw is random among the candidates, which are sorted only by whether and when they change
+    the device's behaviour;
+  - the advisor runs `replayspect` on no candidate and no slot before the submission's hash is
+    recorded.
 - **Small numbers:** 16 slots. Rates are counts, not estimates with error bars.
 - **Timing rules:** the same-millisecond rule (timers before an input) and the 2 ms window were set on
   development logs. On new logs they can still produce false mismatches.
