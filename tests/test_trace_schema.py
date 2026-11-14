@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from replayspect.__main__ import main
+from replayspect.contract import judge, load_contracts, needs_earlier_events
 from replayspect.rewind import read_trace
 from replayspect.runner import get_system, make_repro, run_once, write_repro
 from replayspect.sim.link import FaultPlan
@@ -16,6 +17,7 @@ from replayspect.tracefile import (
     Header,
     TraceFileError,
     contracts_ref,
+    core_trace,
     file_sha256,
     parse_trace_file,
     read_trace_file,
@@ -200,6 +202,69 @@ def test_slicing_a_slice_narrows_the_cut_and_keeps_the_original_digest(m4, tmp_p
         "window": [30_000_000, 60_000_000], "actors": ["client"], "of": run.trace.digest()}
     code, _, err = out_of(capsys, ["rewind", str(a), "--window", "70s", "80s", "--full", str(tmp_path / "c.jsonl")])
     assert code == 2 and "does not overlap" in err and not (tmp_path / "c.jsonl").exists()
+
+
+# -- judging a slice: the window's end, and what a cut start can break ------------------------
+
+
+@pytest.fixture
+def correct_trace(tmp_path):
+    """A full trace of the correct lift (seed 0) with a header, so slices of it carry ``until_us``."""
+    run = run_once(LIFT, 0)
+    path = tmp_path / "full.jsonl"
+    write_trace_file(path, run.trace.events, Header(system="lift.v0", seed=0, until_us=run.until_us))
+    return path, run
+
+
+def test_a_window_slice_is_judged_until_the_window_end(correct_trace, tmp_path, capsys):
+    path, run = correct_trace
+    first = next(e for e in run.trace if e.actor == "client" and e.kind == "send" and e.name == "MOVE_UP")
+    cut = tmp_path / "cut.jsonl"
+    end = first.t_us + 1_000_000  # C2's 15 s deadline lies after the cut
+    out_of(capsys, ["rewind", str(path), "--window", "0", f"{end}us", "--full", str(cut)])
+    code, out, _ = out_of(capsys, ["rewind", str(cut), "--contracts", str(LIFT.contracts_path)])
+    assert code == 0
+    assert out.splitlines()[0] == f"judged until t={end / 1e6:.6f}s (slice window end; the run went on to 90.000000s)"
+    assert "C2 violated" not in out and "0 violated" in out
+    # --end still wins, and an end past the deadline finds the close missing.
+    code, out, _ = out_of(capsys, ["rewind", str(cut), "--contracts", str(LIFT.contracts_path), "--end", "90s"])
+    assert "C2 violated at end of run r-0001: never happened" in out
+
+
+def test_a_slice_with_a_cut_start_does_not_judge_what_the_cut_can_break(correct_trace, tmp_path, capsys):
+    path, run = correct_trace
+    assert run.violations == []
+    mid = tmp_path / "mid.jsonl"
+    out_of(capsys, ["rewind", str(path), "--window", "30s", "60s", "--full", str(mid)])
+    code, out, _ = out_of(capsys, ["rewind", str(mid), "--contracts", str(LIFT.contracts_path)])
+    assert code == 0
+    assert "contracts (lift.v0): 0 violated, 5 ok (C1, C2, C4, C6, C8), not judged: C3, C5, C7 " \
+           "(the slice starts at t=30.000000s; earlier events may be cut)" in out
+    # Without the rule, the first state event and the first poll reply of the slice fail C3 and C5.
+    events = read_trace_file(mid).trace.events
+    assert {v.contract for v in judge(core_trace(events), LIFT.contracts(), 60_000_000)} == {"C3", "C5"}
+    # The same holds at a rewind time inside the slice.
+    code, out, _ = out_of(capsys, ["rewind", str(mid), "--contracts", str(LIFT.contracts_path), "--at", "45s"])
+    assert "not judged: C3, C5, C7 (the slice starts at t=30.000000s" in out.split("contracts so far")[1]
+
+
+def test_a_slice_from_time_zero_or_by_actor_is_judged_in_full(correct_trace, tmp_path, capsys):
+    path, _ = correct_trace
+    dev = tmp_path / "dev.jsonl"
+    out_of(capsys, ["rewind", str(path), "--actor", "device", "--full", str(dev)])
+    code, out, _ = out_of(capsys, ["rewind", str(dev), "--contracts", str(LIFT.contracts_path)])
+    assert "not judged" not in out and out.splitlines()[0] == "judged until t=90.000000s (header until_us)"
+
+
+def test_which_contract_kinds_a_cut_start_can_break():
+    cs = LIFT.contracts()
+    assert {c.id for c in cs.contracts if needs_earlier_events(c)} == {"C3", "C5", "C7"}  # state_machine,
+    # consistent with last(...), count_le; a forbid only when its condition reads last(...).
+    base = {"id": "X", "desc": "x", "kind": "forbid", "event": "device.send(DONE)"}
+    plain = load_contracts({"protocol": "p", "contracts": [{**base, "when": "req_id == null"}]})
+    with_last = load_contracts({"protocol": "p", "contracts": [
+        {**base, "when": "last(device.effect(motor_stop)).req_id != req_id"}]})
+    assert not needs_earlier_events(plain.contracts[0]) and needs_earlier_events(with_last.contracts[0])
 
 
 # -- bad files fail with the line number ------------------------------------------------------

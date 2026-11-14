@@ -249,6 +249,18 @@ def judge(trace: Trace | Iterable[Event], contracts: ContractSet, end_us: int) -
     return out
 
 
+def needs_earlier_events(c: Contract) -> bool:
+    """Whether cutting events from the start of a trace can make ``c`` report a violation that did not happen.
+
+    ``state_machine`` compares the first state event's ``from`` with no previous state, ``count_le`` misses
+    the bound events counted before the cut, and any contract reading ``last(...)`` sees null where the event
+    was cut. Every other kind can only miss violations when earlier events are gone.
+    """
+    if c.kind in ("state_machine", "count_le"):
+        return True
+    return bool(build_checkers(ContractSet("", frozenset(), (c,)))[0].last_patterns())
+
+
 def first_violations(violations: Iterable[Violation]) -> dict[str, int]:
     """Map each violated contract to the seq of its earliest violation."""
     first: dict[str, int] = {}

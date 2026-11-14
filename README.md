@@ -161,7 +161,10 @@ python3 -m replayspect rewind traces/m4.jsonl --end 95s --window 15s 16s --actor
 
 Deadline contracts (C2: closed within 15 s) depend on the end time, so the
 first line always says where judging stopped. A contract none of whose
-trigger events occurred is reported as *not exercised*, not as ok.
+trigger events occurred is reported as *not exercised*, not as ok. A slice
+cut with a window is judged until the window's end, and on a slice that starts
+after time 0 the contracts the cut could break are *not judged*
+([docs/trace-schema.md](docs/trace-schema.md), "Reading rules").
 
 ### Hypothesis baseline
 
