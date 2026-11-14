@@ -49,15 +49,20 @@ def _doc_lines(spec: str) -> str:
 
 
 @pytest.mark.parametrize("c", NEW, ids=lambda c: c.id)
-def test_each_new_contract_quotes_its_lines_and_names_no_defect(c):
-    assert c.grade == "stated" and set(c.source) == {"doc", "lines", "quote", "found"}
+def test_each_new_contract_quotes_its_lines(c):
+    # No "found": how a contract was found is in docs/notes/protocol-contract-coverage.md only.
+    assert c.grade == "stated" and set(c.source) == {"doc", "lines", "quote"}
     assert c.source["doc"] == "docs/protocol-lift.md"
     text = _doc_lines(c.source["lines"])
     for piece in c.source["quote"].split(" ... "):
         assert piece in text, (c.id, piece)
-    # The contract file is shown to planners: no defect, mutant or blind slot in what it says.
-    words = " ".join([c.desc, c.source["quote"], c.source["found"]])
-    assert not re.search(r"\bM\d+\b|\bB\d\d\b|blind|defect|mutant|testbed-0", words, re.IGNORECASE), c.id
+
+
+def test_the_file_names_no_defect_and_points_at_no_operator_note():
+    # Planners are shown the whole file, comments included (Session.describe returns its text).
+    text = (ROOT / "contracts" / "lift.v0.rev2.yaml").read_text(encoding="utf-8")
+    hits = re.findall(r"\bM\d+\b|\bB\d\d\b|blind|defect|mutant|testbed|docs/notes|found", text, re.IGNORECASE)
+    assert hits == []
 
 
 @pytest.mark.parametrize("cid, rows, seq", [
@@ -76,6 +81,14 @@ def test_each_new_contract_quotes_its_lines_and_names_no_defect(c):
 def test_each_new_contract_catches_a_trace_that_breaks_it(cid, rows, seq):
     only = replace(REV2, contracts=tuple(c for c in REV2.contracts if c.id == cid))
     assert first_violations(judge(trace_of(*rows), only, END)) == {cid: seq}
+
+
+@pytest.mark.parametrize("end_us, found", [(3_002_000, {}), (3_002_001, {"C9": 1})])
+def test_c9_at_the_end_of_a_run_with_no_stop(end_us, found):
+    # A run that ends on the deadline has not missed it; 1 us later it has, reported at the end of the run.
+    only = replace(REV2, contracts=tuple(c for c in REV2.contracts if c.id == "C9"))
+    tr = trace_of((0, "device", "effect", "motor_start", "r-1", None))
+    assert first_violations(judge(tr, only, end_us)) == found
 
 
 def test_a_correct_device_breaks_none_of_the_new_contracts():

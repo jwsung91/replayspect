@@ -218,8 +218,8 @@ class OnlyAfter(Checker):
 
     Reported at the first ``event`` of a key with none, once per key. A key one
     of whose ``event`` or ``after`` events a log adapter flagged as reordered
-    (``out_of_order``, ``out_of_tolerance``) is not judged: its order is not
-    known. Violations are held until the end for that reason, and keep the seq
+    (``out_of_order``, ``out_of_tolerance``) is not judged if it has an
+    ``event``: its order is not known. Violations are held until the end for that reason, and keep the seq
     of the event that proves them.
     """
 
@@ -228,11 +228,14 @@ class OnlyAfter(Checker):
         self.seen: set[str | None] = set()
         self.found: dict[str | None, Violation] = {}
         self.reordered: set[str | None] = set()
+        self.with_event: set[str | None] = set()
 
     def on_event(self, ev, last):
         is_event, is_after = self.p["event"].matches(ev), self.p["after"].matches(ev)
         if (is_event or is_after) and ev.log and set(ev.log.get("flags") or ()) & set(REORDERED):
             self.reordered.add(ev.req_id)
+        if is_event:
+            self.with_event.add(ev.req_id)
         if is_event and ev.req_id not in self.seen and ev.req_id not in self.found:
             self.found[ev.req_id] = self.v(ev.req_id, ev.seq, f"{ev.name} with no earlier {self.p['after']}")
         if is_after:
@@ -243,7 +246,8 @@ class OnlyAfter(Checker):
         return [v for k, v in self.found.items() if k not in self.reordered]
 
     def unjudged_keys(self):
-        return set(self.reordered)
+        # A key with no ``event`` has nothing to judge, reordered or not.
+        return self.reordered & self.with_event
 
 
 def build_checkers(cs: ContractSet) -> list[Checker]:

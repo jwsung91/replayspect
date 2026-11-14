@@ -3,7 +3,7 @@
 # C1-C8 are lift.v0.yaml unchanged. C9-C13 are new; each carries its grade and its source in the protocol
 # document (docs/protocol-lift.md). lift.v0.yaml stays the default contract file and the reference of past
 # experiments; this file is used by giving its path. Quotes drop the document's Markdown backticks; a
-# "..." joins two places. Coverage of the protocol by contracts: docs/notes/protocol-contract-coverage.md.
+# "..." joins two places.
 
 protocol: lift.v0
 
@@ -80,7 +80,6 @@ contracts:
       doc: docs/protocol-lift.md
       lines: "44-46"
       quote: "A legal one starts the motor and the state becomes MOVING_UP or MOVING_DOWN; 3 s later the motor stops, the state becomes UP or DOWN, and DONE is sent."
-      found: hardware testbed
   - id: C10
     desc: the device sends DONE for a req_id only after the motor stopped for that req_id
     kind: only_after
@@ -92,7 +91,6 @@ contracts:
       doc: docs/protocol-lift.md
       lines: "26, 45-46"
       quote: "the move finished ... 3 s later the motor stops, the state becomes UP or DOWN, and DONE is sent."
-      found: hardware testbed
   - id: C11
     desc: an ERROR from the device gives the reason illegal
     kind: consistent
@@ -104,7 +102,6 @@ contracts:
       doc: docs/protocol-lift.md
       lines: "43-44"
       quote: "An illegal command is answered with ERROR (reason illegal)."
-      found: document check
   - id: C12
     desc: the device sends no more ACK for a req_id than move requests it received with that req_id
     kind: count_le
@@ -116,7 +113,6 @@ contracts:
       doc: docs/protocol-lift.md
       lines: "47-48"
       quote: "After a reconnect the device sends nothing on its own."
-      found: document check
   - id: C13
     desc: the device sends no more STATUS_REPLY for a req_id than STATUS requests it received with that req_id
     kind: count_le
@@ -128,4 +124,3 @@ contracts:
       doc: docs/protocol-lift.md
       lines: "47-49"
       quote: "After a reconnect the device sends nothing on its own. ... STATUS is answered immediately with the current state."
-      found: document check

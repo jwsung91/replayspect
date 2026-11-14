@@ -312,6 +312,7 @@ def test_only_after_does_not_judge_a_key_with_a_reordered_event():
         Event(2, 3, "d", "effect", "motor_stop", "b", log=flag),   # ...but its stop's place is not known
         Event(3, 4, "d", "send", "DONE", "c", log={"line": 5, "flags": ["out_of_tolerance"]}),  # c: the DONE itself
         Event(4, 5, "d", "send", "STATUS_REPLY", "a", log=flag),   # a flag on another pattern changes nothing
+        Event(5, 6, "d", "effect", "motor_stop", "e", log=flag),   # e: no DONE, so nothing to judge
     ]
     violations, unjudged = judge_report(Trace.from_events(events), cs, END)
     assert [(v.contract, v.req_id, v.seq) for v in violations] == [("K", "a", 0)]

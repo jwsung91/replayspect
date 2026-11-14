@@ -106,7 +106,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 
 ## 계약과 판정기 요약 (구현 완료)
 - 계약 종류 9개(8개와 `only_after`)의 의미와 보고 시점은 `docs/design-v0.md` "계약 DSL" 절이 기준이다.
-- 기본 계약 파일은 `contracts/lift.v0.yaml`(과거 실험의 기준)이다. rev2 묶음 `contracts/lift.v0.rev2.yaml`(C1~C13)은 경로를 지정해 쓴다. 계획기에게 보이는 파일이므로 `source`의 `quote`·`found`에 결함·뮤턴트·블라인드 칸 이름을 쓰지 않고, 실제 발견 경로는 `docs/notes/protocol-contract-coverage.md`에만 쓴다.
+- 기본 계약 파일은 `contracts/lift.v0.yaml`(과거 실험의 기준)이다. rev2 묶음 `contracts/lift.v0.rev2.yaml`(C1~C13)은 경로를 지정해 쓴다. 계획기에게는 주석까지 파일 전체가 보이므로, 파일 어디에도 결함·뮤턴트·블라인드 칸 이름이나 `docs/notes` 경로를 쓰지 않는다. `source`에는 `found`를 넣지 않고, 발견 경로는 `docs/notes/protocol-contract-coverage.md`에만 쓴다(`tests/test_contracts_rev2.py`가 파일 전체 글을 검사).
 - 모든 위반은 그것을 증명하는 가장 이른 이벤트에서 보고하고, 실행 끝에서만 알 수 있는
   위반은 `seq = len(trace)`로 보고한다. 실행 종료 시각 `end_us`는 판정기에 명시적으로 넘긴다.
 - 판정기는 (실행, 계약)마다 첫 위반의 seq가 `tests/lift_oracle.py`와 같아야 한다.

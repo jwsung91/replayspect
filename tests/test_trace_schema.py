@@ -329,6 +329,23 @@ def test_only_after_with_keys_not_judged_is_not_ok(tmp_path, capsys, events, lin
     assert st.to_dict() == {"C10": status}
 
 
+def test_only_after_with_no_event_and_a_reordered_after_is_not_exercised(tmp_path, capsys):
+    import yaml
+    from replayspect.rewind import contract_status
+    c = tmp_path / "c.yaml"
+    raw = {"protocol": "p", "contracts": [{"id": "C10", "desc": "DONE only after the stop", "kind": "only_after",
+                                           "per": "req_id", "event": "device.send(DONE)",
+                                           "after": "device.effect(motor_stop)"}]}
+    c.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    path = header_file(tmp_path, {"source": "adapter:x"}, [
+        {"seq": 0, "t_us": 10, "actor": "device", "kind": "effect", "name": "motor_stop", "req_id": "r-0001",
+         "source": "adapter:x", "log": {"line": 1, "flags": ["out_of_order"]}}])
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    assert "0 violated, 0 ok, not exercised: C10" in out and "not judged for" not in out
+    st = contract_status(read_trace_file(path).trace.events, load_contracts(raw), 100, "end")
+    assert st.to_dict() == {"C10": "not exercised"}
+
+
 def test_which_contract_kinds_a_cut_start_can_break():
     cs = LIFT.contracts()
     assert {c.id for c in cs.contracts if misses_without_earlier_events(c)} == {"C1", "C2", "C6", "C8"}

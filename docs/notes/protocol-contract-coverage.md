@@ -3,7 +3,8 @@
 Operator note, as of the rev2 contracts (`contracts/lift.v0.rev2.yaml`). It is not given to planners. It
 lists every normative sentence of [docs/protocol-lift.md](../protocol-lift.md), the contract that covers
 it, and whether the contract language can state it. It also records how each rev2 contract was found.
-The contract file itself names no defect or experiment slot: it is shown to planners.
+The contract file itself names no defect, experiment slot or discovery route, and does not point at this
+note: planners are shown all of it.
 
 - **Contracts:**
   - C1–C8 are `contracts/lift.v0.yaml`, the default file and the reference of past experiments.
@@ -26,14 +27,15 @@ The contract file itself names no defect or experiment slot: it is shown to plan
 | 40–41 | it is executed after its `ACK` | none | yes, with `only_after` (`motor_start` after `ACK`); not added |
 | 41 | it is executed 50 ms later | none | no: the execution is a motor start or an `ERROR`, two kinds one pattern cannot hold |
 | 42–44 | `MOVE_UP` only in `DOWN`, `MOVE_DOWN` only in `UP` | C3 (no undeclared transition) | yes |
-| 43–44 | an illegal command is answered with `ERROR`, not `DONE` | **C10** | yes, with `only_after` |
+| 43–44 | an illegal command is answered with `ERROR`, not `DONE` | **C10**, in part | in part: C10 (`only_after`) catches a `DONE` with no move; that an `ERROR` comes at all, no |
 | 44 | the `ERROR` reason is `illegal` | **C11** | yes |
 | 44–45 | a legal command starts the motor and the state becomes `MOVING_*` | C3 (the state) | the state yes; tying the motor start to it, no |
 | 45 | 3 s later the motor stops | **C9** | yes (an upper bound; a stop that comes early is not seen) |
 | 45–46 | on arrival the state becomes `UP` or `DOWN` | C3 | yes |
 | 46 | on arrival `DONE` is sent | **C10** (no `DONE` without a stop) | that a `DONE` comes at all, no: the `DONE` repeated for a copy breaks `exactly_once` |
 | 47 | the result table survives disconnects | C1, C8, indirectly | no: the device has no reconnect event |
-| 47–48 | after a reconnect the device sends nothing on its own | C7 (`DONE`/`ERROR`), **C12** (`ACK`), **C13** (`STATUS_REPLY`) | yes |
+| 47–48 | after a reconnect the device sends nothing on its own: `DONE`/`ERROR`, `ACK` | C7, **C12**, in part | in part: an upper bound per id; an unsolicited send hides under a repeat that was answered with the other message |
+| 47–49 | after a reconnect the device sends nothing on its own: `STATUS_REPLY` | **C13** | yes: each poll has one reply |
 | 49 | `STATUS` is answered immediately | none | no: a copy of a poll is answered too, which breaks `exactly_once` |
 
 ## Client

@@ -556,9 +556,11 @@ contract carries `grade: stated` and its `source` in `docs/protocol-lift.md` (li
 - **C13:** no more `STATUS_REPLY` than polls received for that id.
 
 `lift.v0.yaml` stays the default file and the reference of past experiments, and rev2 is used by giving
-its path. The file is shown to planners, so `quote` and `found` name no defect, mutant or experiment
-slot. How each contract was found, and a sentence-by-sentence coverage of the protocol, are in
-`docs/notes/protocol-contract-coverage.md`.
+its path. Planners are shown the whole file, comments included. So it names no defect, mutant,
+experiment slot or operator note, and its sources carry no `found`; a test scans the whole text. How each
+contract was found, and a sentence-by-sentence coverage of the protocol, are in
+`docs/notes/protocol-contract-coverage.md`. The note marks C7, C10 and C12 as covering their sentences
+in part.
 - **Development check** (development data, no measurement):
   - no rev2 violation on the 211 real no-defect device logs;
   - C10 catches the blind slots B01 and B06, and C9 catches B03 and B05;
@@ -567,7 +569,10 @@ slot. How each contract was found, and a sentence-by-sentence coverage of the pr
 - **Per-mutant table:** in `docs/design-v0.md`, pinned by `tests/test_contracts_rev2.py`.
 - **`only_after` statuses.** A contract with keys not judged and no violation is no longer counted as
   ok. It reads "no violation in the keys judged", or "not judged" when no key was judged, and the
-  device log report carries the keys.
+  device log report carries the keys. A key with no `event` has nothing to judge: with no `DONE` at
+  all, C10 reads "not exercised" even if a stop was reordered.
+- **C9 at the end of a run:** a test pins that a start with no stop is fine when the run ends on the
+  deadline and violated 1 µs later.
 - **Limits:** `docs/device-log.md` now notes that the firmware logs timer events at their scheduled
   time. C9 therefore checks the schedule, not the physical travel.
 - **Backlog:** an `exactly_once` case from #46.
