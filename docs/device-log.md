@@ -91,6 +91,31 @@ A difference is a message lost on the link, or an extra copy. No clock is needed
 - **Polls** are counted like any message.
 - **Losses in a logged disconnect** count as losses. The count does not tell them apart from drops.
 
+## Contracts alone
+
+With `--contracts contracts/lift.v0.yaml`, the system's contracts are judged on the device log's
+events, with no model at all. Each contract is:
+- **violated**, with the request and the time;
+- **ok**;
+- **not exercised:** none of its trigger events occurred, so it could not fail;
+- **not judged:** it refers to a device kind not declared complete. A contract that counts or
+  compares would read an unlogged kind as absent: C7, "no more `DONE`/`ERROR` than requests
+  received", would fail on a log without receives.
+
+Contracts about client events (lift C2, C4, C6) are not exercised, because no client event is given.
+
+**Development check** (the 182 real logs; the contracts as written before any real log, not
+changed):
+
+| Condition | No-defect builds (155) | M4 fired (5) | M2 fired (7) | M10 fired (6) | Defect builds, not fired (9) |
+| --- | --- | --- | --- | --- | --- |
+| state and effect lines (`device:state,effect`) | no violation | C3 in 5 (`MOVING_UP --MOVE_DOWN--> MOVING_DOWN is not declared`) | none | none | none |
+| whole device log (all four kinds) | no violation | C3 in 5 | C8 in 7 (`DONE` and `ERROR` for one id) | C8 in 6 | none |
+
+- **With state and effect lines only,** C5, C7 and C8 are not judged.
+- **What this says about logging:** a defect that changes the device's state shows in its state
+  lines. A defect that changes only its replies needs its send lines.
+
 ## Fidelity
 
 Every item in the report says how it is known:

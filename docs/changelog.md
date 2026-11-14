@@ -460,3 +460,16 @@ scored with it, on the operator's computer.
   computer the analyst cannot reach (always `-DLIFT_DEFECT=0`), running the session on the Orin with
   `--expect-build none`, and scoring with `fired_points.py --reference` after the analyst's
   submission.
+
+## Device logs: contracts alone, with no model
+
+`replayspect device --contracts PATH` judges the system's contracts on the device log's events, with
+no model. Each contract is violated, ok, not exercised, or not judged. Not judged means it refers
+to a device kind not declared complete: a contract that counts or compares would read an unlogged
+kind as absent. Contracts about client events are not exercised.
+- **On the 182 real logs, with the lift contracts unchanged:**
+  - no violation on the 155 no-defect logs;
+  - M4 is caught by C3 (an undeclared transition) from state and effect lines alone, 5 of 5;
+  - M2 and M10 are caught by C8 (`DONE` and `ERROR` for one id) from the whole device log, 7 of 7
+    and 6 of 6;
+  - nothing is violated in the 9 defect-build runs where the defect did not fire.
