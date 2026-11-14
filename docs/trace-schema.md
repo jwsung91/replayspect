@@ -103,8 +103,22 @@ data`. The header, `fidelity`, `source` and `log` are not part of it.
   `slice`; in a slice `seq` must strictly increase.
 - **Errors** name the file and the line number.
 - **Judging a slice:** the judge renumbers the events and reports violations
-  at their original `seq`. A slice holds only part of the run, so contracts
-  whose events were cut away show as *not exercised*.
+  at their original `seq`. A slice holds only part of the run:
+  - **The end time.** A slice cut with a window is judged until the window's
+    end when that is earlier than the header's `until_us`, and the output
+    says so: `judged until t=60.000000s (slice window end; the run went on to
+    90.000000s)`. Events after the window were cut, not missing, so a
+    deadline past the window's end is not judged as passed. `--end` still
+    overrides it.
+  - **A cut start.** A window that starts after time 0 may have cut earlier
+    events. Three things can then report a violation that did not happen:
+    `state_machine` (the first state event's `from` meets no previous state),
+    `count_le` (the bound events before the cut are not counted) and any
+    contract that reads `last(...)` (null where the event was cut). Such
+    contracts are *not judged* on that slice, and the output names them.
+  - **Every other kind** is judged on the events kept. A cut can hide one of
+    its violations but never make one. A contract none of whose trigger
+    events is left shows as *not exercised*.
 
 ## Slices
 

@@ -496,3 +496,21 @@ them to 8 slots (5 changed, 3 unchanged). The agent's submission:
 
 The source stayed on the Orin, protected by the agent not using it (a departure). Results, departures
 and limits are in `docs/experiments/testbed-04.md`; no code change.
+
+## Rewind: a slice is judged until its window's end, and a cut start is not judged
+
+Judging a slice used the full run's end time from the header, so a deadline contract whose closing event
+lay after the window was reported as never happening. Lift C2 did this on any window that ended within
+15 s of a move command. A slice cut with a window is now judged until the window's end when that is
+earlier than `until_us`, and the output says so. `--end` still overrides it.
+
+A window that starts after time 0 can also make a contract fail when earlier events are missing:
+- `state_machine`: the first state event's `from` meets no previous state;
+- `count_le`: the bound events before the cut are not counted;
+- any contract that reads `last(...)`: it is null where the event was cut.
+
+On a slice of the correct lift from 30 s to 60 s, C3 and C5 were reported violated. These contracts are
+now *not judged* on such a slice. The other kinds can only miss violations there, so they are still
+judged. `needs_earlier_events` in the contract package names the first group. No experiment judged a
+slice: the testbed analyses judged whole logs, and the WP4 planner views (actor slices with no window)
+were never judged by contract.

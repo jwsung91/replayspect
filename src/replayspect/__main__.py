@@ -394,7 +394,8 @@ def _rewind(args: argparse.Namespace) -> int:
         if tf.header is not None and tf.header.origin is not None:
             notes.append(f"time 0 is {tf.header.origin} (header origin)")
         v = view(tf.trace, at_us=at, step_n=args.step, sel=sel, ref=ref, contracts=js.contracts,
-                 end_us=js.end_us, end_why=js.end_why, notes=notes, limit=args.limit)
+                 end_us=js.end_us, end_why=js.end_why, notes=notes, limit=args.limit,
+                 cut_start_us=js.cut_start_us)
     except (TraceFileError, ContractError, ValueError, OSError) as exc:
         print(f"rewind: {exc}", file=sys.stderr)
         return 2

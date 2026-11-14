@@ -24,9 +24,14 @@ Terms used below:
   differ in time, actor, kind, name, req_id or data (seq is the position).
 * **judged until**: contracts are judged with an end time. Deadline contracts
   (for example "closed within 15 s") depend on it, so it is always printed.
-  It is ``--end``, else the header's ``until_us``, else the last event.
+  It is ``--end``, else the header's ``until_us``, else the last event. A
+  slice cut with a window is judged until the window's end when that is
+  earlier than ``until_us``: events after it were cut, not missing.
   At a rewind time ``t`` only the events up to ``t`` are judged, with end ``t``:
   what a judge watching the run would have known at that moment.
+* **not judged**: a slice whose window starts after time 0 may have lost
+  earlier events. Contracts that cutting them can make fail
+  (:func:`replayspect.contract.needs_earlier_events`) are not judged on it.
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ from replayspect.contract import (
     first_violation_details,
     judge,
     load_contracts,
+    needs_earlier_events,
 )
 from replayspect.trace import Event, Trace
 from replayspect.tracefile import (
@@ -219,6 +225,8 @@ class ContractStatus:
     violated: list[Any] = field(default_factory=list)  # first violation per contract
     ok: list[str] = field(default_factory=list)
     not_exercised: list[str] = field(default_factory=list)
+    not_judged: list[str] = field(default_factory=list)  # needs events before ``cut_start_us``
+    cut_start_us: int | None = None
 
 
 def trigger_patterns(c: Contract) -> set[EventPattern]:
@@ -227,19 +235,26 @@ def trigger_patterns(c: Contract) -> set[EventPattern]:
     return pats | set(c.params.get("events", ()))
 
 
-def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_why: str) -> ContractStatus:
+def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_why: str,
+                    cut_start_us: int | None = None) -> ContractStatus:
     """Judge ``events`` until ``end_us``.
 
     A contract that is not violated is ``ok`` only if one of its trigger
     events occurred; otherwise it is ``not exercised``: it could not have
     failed, which is not the same as holding.
+
+    ``cut_start_us``: the events are a slice whose window starts there, so
+    earlier events may be missing. A contract that missing earlier events can
+    make fail is ``not judged``; the others are judged on what is left.
     """
+    not_judged = [c.id for c in cs.contracts if cut_start_us is not None and needs_earlier_events(c)]
+    judged = ContractSet(cs.protocol, cs.transitions, tuple(c for c in cs.contracts if c.id not in not_judged))
     # Judged renumbered 0, 1, 2...: a slice's seq has gaps. Violations point at
     # positions in ``events``; status_lines prints the original seq.
-    firsts = first_violation_details(judge(core_trace(events), cs, end_us))
+    firsts = first_violation_details(judge(core_trace(events), judged, end_us))
     violated = {v.contract for v in firsts}
-    st = ContractStatus(end_us, end_why, firsts)
-    for c in cs.contracts:
+    st = ContractStatus(end_us, end_why, firsts, not_judged=not_judged, cut_start_us=cut_start_us)
+    for c in judged.contracts:
         if c.id in violated:
             continue
         pats = trigger_patterns(c)
@@ -255,7 +270,9 @@ def status_lines(st: ContractStatus, events: Sequence[Event], label: str) -> lis
         lines.append(f"  {v.contract} violated at {where} {v.req_id or '-'}: {v.detail}")
     lines.append(f"{label}: {len(st.violated)} violated, {len(st.ok)} ok"
                  + (f" ({', '.join(st.ok)})" if st.ok else "")
-                 + (f", not exercised: {', '.join(st.not_exercised)}" if st.not_exercised else ""))
+                 + (f", not exercised: {', '.join(st.not_exercised)}" if st.not_exercised else "")
+                 + (f", not judged: {', '.join(st.not_judged)} (the slice starts at t={fmt_t(st.cut_start_us)}; "
+                    "earlier events may be cut)" if st.not_judged else ""))
     return lines
 
 
@@ -270,6 +287,7 @@ class JudgeSetup:
     end_us: int | None = None  # None: the last event
     end_why: str | None = None
     notes: list[str] = field(default_factory=list)
+    cut_start_us: int | None = None  # a slice whose window starts after 0: earlier events may be cut
 
 
 def judge_setup(tf: TraceFile, contracts_path: str | None = None, end_us: int | None = None) -> JudgeSetup:
@@ -298,6 +316,9 @@ def judge_setup(tf: TraceFile, contracts_path: str | None = None, end_us: int | 
                 st.notes.append(f"contracts file: {hc['path']} (from header; changed since the trace was "
                                 f"written: sha256 {hc['sha256'][:12]} in header, {now[:12]} now)")
     until = h.until_us if h is not None else None
+    window = h.slice.window if h is not None and h.slice is not None else None
+    if window is not None and window[0] > 0:
+        st.cut_start_us = window[0]
     if end_us is not None:
         if st.contracts is None:
             raise ValueError("--end is the end time for judging; it needs contracts (--contracts or the trace header)")
@@ -310,6 +331,8 @@ def judge_setup(tf: TraceFile, contracts_path: str | None = None, end_us: int | 
             st.end_why = f"given; differs from header: {fmt_t(until)}"
     elif until is not None:
         st.end_us, st.end_why = until, "header until_us"
+        if window is not None and window[1] < until:  # events after the window were cut, not missing
+            st.end_us, st.end_why = window[1], f"slice window end; the run went on to {fmt_t(until)}"
     return st
 
 
@@ -371,10 +394,12 @@ def view(
     end_why: str | None = None,
     notes: Sequence[str] = (),
     limit: int = 50,
+    cut_start_us: int | None = None,
 ) -> View:
     """Build the rewind output for ``trace``. Pure: the same arguments give the same lines.
 
     ``notes`` (where the contracts came from) follow the contract status.
+    ``cut_start_us``: the trace is a slice whose window starts there (see :func:`contract_status`).
     """
     events = trace.events
     selected = sel.apply(events)
@@ -385,7 +410,7 @@ def view(
     if contracts is not None:
         # Always first: deadline contracts depend on the end time.
         why = end_why or ("given" if end_us is not None else "last event; pass --end to change")
-        st = contract_status(events, contracts, end, why)
+        st = contract_status(events, contracts, end, why, cut_start_us)
         lines += status_lines(st, events, f"contracts ({contracts.protocol or 'unnamed'})")
     lines += notes
 
@@ -410,7 +435,7 @@ def view(
         lines += _snapshot(trace, cursor, at_us, sel)
         if contracts is not None:
             past = events[:cursor]
-            st = contract_status(past, contracts, at_us, "the rewind time")
+            st = contract_status(past, contracts, at_us, "the rewind time", cut_start_us)
             lines += ["  " + line for line in status_lines(st, past, "contracts so far")]
     else:
         cursor = 0
