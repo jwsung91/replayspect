@@ -233,18 +233,23 @@ class ContractStatus:
     in_slice: list[str] = field(default_factory=list)  # no violation in the slice; earlier events not seen
     cut_start_us: int | None = None
     keys_not_judged: dict[str, list[str | None]] = field(default_factory=dict)  # only_after: reordered at ingest
+    in_judged_keys: list[str] = field(default_factory=list)  # no violation in the keys judged; others not judged
+    reordered: list[str] = field(default_factory=list)  # not judged: every key it was about was reordered
 
     def to_dict(self) -> dict[str, Any]:
         """Each contract's status: violated, ok, no violation in the slice, not exercised or not judged."""
         out = {v.contract: "violated" for v in self.violated}
         out.update({c: "ok" for c in self.ok})
         out.update({c: IN_SLICE for c in self.in_slice})
+        out.update({c: IN_JUDGED_KEYS for c in self.in_judged_keys})
+        out.update({c: "not judged" for c in self.reordered})
         out.update({c: "not exercised" for c in self.not_exercised})
         out.update({c: "not judged" for c in self.not_judged})
         return out
 
 
 IN_SLICE = "no violation in the slice"
+IN_JUDGED_KEYS = "no violation in the keys judged"
 
 
 def trigger_patterns(c: Contract) -> set[EventPattern]:
@@ -283,7 +288,11 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
             continue
         pats = trigger_patterns(c)
         exercised = any(p.matches(e) for e in events for p in pats)
-        if not exercised:
+        skipped = set(keys_not_judged.get(c.id, ()))
+        if skipped:  # only_after: a key whose order is not known was not judged
+            judged_keys = {e.req_id for e in events for p in pats if p.matches(e)} - skipped
+            (st.in_judged_keys if judged_keys else st.reordered).append(c.id)
+        elif not exercised:
             st.not_exercised.append(c.id)
         elif cut_start_us is not None and misses_without_earlier_events(c):
             st.in_slice.append(c.id)
@@ -300,6 +309,8 @@ def status_lines(st: ContractStatus, events: Sequence[Event], label: str) -> lis
     lines.append(f"{label}: {len(st.violated)} violated, {len(st.ok)} ok"
                  + (f" ({', '.join(st.ok)})" if st.ok else "")
                  + (f", {IN_SLICE} (earlier events not seen): {', '.join(st.in_slice)}" if st.in_slice else "")
+                 + (f", {IN_JUDGED_KEYS}: {', '.join(st.in_judged_keys)}" if st.in_judged_keys else "")
+                 + (f", not judged (every key reordered): {', '.join(st.reordered)}" if st.reordered else "")
                  + (f", not exercised: {', '.join(st.not_exercised)}" if st.not_exercised else "")
                  + (f", not judged: {', '.join(st.not_judged)} (the slice starts at t={fmt_t(st.cut_start_us)}; "
                     "earlier events may be cut)" if st.not_judged else ""))

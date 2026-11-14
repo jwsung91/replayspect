@@ -354,8 +354,10 @@ def contract_report(log: DeviceLog, contracts, complete: Completeness = Complete
     violated = [{"contract": v.contract, "req_id": v.req_id,
                  "t_us": events[v.seq].t_us if v.seq < len(events) else log.end_us, "detail": v.detail}
                 for v in st.violated]
+    not_judged += [{"contract": c, "keys_not_judged": st.keys_not_judged[c]} for c in st.reordered]
     return {"fidelity": OBSERVED_DEVICE, "violated": violated, "ok": st.ok, "not_exercised": st.not_exercised,
-            "not_judged": not_judged}
+            "not_judged": not_judged, "no_violation_in_keys_judged": st.in_judged_keys,
+            "keys_not_judged": st.keys_not_judged}
 
 
 def device_report(system, log: DeviceLog, models: Sequence[str] = (), client: Sequence[Event] | None = None,
@@ -413,7 +415,13 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
             parts.append(f"ok {', '.join(k['ok'])}")
         if k["not_exercised"]:
             parts.append(f"not exercised {', '.join(k['not_exercised'])}")
+        if k["no_violation_in_keys_judged"]:
+            parts.append(f"no violation in the keys judged {', '.join(k['no_violation_in_keys_judged'])}")
         parts += [f"{x['contract']} not judged (needs {', '.join(x['needs_complete'])} declared complete)"
+                  if "needs_complete" in x else f"{x['contract']} not judged (every key reordered)"
                   for x in k["not_judged"]]
+        parts += [f"{c} not judged for {', '.join(r or '-' for r in keys)} (reordered)"
+                  for c, keys in k["keys_not_judged"].items() if c in k["no_violation_in_keys_judged"]
+                  or any(v["contract"] == c for v in k["violated"])]
         lines.append("contracts on the device log alone (observed: device, no model): " + "; ".join(parts))
     return lines

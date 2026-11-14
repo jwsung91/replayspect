@@ -41,7 +41,12 @@ Implemented:
 - Deterministic simulation: virtual-time scheduler, link faults from replayable
   plans, the lift and the turntable with their clients, the lift's seeded bugs
   (mutants)
-- Contract judging: contract YAML and checkers; the contract is the only oracle
+- Contract judging: contract YAML and checkers; the contract is the only oracle.
+  Nine contract kinds, including `only_after` (an event only after an earlier
+  one with the same key), and optional provenance keys (`grade`, `source`).
+  `contracts/lift.v0.yaml` is the default; `contracts/lift.v0.rev2.yaml` adds
+  five contracts taken from the protocol document, used by giving its path
+  ([docs/notes/protocol-contract-coverage.md](docs/notes/protocol-contract-coverage.md))
 - Search, shrink and replay, with repro files; random and Hypothesis baselines
 - `rewind`: a viewer for trace files (`replay --trace-out`)
 - Trace schema v1: header, fidelity and source per event

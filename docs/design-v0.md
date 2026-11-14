@@ -199,6 +199,36 @@ M9~M11은 M4처럼 시드 1,000개 중 약 2%에서만 드러나는 장치 결�
 
 **계획 검사.** `FaultPlan.from_dict`는 모르는 필드, 빠진 필드, 잘못된 타입을 `LinkError`로 거부한다. 메시지 키가 실제로 나타날지는 실행 전에 알 수 없으므로, 실행 후 `plan_report`가 효과가 없었던 항목을 알려 준다: 그런 키의 송신이 없었던 지연·장애(`unmatched_*`), 연결이 끊긴 동안 보내져 어차피 사라진 메시지의 장애(`faults_lost_to_disconnect`), 일어나지 않은 끊김(`unapplied_disconnects`).
 
+**rev2 계약 묶음** (`contracts/lift.v0.rev2.yaml`). C1~C8은 v0 그대로이고 C9~C13을 더했다. 기본 계약 파일은 v0이고, rev2는 경로를 지정해 쓴다. 계약마다의 출처와 발견 경로, 프로토콜 문장별 대조는 `docs/notes/protocol-contract-coverage.md`.
+
+| ID | 종류 | 내용 |
+| --- | --- | --- |
+| C9 | exactly_once | 모터는 req_id마다 시작 뒤 3 s(+2 ms) 안에 정확히 한 번 멈춘다 |
+| C10 | only_after | 장치는 그 req_id의 모터가 멈춘 뒤에만 `DONE`을 보낸다 |
+| C11 | consistent | 장치의 `ERROR`는 reason `illegal`을 준다 |
+| C12 | count_le | 장치의 `ACK` 수는 그 req_id로 받은 이동 요청 수를 넘지 않는다 |
+| C13 | count_le | 장치의 `STATUS_REPLY` 수는 그 req_id로 받은 `STATUS` 수를 넘지 않는다 |
+
+rev2에서 뮤턴트별로 잡는 계약 (무작위 장애 `SEARCH_PROFILE`, 시드 0~999):
+
+| ID | 잡는 계약 (rev2) | 검출 시드 수 | 첫 검출 시드 |
+| --- | --- | --- | --- |
+| M1 | C8 | 995 | 0 |
+| M2 | C8 | 959 | 0 |
+| M3 | C7 | 996 | 0 |
+| M4 | C3 (+C9) | 19 (C9도 같은 19) | 58 |
+| M5 | C5 | 1000 | 0 |
+| M6 | C6 (+C2) | 990 | 0 |
+| M7 | C4 | 344 | 1 |
+| M8 | C2 (+C6) | 144 (C6 43) | 5 |
+| M9 | C8 | 22 | 113 |
+| M10 | C8 (+C10) | 24 (C10도 같은 24) | 36 |
+| M11 | C8 | 23 | 65 |
+
+결함 없는 구현은 같은 1,000개 시드에서 rev2 위반 0건이다. C11~C13을 위반하는 뮤턴트는 없다.
+
+C9는 M4를 실행 끝에 보고한다. 대상은 끊긴 이동의 요청이고, 반대 방향 명령이 아니다. 끊긴 이동은 멈추지 않으므로 "never happened"가 된다. 반대 명령을 그 순간에 잡는 것은 C3이다. C10은 M10을 C8과 같은 `DONE`에서 잡는다. `tests/test_contracts_rev2.py`가 이 표를 시드 100개로 확인한다.
+
 ## 판정기
 
 `judge(trace, contracts, end_us)`가 계약마다 판정기를 만들고, 트레이스 이벤트를 순서대로 한 번씩 흘려보내 위반을 모은다.

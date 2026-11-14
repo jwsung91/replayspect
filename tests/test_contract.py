@@ -6,6 +6,7 @@ import lift_oracle
 from replayspect.contract import (
     Condition,
     ContractError,
+    ContractSet,
     EventPattern,
     Operand,
     Violation,
@@ -311,6 +312,7 @@ def test_only_after_does_not_judge_a_key_with_a_reordered_event():
         Event(2, 3, "d", "effect", "motor_stop", "b", log=flag),   # ...but its stop's place is not known
         Event(3, 4, "d", "send", "DONE", "c", log={"line": 5, "flags": ["out_of_tolerance"]}),  # c: the DONE itself
         Event(4, 5, "d", "send", "STATUS_REPLY", "a", log=flag),   # a flag on another pattern changes nothing
+        Event(5, 6, "d", "effect", "motor_stop", "e", log=flag),   # e: no DONE, so nothing to judge
     ]
     violations, unjudged = judge_report(Trace.from_events(events), cs, END)
     assert [(v.contract, v.req_id, v.seq) for v in violations] == [("K", "a", 0)]
@@ -358,22 +360,10 @@ def test_judge_matches_oracle_on_first_violations(mutant, n):
         assert first_violations(judge(tr, cs, END)) == lift_oracle.first_violations(tr, END), seed
 
 
-#: C9 and C10 as contracts/lift.v0.rev2.yaml will hold them (that file comes in a later PR).
-REV2 = load_contracts("""
-protocol: lift.v0
-contracts:
-  - id: C9
-    kind: exactly_once
-    per: req_id
-    start: device.effect(motor_start)
-    event: device.effect(motor_stop)
-    within: 3002ms
-  - id: C10
-    kind: only_after
-    per: req_id
-    event: device.send(DONE)
-    after: device.effect(motor_stop)
-""")
+#: C9 and C10 from contracts/lift.v0.rev2.yaml, the contracts the rev2 oracle writes out by hand.
+_REV2_FILE = load_contracts(LIFT.parent / "lift.v0.rev2.yaml")
+REV2 = ContractSet(_REV2_FILE.protocol, _REV2_FILE.transitions,
+                   tuple(c for c in _REV2_FILE.contracts if c.id in lift_oracle.REV2_CONTRACTS))
 
 
 @pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])

@@ -164,5 +164,11 @@ Without a device log, nothing changes. `drive` and `drive --fit` are untouched.
   - Without a declared complete side, nothing is inferred from absence.
 - **The comparison window allows only the firmware's documented timing differences.** A defect whose
   only effect is a delay of a millisecond or two would pass.
+- **Timer events carry their scheduled time, not the time they happened.** The testbed firmware logs a
+  move's arrival at the time it was due (`arrive(travel_due_)`), and an execution at its due time
+  (`execute(..., p.due)`). That is why every completed move on the real logs took exactly 3,000 ms.
+  So what C9 (`contracts/lift.v0.rev2.yaml`, "the motor stops within 3 s of its start") checks on these
+  logs is the firmware's schedule, not the physical travel time. A fault where the schedule is right but
+  the motor really stops late is not seen.
 - **Logging costs time on the device:** each line takes serial time. A run with the device log on is
   not the same run as one with it off.

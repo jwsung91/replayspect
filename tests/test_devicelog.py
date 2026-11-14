@@ -322,8 +322,10 @@ def test_only_after_is_judged_on_a_device_log_only_with_both_kinds_complete():
     unmoved = NORMAL[:11] + ["2500 recv MOVE_DOWN r-0002", "2500 send DONE r-0002"] + NORMAL[11:]
     full = contract_report(read_device_log(dlog(*unmoved)), cs, Completeness.parse(["device:recv,send,state,effect"]))
     assert [(v["contract"], v["req_id"], v["t_us"]) for v in full["violated"]] == [("K", "r-0002", 2500_000)]
-    assert contract_report(read_device_log(dlog(*NORMAL)), cs,
-                           Completeness.parse(["device:recv,send,state,effect"]))["ok"] == ["K"]
+    normal = contract_report(read_device_log(dlog(*NORMAL)), cs, Completeness.parse(["device:recv,send,state,effect"]))
+    assert normal["ok"] == ["K"]
+    # a device log has no reordered lines, so every key is judged; the report says so all the same
+    assert normal["keys_not_judged"] == {} and normal["no_violation_in_keys_judged"] == []
     # a missing effect line would read as no stop: not judged without effect declared, nor without send
     for kinds_ in ("device:recv,send,state", "device:state,effect"):
         r = contract_report(read_device_log(dlog(*unmoved)), cs, Completeness.parse([kinds_]))
