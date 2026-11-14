@@ -40,6 +40,12 @@ needed. Absence counts only where the side that should show the message is decla
 (:class:`Completeness`, default partial: nothing is inferred from absence). A loss and an extra copy of
 the same message cancel out and are not seen.
 
+**Contracts alone** (:func:`contract_report`). The system's contracts judged on the device log's
+events, with no model: each contract violated, ok, not exercised (none of its trigger events
+occurred), or **not judged** when it refers to a device kind not declared complete (a contract that
+counts or compares, such as "no more DONE/ERROR than requests received", would read an unlogged kind
+as absent). Contracts about client events are not exercised: no client event is given.
+
 **Fidelity.** Every item in the report says how it is known: ``observed: device`` (the device log),
 ``observed: client`` (the client log), ``inferred: count`` (the count check), ``reconstructed`` (what
 the model does).
@@ -328,10 +334,35 @@ def count_check(client: Sequence[Event], log: DeviceLog, complete: Completeness,
                              for k in ("send", "recv") if k not in ks]}
 
 
+def contract_report(log: DeviceLog, contracts, complete: Completeness = Completeness()) -> dict[str, Any]:
+    """The contracts judged on the device log's events alone (module doc), no model."""
+    from replayspect.contract.checkers import contract_patterns
+    from replayspect.contract.spec import ContractSet
+    from replayspect.rewind import contract_status
+
+    events = list(log.events)
+    judged, not_judged = [], []
+    for c in contracts.contracts:
+        pats = contract_patterns(ContractSet(contracts.protocol, contracts.transitions, (c,)))
+        missing = sorted({p.kind for p in pats if p.actor == "device"} - complete.device)
+        if missing:
+            not_judged.append({"contract": c.id, "needs_complete": [f"device {k}" for k in missing]})
+        else:
+            judged.append(c)
+    st = contract_status(events, ContractSet(contracts.protocol, contracts.transitions, tuple(judged)),
+                         log.end_us, "end of the device log")
+    violated = [{"contract": v.contract, "req_id": v.req_id,
+                 "t_us": events[v.seq].t_us if v.seq < len(events) else log.end_us, "detail": v.detail}
+                for v in st.violated]
+    return {"fidelity": OBSERVED_DEVICE, "violated": violated, "ok": st.ok, "not_exercised": st.not_exercised,
+            "not_judged": not_judged}
+
+
 def device_report(system, log: DeviceLog, models: Sequence[str] = (), client: Sequence[Event] | None = None,
                   complete: Completeness = Completeness(), late_us: int = LATE_US,
-                  same_ms: str = "timers-first") -> dict[str, Any]:
-    """Stage 1 on one device log: the correct model and each named defect model, and the count check."""
+                  same_ms: str = "timers-first", contracts=None) -> dict[str, Any]:
+    """Stage 1 on one device log: the correct model and each named defect model, the count check and,
+    with ``contracts``, the contracts alone."""
     rows = [conform(system, log, ms, late_us, complete=complete, same_ms=same_ms) for ms in [()] + [(m,) for m in models]]
     out: dict[str, Any] = {
         "valid": log.valid, "errors": list(log.errors),
@@ -341,6 +372,8 @@ def device_report(system, log: DeviceLog, models: Sequence[str] = (), client: Se
     }
     if client is not None:
         out["counts"] = count_check(client, log, complete)
+    if contracts is not None:
+        out["contracts"] = contract_report(log, contracts, complete)
     return out
 
 
@@ -373,4 +406,14 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
                      + (", ".join(f"{x['dir']} {x['msg']} {x['req_id'] or '-'} {x['what']} x{x['n']}"
                                   + ("" if x["exact"] else " (at least)") for x in c["items"]) or "nothing lost or copied")
                      + (f"; not inferred from absence: {', '.join(c['not_inferred'])} (partial)" if c["not_inferred"] else ""))
+    if "contracts" in rep:
+        k = rep["contracts"]
+        parts = [f"{v['contract']} violated at {ts(v['t_us'])} ({v['req_id'] or '-'}): {v['detail']}" for v in k["violated"]]
+        if k["ok"]:
+            parts.append(f"ok {', '.join(k['ok'])}")
+        if k["not_exercised"]:
+            parts.append(f"not exercised {', '.join(k['not_exercised'])}")
+        parts += [f"{x['contract']} not judged (needs {', '.join(x['needs_complete'])} declared complete)"
+                  for x in k["not_judged"]]
+        lines.append("contracts on the device log alone (observed: device, no model): " + "; ".join(parts))
     return lines

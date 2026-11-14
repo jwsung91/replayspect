@@ -361,11 +361,17 @@ def _device(args: argparse.Namespace) -> int:
         if not log.events:
             raise ValueError("the device log has no recv, send, state or effect line")
         client = list(read_trace_file(args.client).trace.events) if args.client else None
-        rep = device_report(system, log, models, client, complete, late)
+        contracts = None
+        if args.contracts:
+            from replayspect.contract import load_contracts
+            contracts = load_contracts(Path(args.contracts))
+            if contracts.protocol != system.name:
+                raise ValueError(f"--contracts: {args.contracts} is for {contracts.protocol}, not {system.name}")
+        rep = device_report(system, log, models, client, complete, late, contracts=contracts)
         if args.out:
             with Path(args.out).open("x", encoding="utf-8") as fh:
                 fh.write(json.dumps(rep, indent=2, sort_keys=True) + "\n")
-    except (DeviceLogError, TraceFileError, ValueError, OSError) as exc:
+    except (DeviceLogError, TraceFileError, ContractError, ValueError, OSError) as exc:
         print(f"device: {exc}", file=sys.stderr)
         return 2
     print(f"device {args.log}: {system.name}")
@@ -725,6 +731,9 @@ def main(argv: list[str] | None = None) -> int:
     dv.add_argument("--complete", action="append", default=[], metavar="SOURCE:KINDS",
                     help="a source that logs these kinds completely: device: any of recv,send,state,effect; "
                          "client:send,recv (repeatable; default: partial, nothing is inferred from absence)")
+    dv.add_argument("--contracts", metavar="YAML",
+                    help="also judge these contracts on the device log's events alone, with no model; a contract "
+                         "that refers to a device kind not declared --complete is not judged")
     dv.add_argument("--late", default="2ms", metavar="TIME",
                     help="how much later than the model a logged event may be (default 2ms)")
     dv.add_argument("--out", metavar="PATH", help="the report as JSON (a new file)")

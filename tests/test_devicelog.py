@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from replayspect.__main__ import main
-from replayspect.devicelog import (INFERRED, OBSERVED_DEVICE, RECONSTRUCTED, Completeness, conform, count_check,
-                                   device_report, read_device_log)
+from replayspect.contract import load_contracts
+from replayspect.devicelog import (INFERRED, OBSERVED_DEVICE, RECONSTRUCTED, Completeness, conform, contract_report,
+                                   count_check, device_report, read_device_log)
 from replayspect.ingest import ingest_text, read_rules
 from replayspect.runner import get_system
 
@@ -281,3 +282,57 @@ def test_completeness_kinds():
     for bad in ("client:state", "device:handle", "link:send", "device:"):
         with pytest.raises(ValueError):
             Completeness.parse([bad])
+
+
+# -- contracts alone, no model -------------------------------------------------------------------
+
+CONTRACTS = load_contracts(Path(__file__).parent.parent / "contracts" / "lift.v0.yaml")
+#: M10's kind of defect: the refused r-0002, asked again, answered DONE instead of the stored ERROR.
+M10_LOG = NORMAL[:11] + ["2500 recv MOVE_DOWN r-0002", "2500 send DONE r-0002"] + NORMAL[11:]
+
+
+def test_contracts_alone_catch_an_undeclared_transition_from_state_and_effect_lines():
+    se = read_device_log(dlog(*kinds(M4_LOG, {"state", "effect"})))
+    r = contract_report(se, CONTRACTS, Completeness.parse(["device:state,effect"]))
+    assert [(v["contract"], v["req_id"], v["t_us"]) for v in r["violated"]] == [("C3", "r-0002", 2050_000)]
+    assert r["violated"][0]["detail"] == "MOVING_UP --MOVE_DOWN--> MOVING_DOWN is not declared"
+    assert r["ok"] == ["C1"] and r["not_exercised"] == ["C2", "C4", "C6"]  # client contracts: no client event
+    # a contract that counts or compares an undeclared kind is not judged, not passed
+    assert r["not_judged"] == [{"contract": "C5", "needs_complete": ["device send"]},
+                               {"contract": "C7", "needs_complete": ["device recv", "device send"]},
+                               {"contract": "C8", "needs_complete": ["device send"]}]
+    assert r["fidelity"] == OBSERVED_DEVICE
+
+
+def test_contracts_alone_catch_a_wrong_reply_from_the_whole_device_log():
+    full = Completeness.parse(["device:recv,send,state,effect"])
+    r = contract_report(read_device_log(dlog(*M10_LOG)), CONTRACTS, full)
+    assert [(v["contract"], v["req_id"]) for v in r["violated"]] == [("C8", "r-0002")]
+    assert r["not_judged"] == []
+    assert contract_report(read_device_log(dlog(*NORMAL)), CONTRACTS, full)["violated"] == []
+    # with the state lines missing, C5 and C3 are not judged; C7 would count a missing receive as absent
+    no_state = read_device_log(dlog(*kinds(M10_LOG, {"recv", "send", "effect"})))
+    r = contract_report(no_state, CONTRACTS, Completeness.parse(["device:recv,send,effect"]))
+    assert {x["contract"] for x in r["not_judged"]} == {"C3", "C5"} and [v["contract"] for v in r["violated"]] == ["C8"]
+
+
+def test_contracts_alone_ignore_lines_outside_the_allow_list():
+    full = Completeness.parse(["device:recv,send,state,effect"])
+    bare = [x for x in M4_LOG if "defect" not in x]
+    a, b = (json.dumps(device_report(LIFT, read_device_log(dlog(*x)), ["M4"], complete=full, contracts=CONTRACTS),
+                       sort_keys=True) for x in (M4_LOG, bare))
+    assert a == b and '"C3"' in a
+
+
+def test_cli_device_contracts(tmp_path, capsys):
+    dev = tmp_path / "device.log"
+    dev.write_text(dlog(*kinds(M4_LOG, {"state", "effect"})))
+    contracts = Path(__file__).parent.parent / "contracts" / "lift.v0.yaml"
+    assert main(["device", str(dev), "--complete", "device:state,effect", "--contracts", str(contracts)]) == 1
+    out = capsys.readouterr().out
+    assert "correct: not checked" in out
+    assert ("contracts on the device log alone (observed: device, no model): C3 violated at 2.050s (r-0002): "
+            "MOVING_UP --MOVE_DOWN--> MOVING_DOWN is not declared; ok C1; not exercised C2, C4, C6; "
+            "C5 not judged (needs device send declared complete)") in out
+    other = Path(__file__).parent.parent / "contracts" / "turntable.v0.yaml"
+    assert main(["device", str(dev), "--contracts", str(other)]) == 2  # another protocol's contracts
