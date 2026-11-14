@@ -377,3 +377,28 @@ of runs (R014, R037, R049).
   - The M4 model still hits the cap in R014, R037, R049 and R032, as the registration predicted.
   - The 87 development logs: S04a and S04b take 1–9 runs more per model, with the same results. No
     other change.
+
+## Device logs, stage 1: the device log against the model, and the count check
+
+`replayspect device` reads the device's own log and checks it against the device model, with no link
+and no fit ([device-log.md](device-log.md)).
+- **Allow list:** only `recv`, `send`, `state` and `effect` lines become events, and an `error` line
+  marks the log invalid. Every other line is skipped unseen, `build defect=` and `defect fired`
+  included. Tests require byte-equal output with and without those lines, and with and without the
+  client log's header line (which names the plan and the seed).
+- **Conformance:** the correct model and each `--models` defect, fed what the device received at the
+  device's times. Each is "conforms" or its first mismatch: the time, the request, what the model and
+  the device did, the model's state and the last input. Timers run before an input in the same
+  millisecond, as in the firmware.
+- **Count check** (`--client`, `--complete`): losses and extra copies per message and request id, with
+  nothing inferred from absence on a side not declared complete.
+- **Fidelity labels:** `observed: device`, `observed: client`, `inferred: count`, `reconstructed`.
+- **Development check** on the 182 real logs:
+  - the correct model conforms on all 155 no-defect logs;
+  - its first mismatch is on the request where the defect fired in 18 of 18 runs, at the same
+    millisecond in 11 (M4, M10) and 50 ms later in the 7 M2 runs;
+  - each build's own model conforms;
+  - M1 and M2 are not separated;
+  - the count check matches the truth files in 181 of 182 runs. The miss, testbed-02 R03, is a loss
+    and a copy of the same message that cancel out.
+- `drive` and `drive --fit` are unchanged.

@@ -7,6 +7,7 @@ input arriving in the same millisecond as a timer: there the firmware runs timer
 model runs what it scheduled first (a documented difference).
 """
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -200,3 +201,55 @@ def test_log_off_build_keeps_replies_and_errors(tmp_path):
     assert raw[0] == "0 OUT READY log=0"
     assert [r for r in raw if " LOG " in r] == ["0 LOG build defect=none", "10 LOG error no_req_id MOVE_UP"]
     assert "3050 OUT DONE r-0001" in raw
+
+
+# -- the device log against the model (stage 1 of two sources, replayspect.devicelog) ------------
+
+from replayspect.devicelog import conform, device_report, read_device_log  # noqa: E402
+from replayspect.runner import get_system  # noqa: E402
+
+LIFT = get_system("lift.v0")
+
+
+def device_log(raw):
+    """The harness's LOG lines as the testbed writes the device log: a host time, '#', then the line."""
+    return "".join(f"2026-01-01T00:00:00.000000+09:00 # {t} {body}\n"
+                   for t, kind, body in (r.split(" ", 2) for r in raw.splitlines()) if kind == "LOG")
+
+
+@pytest.mark.parametrize("name", sorted(SCRIPTS))
+def test_a_no_defect_firmware_log_conforms_to_the_correct_model(harness, name):
+    c = conform(LIFT, read_device_log(device_log(firmware(harness, SCRIPTS[name])[2])))
+    assert c.conforms and c.first is None and c.matched == c.compared > 0 and c.max_late_us == 0
+
+
+#: Where the correct model first leaves a defect build's log, against where the defect fired: the same
+#: request, at the same time, or 50 ms later when the defect's branch first answers the same ACK (a
+#: repeat taken as new) and the difference shows when it executes. PROC_NOTE in devicelog says so.
+FIRST_AFTER_FIRED_MS = {(1, "retries_and_repeats"): 50, (2, "retries_and_repeats"): 50,
+                        (9, "retries_and_repeats"): 50}
+
+
+@pytest.mark.parametrize("n,name", sorted(k for k, v in FIRED.items() if v))
+def test_the_correct_model_first_leaves_a_defect_log_where_the_defect_fired(build, n, name):
+    log = read_device_log(device_log(firmware(build(n), SCRIPTS[name])[2]))
+    c = conform(LIFT, log)
+    t_fired, rid = FIRED[(n, name)][0]
+    assert not c.conforms
+    assert c.first["req_id"] == rid
+    assert c.first["t_us"] == (t_fired + FIRST_AFTER_FIRED_MS.get((n, name), 0)) * 1000
+    assert conform(LIFT, log, (f"M{n}",)).conforms  # the defect's own model conforms
+
+
+@pytest.mark.parametrize("n,name", sorted(FIRED))
+def test_the_build_and_defect_lines_never_reach_the_result(build, n, name):
+    # the firmware writes 'build defect=Mn' and 'defect fired' into its log: the report is the same,
+    # byte for byte, with them or without them
+    text = device_log(firmware(build(n), SCRIPTS[name])[2])
+    assert "build defect=M" in text
+    bare = "".join(x + "\n" for x in text.splitlines() if "defect" not in x)
+    models = ["M1", "M2", "M4", "M5", "M9", "M10", "M11"]
+    full, stripped = (json.dumps(device_report(LIFT, read_device_log(x), models), sort_keys=True)
+                      for x in (text, bare))
+    assert full == stripped
+    assert "defect" not in full  # a model's name appears only as a model compared

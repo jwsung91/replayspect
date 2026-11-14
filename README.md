@@ -67,6 +67,10 @@ Implemented:
   the fewest-faults claim on any log with random arrivals; `--models` fits the
   log under each device defect model too and names the defects that need fewer
   faults than the correct model ([docs/driven-replay.md](docs/driven-replay.md))
+- Device logs: `device` checks the device's own log against the device model
+  (each model conforms, or where it first differs) with no link and no fit, and
+  with the client's log counts the messages lost on the link or copied; lines
+  outside an allow list never reach a result ([docs/device-log.md](docs/device-log.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with
