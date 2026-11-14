@@ -34,7 +34,17 @@ with it (the link drops what is in flight), which is not a fault.
 **The default arrival.** Each attempt arrives at the time closest to ``send + usual`` at which its
 delay and the delays of the replies it caused are all within the limit; if there is no such time,
 at ``send + usual``. The ranges stay wide; the default is the usual value, not the middle of the
-range.
+range. Which replies an attempt causes, and how long after it arrives, depends on the device's state,
+and so on the other attempts' arrivals: a command sent during a move gets ``ERROR`` 50 ms after it
+arrives only in a run where the move is still on. So the default is held in every run, not only in
+the first: an attempt left at its default whose arrival falls outside what its replies allow *in
+that run*, when they allow some arrival, is moved to the time closest to ``send + usual`` inside it,
+and the run is made again (:meth:`_Runner.evaluate_all`); one that a move puts inside but the next
+run puts outside again has a reply that does not follow its arrival, so its replies allow no arrival
+and it stays at its default. The move costs no fault (the delays stay
+within the limit), so the fewest faults is unchanged by it; without it, a usual delay a little
+larger than the real one could leave such a reply unexplained (a reply received before the device
+sent it) and push the search into units it cannot finish.
 
 **Search.** The search units are the anomalous commands (the rule of :func:`anomaly_windows`:
 retry, error, error reply, the same reply twice, late ``ACK``, late ``DONE``), plus any command
@@ -105,6 +115,9 @@ COMBINATIONS_RUN = 50
 #: plans are dropped after this many newer runs and rebuilt (the run is deterministic; not counted
 #: again) if asked for: keeping them all made memory grow with the run count, to several GB near the cap.
 TRACES_KEPT = 32
+#: Runs made at most per choice to bring the attempts left at their default inside what their replies
+#: allow (each move can change the device's timing, so the bounds are read again from the new run).
+DEFAULT_ROUNDS = 3
 #: Other arrival choices kept per explanation that give the same faults with other values; each is run
 #: on the whole log to widen the value ranges (:attr:`Explanation.spans`).
 SPAN_CHOICES = 4
@@ -733,6 +746,12 @@ def fit_replies(setup: DrivenSetup, first: Trace, choice: Choice, disconnects: l
 class _Eval:
     fit: Fit
     trace: Trace | None  # the first run's trace, None once dropped (see TRACES_KEPT)
+    #: the choice actually run: the asked choice with the attempts left at their default moved inside
+    #: what their replies allow (see :meth:`_Runner.evaluate_all`)
+    choice: Choice | None = None
+    #: attempts left at their default whose replies allow no arrival: moved inside the interval read
+    #: off one run, they fell outside the interval of the next (a reply that does not follow the arrival)
+    unbounded: frozenset = frozenset()
     #: per tied pairing: (faults, reproduced, violated)
     results: list[tuple[dict[Fault, int | None], bool, tuple[str, ...]]] = field(default_factory=list)
     #: runs it again: the trace and its fit (for the plans dropped with the trace)
@@ -772,6 +791,34 @@ class _Runner:
         self.cache: dict[Choice, _Eval] = {}
         self.outcomes: dict[tuple[str, ...], int] = {}
         self._kept: deque[_Eval] = deque()
+        self.defaults: dict[tuple, int] = {}  # attempt key -> default delay (see hold_defaults)
+        self._attempts: dict[tuple, Attempt] = {}
+
+    def hold_defaults(self, default: Choice, attempts: list[Attempt]) -> None:
+        """Keep each attempt left at its ``default`` delay inside what its replies allow in every run
+        (attempts sent while the link was down are left alone: they are lost at once)."""
+        self._attempts = {a.key: a for a in attempts}
+        down = {a.key for a in attempts if _sent_while_down(a, self.disconnects)}
+        self.defaults = {k: d for k, d in default.delays if d is not None and k in self._attempts and k not in down}
+
+    def _held(self, choice: Choice) -> list[tuple]:
+        dups = dict(choice.dups)
+        return [k for k, d in choice.delays if k not in dups and k in self.defaults and self.defaults[k] == d]
+
+    def _into_bounds(self, choice: Choice, held: list[tuple], first: Trace) -> Choice:
+        """``choice`` with each held attempt whose arrival lies outside the interval its replies allow
+        in ``first`` (when that interval is not empty) moved to the time in it closest to ``send + usual``."""
+        lo, hi = self.ranges.c2s
+        bounds = _arrival_bounds(self.setup, [self._attempts[k] for k in held], first, _tight(self.ranges, self.usual))
+        want = min(max(self.usual.c2s, lo), hi)
+        moved: dict[tuple, tuple[int | None, int | None]] = {}
+        delays = dict(choice.delays)
+        for k in held:
+            t, (b_lo, b_hi) = self._attempts[k].t_us, bounds[k]
+            if b_lo > b_hi or b_lo <= t + delays[k] <= b_hi:
+                continue
+            moved[k] = (min(max(min(max(t + want, b_lo), b_hi) - t, lo), hi), None)
+        return choice.assign(moved) if moved else choice
 
     def _keep(self, ev: _Eval) -> None:
         self._kept.append(ev)
@@ -806,20 +853,55 @@ class _Runner:
         return None if ev is None else (replace(ev.whole().fit), ev.first)
 
     def evaluate_all(self, choice: Choice) -> _Eval | None:
-        """One run, plus a check run per tied pairing when no receive (polls left out) is unexplained."""
+        """One run, plus a check run per tied pairing when no receive (polls left out) is unexplained.
+
+        With :meth:`hold_defaults`, the attempts ``choice`` leaves at their default are first brought
+        inside what their replies allow in the run (:meth:`_into_bounds`), one more run per move, at
+        most :data:`DEFAULT_ROUNDS` runs; the result's ``choice`` is the choice run. An attempt that a
+        move put inside the interval read off one run but that falls outside it again in the next has
+        no arrival its replies allow (the interval moves with the arrival: a reply that does not follow
+        it). It goes back to its default and is left there (``unbounded``)."""
         if choice in self.cache:
             return self.cache[choice]
         s = self.setup
-        if not self._run():
-            return None
-        first = self._first_run(choice)
-        fit = fit_replies(s, first, choice, self.disconnects, self.ranges, self.usual)
-        ev = _Eval(fit, first, again=lambda: self._again(choice), keep=self._keep)
+        held = self._held(choice) if self.defaults else []
+        run_choice = choice
+        traces: dict[Choice, Trace] = {}  # the runs made for this choice
+        moved_before: set[tuple] = set()
+        unbounded: set[tuple] = set()
+        for i in range(DEFAULT_ROUNDS if held else 1):
+            if run_choice in traces:
+                break
+            if run_choice != choice and run_choice in self.cache:
+                ev = self.cache[run_choice]
+                self.cache[choice] = ev
+                return ev
+            if not self._run():
+                return None
+            traces[run_choice] = first = self._first_run(run_choice)
+            if not held:
+                break
+            moved = self._into_bounds(run_choice, [k for k in held if k not in unbounded], first)
+            now = {k for (k, a), (_, b) in zip(run_choice.delays, moved.delays) if a != b}
+            again = now & moved_before
+            if again:  # moved once already and outside again: its replies allow no arrival
+                unbounded |= again
+                moved = moved.assign({k: (self.defaults[k], None) for k in again})
+            moved_before |= now
+            if moved == run_choice:
+                break
+            run_choice = moved
+        if run_choice not in traces:  # out of rounds: judge the last choice run
+            run_choice = next(reversed(traces))
+        rc, first = run_choice, traces[run_choice]
+        fit = fit_replies(s, first, rc, self.disconnects, self.ranges, self.usual)
+        ev = _Eval(fit, first, rc, frozenset(unbounded), again=lambda: self._again(rc), keep=self._keep)
         self._keep(ev)
+        self.cache[choice] = ev
         if any(e.name not in s.system.quiet_messages and e.t_us >= s.judge_from_us for e in fit.unexplained):
-            self.cache[choice] = ev
             return ev
         if self.budget[0] + len(fit.alternatives) > self.budget[1]:
+            del self.cache[choice]
             return None
         vocab = s.system.vocabulary
         poll_reply = (vocab.poll_reply if vocab is not None else "STATUS_REPLY") if s.status_rule else None
@@ -836,7 +918,6 @@ class _Runner:
                 key = tuple(sorted(violated))
                 self.outcomes[key] = self.outcomes.get(key, 0) + 1
             ev.results.append((fd, ok, tuple(sorted(violated))))
-        self.cache[choice] = ev
         return ev
 
 
@@ -919,6 +1000,12 @@ def _arrival_bounds(setup: DrivenSetup, attempts: list[Attempt], probe: Trace, r
     return out
 
 
+def _tight(ranges: Ranges, usual: Usual) -> Ranges:
+    """The ranges cut at the fault limits: the delays a default arrival may give."""
+    return Ranges((ranges.c2s[0], min(ranges.c2s[1], usual.c2s_limit)),
+                  (ranges.s2c[0], min(ranges.s2c[1], usual.s2c_limit)), ranges.dup_extra)
+
+
 def _sent_while_down(a: Attempt, disconnects: list[dict[str, int]]) -> bool:
     return any(d["t_us"] <= a.t_us < d["t_us"] + d["duration_us"] for d in disconnects)
 
@@ -927,15 +1014,15 @@ def _default_choice(setup: DrivenSetup, attempts: list[Attempt], runner: _Runner
     """Each attempt arrives at the time closest to ``send + usual`` where its delay and its replies'
     delays are all within the limit (:func:`_arrival_bounds` with the ranges cut at the limits, read
     off a probe run where every attempt arrives at the minimum delay); with no such time, at
-    ``send + usual``."""
+    ``send + usual``. Later runs keep it inside what the replies allow in each run
+    (:meth:`_Runner.hold_defaults`)."""
     ranges, usual = runner.ranges, runner.usual
     lo, hi = ranges.c2s
     base = Choice(tuple((a.key, lo) for a in attempts))
     probe = runner.evaluate(base)
     if probe is None:
         return base
-    tight = Ranges((lo, min(hi, usual.c2s_limit)), (ranges.s2c[0], min(ranges.s2c[1], usual.s2c_limit)), ranges.dup_extra)
-    bounds = _arrival_bounds(setup, attempts, probe[1], tight)
+    bounds = _arrival_bounds(setup, attempts, probe[1], _tight(ranges, usual))
     delays = []
     for a in attempts:
         want = min(max(usual.c2s, lo), hi)
@@ -1261,6 +1348,7 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
         return out
 
     default = _default_choice(setup, all_attempts, runner)
+    runner.hold_defaults(default, all_attempts)
     ev0 = runner.evaluate_all(default)
     if ev0 is None:
         return result("incomplete", Fit(_first_plan(default, disconnects), [], 0, 0, 0), incomplete_reason="cap")
@@ -1298,6 +1386,7 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
         su = replace(setup, log=[e for e in setup.log if e.t_us <= cut], judge_from_us=max(setup.judge_from_us, start),
                      end_us=max(cut, setup.log[0].t_us) if cut < setup.log[-1].t_us else setup.end_us)
         ru = _Runner(su, ranges, disconnects, budget, usual)
+        ru.hold_defaults(default, all_attempts)
         ru.outcomes = runner.outcomes
         # each unit gets a fair share of what is left, keeping some for the whole-log runs
         reserve = min(cap // 10, 200)
@@ -1409,6 +1498,7 @@ def fit_log(setup: DrivenSetup, ranges: Ranges | None = None, cap: int = FIT_RUN
                     outside.append(o)
                     outside_spans.append({})
                 _widen(outside_spans[-1 if i is None else i], o)
+        choice = final.choice or choice  # what was run: the defaults held inside the replies' bounds
         out = result("reproduced", fit, units=units, outside=outside, outside_spans=outside_spans,
                      combinations=combos, joint=joint, choice=choice)
         out.min_faults = sum(u.f or 0 for u in units) + min((len(o) for o in outside), default=0)

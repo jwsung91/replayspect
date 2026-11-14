@@ -350,3 +350,30 @@ correct model's included, and the verdict read as "no defect" although no compar
 - **Effect on stored judgments** (re-judged from the stored model rows, no refit): testbed-03, 2 of
   95 change (R014 and R037, "correct model" to `undecided`); the 87 development logs and the 106
   judgments of the testbed-03 simulator campaign, none.
+
+## Fit: the default arrival is held inside what its replies allow, in every run
+
+The default arrival was set once, from a probe run with every attempt at the minimum delay. Which
+replies an attempt causes depends on the other attempts, so in a later run the default could lie
+outside what its replies allowed. With the usual delay a little larger than the real one, that left a
+reply unexplained (received before the device sent it), with no fault to blame. In testbed-03 the
+device log slowed only the `ACK`, so the usual delay (4 ms) was larger than the real one. A command
+refused during a move after a three-attempt retry had its `ERROR` "sent" 0.2–0.8 ms after the log
+received it. The retry could not be explained on its own, and the search over both commands ran out
+of runs (R014, R037, R049).
+- **Now:** in every run, an attempt left at its default whose replies allow some arrival is inside
+  that interval: it is moved to the time in it closest to `send + usual`, and the run is made again
+  (at most three runs per choice). The move costs no fault.
+- **When the replies allow no arrival:** an attempt a move puts inside the interval, but the next run
+  puts outside again, stays at its default. Its reply does not follow its arrival.
+- **Effect** (all models refitted, registered settings, against the registered `--fit-out` of
+  testbed-03 and a refit of the 87 development logs at the previous commit):
+  - testbed-03: results change in 5 of 95 runs. In R014, R037 and R049 the correct model and every
+    defect model but M4 now reproduce with `f*` 3 and the minimal set shown (about 1,250–1,900 runs,
+    was 20,000). The true faults are in that set. The verdict becomes "correct model" in all three:
+    R014 and R037 were `undecided` (nothing reproduced), and R049 was `undecided` (the cap ended
+    the minimal set). R055 finds the same answer in 1,345–1,903 runs instead of 12,228–19,047. R071
+    takes one run more for M1, M2 and M9, with the same results.
+  - The M4 model still hits the cap in R014, R037, R049 and R032, as the registration predicted.
+  - The 87 development logs: S04a and S04b take 1–9 runs more per model, with the same results. No
+    other change.
