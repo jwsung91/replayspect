@@ -514,6 +514,90 @@ def test_a_dropped_cache_entry_does_not_reach_the_returned_result(monkeypatch):
     assert lean.to_dict() == full.to_dict()
 
 
+#: The usual delay set larger than the link's (10 ms each way, the ERROR of r-0002 2 ms back): the
+#: testbed-03 hardware case, where the usual delay came from an ACK round trip the device log slowed.
+OVER_USUAL = Usual.given(15_000, 15_000, 25_000)
+
+
+def retry_then_error(seed=2):
+    """R014's shape (testbed-03): r-0001's first two attempts lost, the third 2.5 s late, and r-0002,
+    sent during the move that third attempt starts, refused with ERROR (50 ms after it arrives)."""
+    plan = FaultPlan.from_dict({"base": "fixed",
+                                "faults": [f("c2s", "MOVE_UP", "r-0001", 0, drop=True),
+                                           f("c2s", "MOVE_UP", "r-0001", 1, drop=True)],
+                                "delays": [{**f("c2s", "MOVE_UP", "r-0001", 2), "delay_us": 2_500_000},
+                                           {**f("s2c", "ERROR", "r-0002"), "delay_us": 2_000}]})
+    hidden = run_lift(seed, plan=plan, n_commands=3, until_us=14_000_000)
+    return hidden, DrivenSetup(LIFT, logged(hidden), 14_000_000, tolerance_us=25_000)
+
+
+def test_a_default_arrival_stays_inside_what_its_replies_allow(monkeypatch):
+    # The invariant: for any command, if some arrival is allowed by its replies, its default arrival
+    # is inside that range, in every run of the fit (not only the first probe). The replies, and so
+    # the range, depend on the other attempts: r-0002 meets the move (and gets ERROR) only in runs
+    # where r-0001 arrives late. At send + 15 ms its ERROR would leave 65 ms after the send, after
+    # the log received it (62 ms): unexplained, with no fault to blame.
+    hidden, setup = retry_then_error()
+    assert [e.name for e in setup.log if e.req_id == "r-0002" and e.kind == "recv"] == ["ACK", "ERROR"]
+    atts = attempts_of(setup.log, "client")
+    disconnects = logged_disconnects(setup.log, "client", setup.until_us)
+    truth = true_choice(hidden, setup.log)
+    r0001 = {k: (truth.delay(k), None) for k, _ in truth.delays if k[1] == "r-0001"}
+    for hold in (False, True):
+        r = _Runner(setup, WIDE, disconnects, 1000, OVER_USUAL)
+        default = F._default_choice(setup, atts, r)
+        if hold:
+            r.hold_defaults(default, atts)
+        ev = r.evaluate_all(default.assign(r0001))
+        unexplained = [(e.name, e.req_id) for e in ev.fit.unexplained]
+        # without holding the default (before the fix), the true r-0001 cannot reproduce the log
+        assert unexplained == ([] if hold else [("ERROR", "r-0002")]), hold
+        assert any(ok for _, ok, _ in ev.results) == hold
+
+    # every run of a whole fit: each attempt left at its default is inside its replies' range
+    checked = []
+    evaluate_all = F._Runner.evaluate_all
+
+    def check(self, choice):
+        ev = evaluate_all(self, choice)
+        if ev is not None and self.defaults:
+            held = self._held(choice)
+            assert not ev.unbounded  # here every held attempt's replies follow its arrival
+            assert self._into_bounds(ev.choice, held, ev.first) == ev.choice
+            checked.append(len(held))
+        return ev
+    monkeypatch.setattr(F._Runner, "evaluate_all", check)
+    res = fit_log(setup, WIDE, cap=20_000, usual=OVER_USUAL)
+    assert len(checked) > 100 and min(checked) > 0
+    # and the fit settles without the joint search (before the fix: joint, 20000 runs, minimal not shown)
+    assert res.reproduced and res.minimal_shown and not res.joint and res.min_faults == 3 and res.runs < 2_000
+    true_faults = {("drop", "c2s", "MOVE_UP", "r-0001", 0), ("drop", "c2s", "MOVE_UP", "r-0001", 1),
+                   ("delay", "c2s", "MOVE_UP", "r-0001", 2)}
+    assert true_faults in flat(res)[0]
+
+
+def test_a_default_whose_replies_move_with_it_stays_at_the_default(monkeypatch):
+    # testbed-03 R071 (M2): r-0003's first attempt, late, arrived 1 us after its retry, and the ERROR
+    # it caused was read as the retry's reply (the bounds tie every later reply of a request to its
+    # first arrival). Moving the retry earlier moved that bound earlier by as much: its replies
+    # allow no arrival. Such an attempt goes back to its default and is reported unbounded.
+    setup = short()
+    atts = attempts_of(setup.log, "client")
+    r = _Runner(setup, WIDE, [], 100, USUAL)
+    default = F._default_choice(setup, atts, r)
+    r.hold_defaults(default, atts)
+    key = ("MOVE_UP", "r-0001", 0)
+
+    def chase(self, choice, held, first):  # the interval is always 133 us before the arrival
+        return choice.assign({key: (choice.delay(key) - 133, None)}) if key in held else choice
+    monkeypatch.setattr(F._Runner, "_into_bounds", chase)
+    before = r.runs
+    ev = r.evaluate_all(default)
+    assert ev.choice == default and ev.unbounded == {key}
+    # the default's run and the one moved run; the default's is judged (plus its check runs)
+    assert r.runs - before == 2 + len(ev.results)
+
+
 # -- device models -----------------------------------------------------------------------------
 
 

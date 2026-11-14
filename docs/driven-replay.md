@@ -176,6 +176,25 @@ by the device sends that reached the link.
   as given. The default arrival is the usual value, not the middle of the range: with a 0–5 s range
   the middle put retries after the move had ended, and invented `DONE` drops.
 
+**The default is held in every run.** Which replies an attempt causes depends on the device's state,
+and so on the other attempts. A command sent during a move gets `ERROR` 50 ms after it arrives, but
+only in a run where the move is still on; in the probe run it may get `ACK` and `DONE` instead.
+- **The rule:** for any attempt left at its default, if its replies in a run allow some arrival, the
+  arrival is inside that interval. An attempt outside it is moved to the time in it closest to
+  `send + usual`, and the run is made again (at most three runs per choice).
+- **When the replies allow no arrival:** an attempt moved inside the interval of one run that falls
+  outside the interval of the next has a reply that does not follow its arrival, so no arrival is
+  allowed. It goes back to its default. (testbed-03 R071: a late first attempt arrived 1 µs after
+  its retry, and its `ERROR` was read as the retry's reply.)
+- **The move costs no fault:** every delay stays within the limit, so the fewest faults does not
+  change.
+- **Why:** a usual delay a little larger than the real one is otherwise enough to leave a reply
+  unexplained, received before the device sent it, with no fault to blame. In testbed-03 the device
+  log slowed only the `ACK`, so the usual delay (half the `ACK` round trip, 4 ms) was larger than the
+  real one. A command refused during a move then had its `ERROR` "sent" 0.2–0.8 ms after the log
+  received it. The retry before it could not be explained on its own, and the search over both
+  commands ran out of runs (R014, R037, R049).
+
 ### The search
 
 **Units.** The search units are the anomalous commands, plus any command with a receive the default
