@@ -6,6 +6,7 @@ import lift_oracle
 from replayspect.contract import (
     Condition,
     ContractError,
+    ContractSet,
     EventPattern,
     Operand,
     Violation,
@@ -358,22 +359,10 @@ def test_judge_matches_oracle_on_first_violations(mutant, n):
         assert first_violations(judge(tr, cs, END)) == lift_oracle.first_violations(tr, END), seed
 
 
-#: C9 and C10 as contracts/lift.v0.rev2.yaml will hold them (that file comes in a later PR).
-REV2 = load_contracts("""
-protocol: lift.v0
-contracts:
-  - id: C9
-    kind: exactly_once
-    per: req_id
-    start: device.effect(motor_start)
-    event: device.effect(motor_stop)
-    within: 3002ms
-  - id: C10
-    kind: only_after
-    per: req_id
-    event: device.send(DONE)
-    after: device.effect(motor_stop)
-""")
+#: C9 and C10 from contracts/lift.v0.rev2.yaml, the contracts the rev2 oracle writes out by hand.
+_REV2_FILE = load_contracts(LIFT.parent / "lift.v0.rev2.yaml")
+REV2 = ContractSet(_REV2_FILE.protocol, _REV2_FILE.transitions,
+                   tuple(c for c in _REV2_FILE.contracts if c.id in lift_oracle.REV2_CONTRACTS))
 
 
 @pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])
