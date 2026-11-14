@@ -339,6 +339,40 @@ def _drive(args: argparse.Namespace) -> int:
     return 0 if m.reproduced else 1
 
 
+def _device(args: argparse.Namespace) -> int:
+    from replayspect.devicelog import Completeness, DeviceLogError, device_report, read_device_log, report_lines
+    from replayspect.fit import device_models
+
+    try:
+        system = get_system(args.system)
+        offered = device_models(system)
+        models = []
+        if args.models:
+            models = offered if args.models == "device" else [m.strip() for m in args.models.split(",") if m.strip()]
+            bad = [m for m in models if m not in offered]
+            if bad or not models:
+                raise ValueError(f"--models: {', '.join(bad) or 'none given'} not among the published device "
+                                 f"defects ({', '.join(offered) or 'none'})")
+        complete = Completeness.parse(args.complete)
+        if args.complete and not args.client:
+            raise ValueError("--complete applies to the count check, which needs --client")
+        late = parse_time_us(args.late)
+        log = read_device_log(Path(args.log).read_text(encoding="utf-8"))
+        if not log.events:
+            raise ValueError("the device log has no recv, send, state or effect line")
+        client = list(read_trace_file(args.client).trace.events) if args.client else None
+        rep = device_report(system, log, models, client, complete, late)
+        if args.out:
+            with Path(args.out).open("x", encoding="utf-8") as fh:
+                fh.write(json.dumps(rep, indent=2, sort_keys=True) + "\n")
+    except (DeviceLogError, TraceFileError, ValueError, OSError) as exc:
+        print(f"device: {exc}", file=sys.stderr)
+        return 2
+    print(f"device {args.log}: {system.name}")
+    print("\n".join(report_lines(rep)))
+    return 0 if rep["valid"] and rep["models"][0]["conforms"] else 1
+
+
 def _rewind(args: argparse.Namespace) -> int:
     try:
         tf = read_trace_file(args.trace)
@@ -672,6 +706,27 @@ def main(argv: list[str] | None = None) -> int:
                     help="write the run's trace (new file); matched receives carry their log line")
     dr.add_argument("--plan-out", metavar="PATH", help="write the plan (new file)")
     dr.set_defaults(fn=_drive)
+    dv = sub.add_parser(
+        "device", help="check a device log against the device model (no link, no fit)",
+        description="Reads the device's own log (recv, send, state and effect lines with the device clock; "
+                    "every other line is skipped unseen, error lines make the log invalid). The device model "
+                    "is fed what the device received, at the device's times, and its sends, state changes and "
+                    "effects are compared with the log: the correct model and each --models defect, each "
+                    "'conforms' or its first mismatch. With --client, messages lost on the link or copied are "
+                    "counted per message and request id; absence counts only on a side declared --complete. "
+                    "Exit status 0 when the log is valid and the correct model conforms, 1 otherwise, 2 bad "
+                    "input. See docs/device-log.md.")
+    dv.add_argument("log", help="device log (the testbed firmware's '# <millis> ...' lines)")
+    dv.add_argument("--system", default="lift.v0")
+    dv.add_argument("--models", metavar="M1,M2,...", help="also check these published device defects ('device': all)")
+    dv.add_argument("--client", metavar="TRACE", help="the client's trace (from ingest), for the count check")
+    dv.add_argument("--complete", action="append", default=[], metavar="SOURCE:KINDS",
+                    help="a source that logs these kinds completely, e.g. device:send,recv or client:send,recv "
+                         "(repeatable; default: partial, nothing is inferred from absence)")
+    dv.add_argument("--late", default="2ms", metavar="TIME",
+                    help="how much later than the model a logged event may be (default 2ms)")
+    dv.add_argument("--out", metavar="PATH", help="the report as JSON (a new file)")
+    dv.set_defaults(fn=_device)
     b = sub.add_parser("baseline", help="random search over a session's seeds")
     b.add_argument("--system", default="lift.v0")
     b.add_argument("--mutant", action="append", default=[])
