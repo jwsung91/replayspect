@@ -100,7 +100,8 @@ events, with no model at all. Each contract is:
 - **not exercised:** none of its trigger events occurred, so it could not fail;
 - **not judged:** it refers to a device kind not declared complete. A contract that counts or
   compares would read an unlogged kind as absent: C7, "no more `DONE`/`ERROR` than requests
-  received", would fail on a log without receives.
+  received", would fail on a log without receives. An `only_after` contract needs both of its
+  kinds: "`DONE` only after the motor stopped" is judged only with sends and effects declared.
 
 Contracts about client events (lift C2, C4, C6) are not exercised, because no client event is given.
 
