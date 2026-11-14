@@ -117,8 +117,25 @@ data`. The header, `fidelity`, `source` and `log` are not part of it.
     contract that reads `last(...)` (null where the event was cut). Such
     contracts are *not judged* on that slice, and the output names them.
   - **Every other kind** is judged on the events kept. A cut can hide one of
-    its violations but never make one. A contract none of whose trigger
-    events is left shows as *not exercised*.
+    its violations but never make one, so the verdict is not symmetric:
+    - a violation found in the slice is reported as a violation;
+    - `at_most_once`, `exactly_once`, `at_most_one_open` and
+      `mutually_exclusive` carry state from earlier events. On a slice with a
+      cut start they can miss a violation whose proof is in the slice: the
+      first occurrence, the first `start`, an earlier open or the other
+      pattern was cut. When they find none, the status is *no violation in
+      the slice (earlier events not seen)*, not *ok*;
+    - `forbid` and `consistent` without `last(...)` look at one event at a
+      time, so *ok* means no event in the slice breaks them.
+  - **The window's end** needs no such status. Judging stops there, as at a
+    rewind time, and the first line says so. A violation that only events
+    after the window would prove is outside the slice.
+  - A window that covers the whole trace (starting at time 0) cuts nothing
+    at the start, and its verdicts read as for a full trace.
+  - A contract none of whose trigger events is left shows as *not exercised*.
+  - **Not handled yet:** a slice cut by actor only, when it removes a
+    contract's other actor. No lift or turntable contract spans two actors
+    today.
 
 ## Slices
 

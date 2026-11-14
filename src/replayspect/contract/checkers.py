@@ -261,6 +261,17 @@ def needs_earlier_events(c: Contract) -> bool:
     return bool(build_checkers(ContractSet("", frozenset(), (c,)))[0].last_patterns())
 
 
+def misses_without_earlier_events(c: Contract) -> bool:
+    """Whether cutting events from the start of a trace can hide a violation of ``c`` proved inside what is left.
+
+    ``at_most_once`` (the first occurrence cut), ``exactly_once`` (the first ``start`` or the first occurrence
+    cut), ``at_most_one_open`` (a key opened before the cut) and ``mutually_exclusive`` (one pattern seen only
+    before the cut) carry state from earlier events but never report a violation that did not happen. On
+    such a cut, no violation means no violation in what is left, not that the contract holds.
+    """
+    return c.kind in ("at_most_once", "exactly_once", "at_most_one_open", "mutually_exclusive")
+
+
 def first_violations(violations: Iterable[Violation]) -> dict[str, int]:
     """Map each violated contract to the seq of its earliest violation."""
     first: dict[str, int] = {}

@@ -32,6 +32,9 @@ Terms used below:
 * **not judged**: a slice whose window starts after time 0 may have lost
   earlier events. Contracts that cutting them can make fail
   (:func:`replayspect.contract.needs_earlier_events`) are not judged on it.
+* **no violation in the slice**: on such a slice, a contract that the cut can
+  only make miss a violation (:func:`replayspect.contract.misses_without_earlier_events`)
+  and that has none is reported with this status, not ``ok``.
 """
 
 from __future__ import annotations
@@ -49,6 +52,7 @@ from replayspect.contract import (
     first_violation_details,
     judge,
     load_contracts,
+    misses_without_earlier_events,
     needs_earlier_events,
 )
 from replayspect.trace import Event, Trace
@@ -226,7 +230,20 @@ class ContractStatus:
     ok: list[str] = field(default_factory=list)
     not_exercised: list[str] = field(default_factory=list)
     not_judged: list[str] = field(default_factory=list)  # needs events before ``cut_start_us``
+    in_slice: list[str] = field(default_factory=list)  # no violation in the slice; earlier events not seen
     cut_start_us: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Each contract's status: violated, ok, no violation in the slice, not exercised or not judged."""
+        out = {v.contract: "violated" for v in self.violated}
+        out.update({c: "ok" for c in self.ok})
+        out.update({c: IN_SLICE for c in self.in_slice})
+        out.update({c: "not exercised" for c in self.not_exercised})
+        out.update({c: "not judged" for c in self.not_judged})
+        return out
+
+
+IN_SLICE = "no violation in the slice"
 
 
 def trigger_patterns(c: Contract) -> set[EventPattern]:
@@ -245,7 +262,11 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
 
     ``cut_start_us``: the events are a slice whose window starts there, so
     earlier events may be missing. A contract that missing earlier events can
-    make fail is ``not judged``; the others are judged on what is left.
+    make fail is ``not judged``; the others are judged on what is left. Of
+    those, one that the cut can only make miss a violation is ``in_slice``,
+    not ``ok``, when it has none: no violation in the slice, earlier events
+    not seen. A cut at the window's end needs no such status: judging stops at
+    the window's end, as at a rewind time, and the first line says so.
     """
     not_judged = [c.id for c in cs.contracts if cut_start_us is not None and needs_earlier_events(c)]
     judged = ContractSet(cs.protocol, cs.transitions, tuple(c for c in cs.contracts if c.id not in not_judged))
@@ -259,7 +280,12 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
             continue
         pats = trigger_patterns(c)
         exercised = any(p.matches(e) for e in events for p in pats)
-        (st.ok if exercised else st.not_exercised).append(c.id)
+        if not exercised:
+            st.not_exercised.append(c.id)
+        elif cut_start_us is not None and misses_without_earlier_events(c):
+            st.in_slice.append(c.id)
+        else:
+            st.ok.append(c.id)
     return st
 
 
@@ -270,6 +296,7 @@ def status_lines(st: ContractStatus, events: Sequence[Event], label: str) -> lis
         lines.append(f"  {v.contract} violated at {where} {v.req_id or '-'}: {v.detail}")
     lines.append(f"{label}: {len(st.violated)} violated, {len(st.ok)} ok"
                  + (f" ({', '.join(st.ok)})" if st.ok else "")
+                 + (f", {IN_SLICE} (earlier events not seen): {', '.join(st.in_slice)}" if st.in_slice else "")
                  + (f", not exercised: {', '.join(st.not_exercised)}" if st.not_exercised else "")
                  + (f", not judged: {', '.join(st.not_judged)} (the slice starts at t={fmt_t(st.cut_start_us)}; "
                     "earlier events may be cut)" if st.not_judged else ""))
