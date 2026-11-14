@@ -8,6 +8,7 @@ from replayspect.contract.checkers import (
     first_violations,
     judge,
     matched_patterns,
+    misses_without_earlier_events,
     needs_earlier_events,
 )
 from replayspect.contract.spec import (
@@ -37,5 +38,6 @@ __all__ = [
     "judge",
     "load_contracts",
     "matched_patterns",
+    "misses_without_earlier_events",
     "needs_earlier_events",
 ]

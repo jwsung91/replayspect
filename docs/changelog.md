@@ -514,3 +514,16 @@ now *not judged* on such a slice. The other kinds can only miss violations there
 judged. `needs_earlier_events` in the contract package names the first group. No experiment judged a
 slice: the testbed analyses judged whole logs, and the WP4 planner views (actor slices with no window)
 were never judged by contract.
+
+## Rewind: a slice with a cut start reports "no violation in the slice", not ok
+
+On a slice whose window starts after time 0, four kinds carry state from events the cut may have removed:
+`at_most_once`, `exactly_once`, `at_most_one_open` and `mutually_exclusive`. They can miss a violation
+whose proof is in the slice, but they never make one. A violation is still reported as a violation. When
+they find none, the status is now *no violation in the slice (earlier events not seen)* instead of ok.
+`ContractStatus.to_dict` gives it a status value of its own, and `misses_without_earlier_events` in the
+contract package names the four kinds.
+
+A cut at the window's end needs no such status: judging stops there, as at a rewind time. A window from
+time 0 reads as before. The trace schema notes the asymmetry, and one case not handled yet: an actor-only
+slice that removes a contract's other actor.

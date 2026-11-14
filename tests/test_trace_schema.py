@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from replayspect.__main__ import main
-from replayspect.contract import judge, load_contracts, needs_earlier_events
+from replayspect.contract import judge, load_contracts, misses_without_earlier_events, needs_earlier_events
 from replayspect.rewind import read_trace
 from replayspect.runner import get_system, make_repro, run_once, write_repro
 from replayspect.sim.link import FaultPlan
@@ -238,8 +238,8 @@ def test_a_slice_with_a_cut_start_does_not_judge_what_the_cut_can_break(correct_
     out_of(capsys, ["rewind", str(path), "--window", "30s", "60s", "--full", str(mid)])
     code, out, _ = out_of(capsys, ["rewind", str(mid), "--contracts", str(LIFT.contracts_path)])
     assert code == 0
-    assert "contracts (lift.v0): 0 violated, 5 ok (C1, C2, C4, C6, C8), not judged: C3, C5, C7 " \
-           "(the slice starts at t=30.000000s; earlier events may be cut)" in out
+    assert "contracts (lift.v0): 0 violated, 1 ok (C4), no violation in the slice (earlier events not seen): " \
+           "C1, C2, C6, C8, not judged: C3, C5, C7 (the slice starts at t=30.000000s; earlier events may be cut)" in out
     # Without the rule, the first state event and the first poll reply of the slice fail C3 and C5.
     events = read_trace_file(mid).trace.events
     assert {v.contract for v in judge(core_trace(events), LIFT.contracts(), 60_000_000)} == {"C3", "C5"}
@@ -256,8 +256,39 @@ def test_a_slice_from_time_zero_or_by_actor_is_judged_in_full(correct_trace, tmp
     assert "not judged" not in out and out.splitlines()[0] == "judged until t=90.000000s (header until_us)"
 
 
+ONCE = {"protocol": "p", "contracts": [{"id": "C1", "desc": "motor starts at most once per req_id",
+                                         "kind": "at_most_once", "per": "req_id", "event": "device.effect(motor_start)"}]}
+
+
+def start(seq, t_us):
+    return {"seq": seq, "t_us": t_us, "actor": "device", "kind": "effect", "name": "motor_start", "req_id": "r-0001"}
+
+
+@pytest.mark.parametrize("window, events, line, status", [
+    # the second start is in the slice: violated, as before
+    ([10, 100], [start(3, 20), start(5, 30)], "  C1 violated at #5 0.000030s r-0001: motor_start #2", "violated"),
+    # the first start (seq 1, t=5) was cut: the second looks like a first, so nothing is found in the slice
+    ([10, 100], [start(5, 30)], "0 violated, 0 ok, no violation in the slice (earlier events not seen): C1",
+     "no violation in the slice"),
+    # a window from time 0 cuts nothing at the start: ok
+    ([0, 100], [start(5, 30)], "0 violated, 1 ok (C1)", "ok"),
+])
+def test_a_kind_that_a_cut_start_can_only_make_miss(tmp_path, capsys, window, events, line, status):
+    import yaml
+    from replayspect.rewind import contract_status
+    c = tmp_path / "c.yaml"
+    c.write_text(yaml.safe_dump(ONCE), encoding="utf-8")
+    path = header_file(tmp_path, {"until_us": 200, "slice": {"window": window, "actors": None, "of": None}}, events)
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    assert code == 0 and line in out
+    cut = window[0] if window[0] > 0 else None
+    st = contract_status(read_trace_file(path).trace.events, load_contracts(ONCE), 100, "window end", cut)
+    assert st.to_dict() == {"C1": status}
+
+
 def test_which_contract_kinds_a_cut_start_can_break():
     cs = LIFT.contracts()
+    assert {c.id for c in cs.contracts if misses_without_earlier_events(c)} == {"C1", "C2", "C6", "C8"}
     assert {c.id for c in cs.contracts if needs_earlier_events(c)} == {"C3", "C5", "C7"}  # state_machine,
     # consistent with last(...), count_le; a forbid only when its condition reads last(...).
     base = {"id": "X", "desc": "x", "kind": "forbid", "event": "device.send(DONE)"}
