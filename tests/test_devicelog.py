@@ -15,6 +15,8 @@ from replayspect.runner import get_system
 LIFT = get_system("lift.v0")
 CLIENT_RULES = Path(__file__).parent.parent / "examples" / "testbed-uno" / "rules" / "testbed-client.yaml"
 T = "2026-11-13T22:43:05.116898+09:00"
+#: The testbed declares both logs complete.
+ALL = Completeness.parse(["device:recv,send,state,effect", "client:send,recv"])
 
 
 def dlog(*lines):
@@ -65,13 +67,13 @@ def test_an_error_line_makes_the_log_invalid():
 
 
 def test_a_device_that_follows_the_model_conforms():
-    c = conform(LIFT, read_device_log(dlog(*NORMAL)))
+    c = conform(LIFT, read_device_log(dlog(*NORMAL)), complete=ALL)
     assert c.conforms and c.first is None and c.matched == c.compared == len(NORMAL) - 5  # 4 recv, 1 build
 
 
 def test_the_first_mismatch_says_when_in_what_state_on_what_input_device_and_model_differ():
     log = read_device_log(dlog(*M4_LOG))
-    c = conform(LIFT, log)
+    c = conform(LIFT, log, complete=ALL)
     assert not c.conforms
     assert c.first == {
         "t_us": 2050_000, "req_id": "r-0002",
@@ -79,7 +81,7 @@ def test_the_first_mismatch_says_when_in_what_state_on_what_input_device_and_mod
         "device": {"t_us": 2050_000, "event": "effect motor_start r-0002 dir=down", "fidelity": OBSERVED_DEVICE},
         "model_state": "MOVING_UP",
         "last_input": {"t_us": 2000_000, "event": "recv MOVE_DOWN r-0002", "fidelity": OBSERVED_DEVICE}}
-    assert conform(LIFT, log, ("M4",)).conforms
+    assert conform(LIFT, log, ("M4",), complete=ALL).conforms
 
 
 def test_in_one_millisecond_the_timers_run_before_the_input():
@@ -88,19 +90,20 @@ def test_in_one_millisecond_the_timers_run_before_the_input():
     # the poll sees UP. The model, fed the poll at that millisecond, must do the same.
     lines = NORMAL[:8] + ["3054 effect motor_stop r-0001", "3054 state UP r-0001 from=MOVING_UP on=arrived",
                           "3054 send DONE r-0001", "3054 recv STATUS s-0002", "3054 send STATUS_REPLY s-0002 state=UP"]
-    assert conform(LIFT, read_device_log(dlog(*lines))).conforms
+    assert conform(LIFT, read_device_log(dlog(*lines)), complete=ALL).conforms
 
 
 def test_an_event_later_than_the_window_is_a_mismatch():
     lines = [x.replace("3054 ", "3057 ") for x in NORMAL]
-    c = conform(LIFT, read_device_log(dlog(*lines)))
+    c = conform(LIFT, read_device_log(dlog(*lines)), complete=ALL)
     assert not c.conforms and c.first["t_us"] == 3054_000
-    assert conform(LIFT, read_device_log(dlog(*lines)), late_us=3_000).conforms
+    assert conform(LIFT, read_device_log(dlog(*lines)), late_us=3_000, complete=ALL).conforms
 
 
 def test_the_report_is_the_same_with_or_without_lines_outside_the_allow_list():
     bare = [x for x in M4_LOG if "defect" not in x]
-    rep = [json.dumps(device_report(LIFT, read_device_log(dlog(*x)), ["M1", "M2", "M4", "M10"]), sort_keys=True)
+    rep = [json.dumps(device_report(LIFT, read_device_log(dlog(*x)), ["M1", "M2", "M4", "M10"], complete=ALL),
+                      sort_keys=True)
            for x in (M4_LOG, bare, bare + ["7000 build defect=M4", "7000 note anything"])]
     assert rep[0] == rep[1] == rep[2]
 
@@ -120,7 +123,6 @@ def client_events(lines):
     return ingest_text(text.encode(), read_rules(CLIENT_RULES)).events
 
 
-ALL = Completeness.parse(["device:send,recv", "client:send,recv"])
 
 
 def test_losses_and_extra_copies_are_counted_per_message_and_request_id():
@@ -191,7 +193,7 @@ def test_cli_device(tmp_path, capsys):
     assert main(["ingest", str(cl), "--rules", str(CLIENT_RULES), "--out", str(trace)]) == 0
     capsys.readouterr()
     out = tmp_path / "rep.json"
-    code = main(["device", str(dev), "--models", "M2,M4", "--client", str(trace), "--complete", "device:send,recv",
+    code = main(["device", str(dev), "--models", "M2,M4", "--client", str(trace), "--complete", "device:recv,send,state,effect",
                  "--complete", "client:send,recv", "--out", str(out)])
     text = capsys.readouterr().out
     assert code == 1  # the correct model does not conform
@@ -202,9 +204,80 @@ def test_cli_device(tmp_path, capsys):
     rep = json.loads(out.read_text())
     assert rep["conforming"] == ["M4"] and [m["model"] for m in rep["models"]] == ["correct", "M2", "M4"]
     dev.write_text(dlog(*NORMAL))
-    assert main(["device", str(dev)]) == 0
+    assert main(["device", str(dev), "--complete", "device:recv,send,state,effect"]) == 0
     assert "correct: conforms" in capsys.readouterr().out
+    assert main(["device", str(dev)]) == 1  # nothing declared: not checked
+    assert "correct: not checked (the device's receives are not declared complete" in capsys.readouterr().out
     assert main(["device", str(dev), "--models", "M6"]) == 2  # a client defect is not a device model
-    assert main(["device", str(dev), "--complete", "device:recv"]) == 2  # no --client
+    assert main(["device", str(dev), "--complete", "client:send"]) == 2  # no --client
     dev.write_text("nothing here\n")
     assert main(["device", str(dev)]) == 2
+
+
+# -- the declaration decides what absence means --------------------------------------------------
+
+DEVICE_ALL = Completeness.parse(["device:recv,send,state,effect"])
+
+
+def kinds(lines, keep):
+    return [x for x in lines if x.split()[1] in keep]
+
+
+def test_without_the_receives_declared_the_model_is_not_fed():
+    log = read_device_log(dlog(*M4_LOG))
+    for c in (conform(LIFT, log), conform(LIFT, log, complete=Completeness.parse(["device:send,state,effect"]))):
+        assert c.status == "not checked" and not c.conforms and c.first is None
+        assert "receives are not declared complete" in c.reason
+
+
+def test_a_missing_event_counts_only_for_a_kind_declared_complete():
+    no_sends = read_device_log(dlog(*kinds(NORMAL, {"recv", "state", "effect"})))
+    assert conform(LIFT, no_sends, complete=Completeness.parse(["device:recv,state,effect"])).conforms
+    c = conform(LIFT, no_sends, complete=DEVICE_ALL)  # sends declared complete but none logged
+    assert c.status == "differs" and c.first["model"]["event"] == "send ACK r-0001" and c.first["device"] is None
+    # a logged event the model does not make counts whatever is declared: M4's motor start
+    c = conform(LIFT, read_device_log(dlog(*M4_LOG)), complete=Completeness.parse(["device:recv"]))
+    assert c.status == "differs" and c.first["device"]["event"] == "effect motor_start r-0002 dir=down"
+    assert c.first["model"] is None and c.absence_counts == ()
+
+
+def test_with_nothing_that_can_count_the_result_is_not_checked_never_conforms():
+    recv_only = read_device_log(dlog(*kinds(NORMAL, {"recv"})))
+    c = conform(LIFT, recv_only, complete=Completeness.parse(["device:recv"]))
+    assert c.status == "not checked" and "nothing to compare" in c.reason
+    rep = device_report(LIFT, recv_only, ["M4"], complete=Completeness.parse(["device:recv"]))
+    assert rep["conforming"] == []
+
+
+def test_the_count_check_under_filtered_device_logs():
+    # sends only (declared): the ERROR copy is seen, the lost poll is not; receives only: the reverse
+    lines = [x for x in NORMAL if "s-0001" not in x]
+    sends = read_device_log(dlog(*kinds(lines, {"send"})))
+    c = count_check(client_events(CLIENT), sends, Completeness.parse(["device:send", "client:send,recv"]))
+    assert [(x["dir"], x["what"], x["req_id"]) for x in c["items"]] == [("s2c", "extra copy", "r-0002")]
+    recvs = read_device_log(dlog(*kinds(lines, {"recv"})))
+    c = count_check(client_events(CLIENT), recvs, Completeness.parse(["device:recv", "client:send,recv"]))
+    assert [(x["dir"], x["what"], x["req_id"]) for x in c["items"]] == [("c2s", "lost", "s-0001")]
+    # declared wrongly (sends complete on a log without sends): every reply the client got reads as a copy
+    c = count_check(client_events(CLIENT), recvs, Completeness.parse(["device:recv,send", "client:send,recv"]))
+    assert {x["what"] for x in c["items"] if x["dir"] == "s2c"} == {"extra copy"}
+
+
+def test_the_same_millisecond_order_is_a_switch():
+    lines = NORMAL[:8] + ["3054 effect motor_stop r-0001", "3054 state UP r-0001 from=MOVING_UP on=arrived",
+                          "3054 send DONE r-0001", "3054 recv STATUS s-0002", "3054 send STATUS_REPLY s-0002 state=UP",
+                          "4002 recv STATUS s-0003", "4002 send STATUS_REPLY s-0003 state=UP"]
+    log = read_device_log(dlog(*lines))
+    assert conform(LIFT, log, complete=DEVICE_ALL).conforms
+    c = conform(LIFT, log, complete=DEVICE_ALL, same_ms="input-first")
+    assert c.status == "differs" and c.first["model"]["event"] == "send STATUS_REPLY s-0002 state=MOVING_UP"
+    with pytest.raises(ValueError):
+        conform(LIFT, log, complete=DEVICE_ALL, same_ms="random")
+
+
+def test_completeness_kinds():
+    c = Completeness.parse(["device:recv,send,state,effect", "client:send,recv"])
+    assert c.device == {"recv", "send", "state", "effect"} and c.client == {"send", "recv"}
+    for bad in ("client:state", "device:handle", "link:send", "device:"):
+        with pytest.raises(ValueError):
+            Completeness.parse([bad])

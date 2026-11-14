@@ -419,3 +419,22 @@ and no fit ([device-log.md](device-log.md)).
   - On the 182 real device logs, the harness reproduced every log.
   - On the 27 testbed-03 defect-build logs, the computed points equal the `defect fired` lines
     those builds wrote, 18 of 18.
+
+## Device logs: conformance follows the completeness declaration; the same-millisecond order is a switch
+
+- **What the declaration now decides.** The device's declaration (`--complete device:...`) covers
+  `recv`, `send`, `state` and `effect`, and conformance follows it:
+  - without the receives declared, every model is "not checked" (the model cannot be fed);
+  - a model event missing from the log counts only for a declared output kind;
+  - a logged event the model does not make always counts;
+  - with nothing that can count, the result is "not checked", never "conforms".
+- **Before,** conformance compared every output kind whatever was declared, so a log filtered to some
+  kinds read as a device that skipped the rest.
+- **Changed default.** `replayspect device` with no `--complete` now reports "not checked" (exit 1).
+  The testbed declares `device:recv,send,state,effect` and `client:send,recv`.
+- **The same-millisecond order is a switch:** `conform(..., same_ms="input-first")`. The tool keeps
+  timers-first.
+- **On the 182 real logs, with the full declaration:**
+  - the results are the same as before;
+  - input-first order changes the correct model's result in 6 no-defect logs only, and no defect
+    run's verdict or first mismatch.
