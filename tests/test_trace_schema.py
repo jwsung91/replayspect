@@ -301,6 +301,34 @@ def test_rewind_names_the_keys_only_after_could_not_judge(tmp_path, capsys):
     assert "  C10: not judged for r-0002 (an event of theirs was reordered by the log adapter)" in out
 
 
+@pytest.mark.parametrize("events, line, status", [
+    # one key judged and fine, one reordered: not "ok"
+    ([("r-0001", None), ("r-0002", ["out_of_order"])], "0 violated, 0 ok, no violation in the keys judged: C10",
+     "no violation in the keys judged"),
+    # every key reordered: nothing was judged
+    ([("r-0002", ["out_of_tolerance"])], "0 violated, 0 ok, not judged (every key reordered): C10", "not judged"),
+])
+def test_only_after_with_keys_not_judged_is_not_ok(tmp_path, capsys, events, line, status):
+    import yaml
+    from replayspect.rewind import contract_status
+    c = tmp_path / "c.yaml"
+    raw = {"protocol": "p", "contracts": [{"id": "C10", "desc": "DONE only after the stop", "kind": "only_after",
+                                           "per": "req_id", "event": "device.send(DONE)",
+                                           "after": "device.effect(motor_stop)"}]}
+    c.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    rows = []
+    for i, (rid, flags) in enumerate(events):
+        rows += [{"seq": 2 * i, "t_us": 10 * i, "actor": "device", "kind": "effect", "name": "motor_stop", "req_id": rid,
+                  "source": "adapter:x", "log": {"line": 2 * i + 1}},
+                 {"seq": 2 * i + 1, "t_us": 10 * i + 1, "actor": "device", "kind": "send", "name": "DONE", "req_id": rid,
+                  "source": "adapter:x", "log": {"line": 2 * i + 2, **({"flags": flags} if flags else {})}}]
+    path = header_file(tmp_path, {"source": "adapter:x"}, rows)
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    assert line in out and "C10: not judged for r-0002" in out
+    st = contract_status(read_trace_file(path).trace.events, load_contracts(raw), 100, "end")
+    assert st.to_dict() == {"C10": status}
+
+
 def test_which_contract_kinds_a_cut_start_can_break():
     cs = LIFT.contracts()
     assert {c.id for c in cs.contracts if misses_without_earlier_events(c)} == {"C1", "C2", "C6", "C8"}

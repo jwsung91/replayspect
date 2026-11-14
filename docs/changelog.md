@@ -544,3 +544,30 @@ request". `count_le` fails there on a correct device, because a request copied a
   other keys and empty values.
 - **Oracle.** The reference oracle gains C9 and C10 as the rev2 contract file will hold them, and the
   judge matches it on seeds 0–99 for the correct lift and every mutant. No contract file changes here.
+
+## Contracts: the rev2 lift contracts
+
+`contracts/lift.v0.rev2.yaml` holds C1–C8 of `lift.v0.yaml` unchanged and five new contracts. Each new
+contract carries `grade: stated` and its `source` in `docs/protocol-lift.md` (lines and quote):
+- **C9:** the motor stops exactly once per request, within 3002 ms of its start;
+- **C10:** `DONE` only after the motor stopped for that request (`only_after`);
+- **C11:** an `ERROR` gives the reason `illegal`;
+- **C12:** no more `ACK` than move requests received for that id;
+- **C13:** no more `STATUS_REPLY` than polls received for that id.
+
+`lift.v0.yaml` stays the default file and the reference of past experiments, and rev2 is used by giving
+its path. The file is shown to planners, so `quote` and `found` name no defect, mutant or experiment
+slot. How each contract was found, and a sentence-by-sentence coverage of the protocol, are in
+`docs/notes/protocol-contract-coverage.md`.
+- **Development check** (development data, no measurement):
+  - no rev2 violation on the 211 real no-defect device logs;
+  - C10 catches the blind slots B01 and B06, and C9 catches B03 and B05;
+  - on simulator seeds 0–999 the correct lift breaks nothing, and the only new catches are M4 by C9
+    and M10 by C10 (same seeds as C3 and C8).
+- **Per-mutant table:** in `docs/design-v0.md`, pinned by `tests/test_contracts_rev2.py`.
+- **`only_after` statuses.** A contract with keys not judged and no violation is no longer counted as
+  ok. It reads "no violation in the keys judged", or "not judged" when no key was judged, and the
+  device log report carries the keys.
+- **Limits:** `docs/device-log.md` now notes that the firmware logs timer events at their scheduled
+  time. C9 therefore checks the schedule, not the physical travel.
+- **Backlog:** an `exactly_once` case from #46.

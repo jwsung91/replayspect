@@ -1,0 +1,131 @@
+# Behavioural contracts for the lift protocol, revision 2.
+#
+# C1-C8 are lift.v0.yaml unchanged. C9-C13 are new; each carries its grade and its source in the protocol
+# document (docs/protocol-lift.md). lift.v0.yaml stays the default contract file and the reference of past
+# experiments; this file is used by giving its path. Quotes drop the document's Markdown backticks; a
+# "..." joins two places. Coverage of the protocol by contracts: docs/notes/protocol-contract-coverage.md.
+
+protocol: lift.v0
+
+# [from, on, to]. Triples, not mappings: YAML 1.1 reads an unquoted `on` key as true.
+transitions:
+  - [null, init, DOWN]
+  - [DOWN, MOVE_UP, MOVING_UP]
+  - [MOVING_UP, arrived, UP]
+  - [UP, MOVE_DOWN, MOVING_DOWN]
+  - [MOVING_DOWN, arrived, DOWN]
+
+contracts:
+  - id: C1
+    desc: motor starts at most once per req_id (safety contract)
+    kind: at_most_once
+    per: req_id
+    event: device.effect(motor_start)
+
+  - id: C2
+    desc: the client closes each move command exactly once, within 15 s of first sending it
+    kind: exactly_once
+    per: req_id
+    start: client.send(MOVE_UP|MOVE_DOWN)
+    event: client.handle(DONE|ERROR)
+    within: 15s
+
+  - id: C3
+    desc: device state changes only along declared transitions, starting from the previous state
+    kind: state_machine
+    event: device.state
+
+  - id: C4
+    desc: the client completes a command only with a DONE carrying that command's req_id
+    kind: forbid
+    event: client.handle(DONE)
+    when: data.msg_req_id != req_id
+
+  - id: C5
+    desc: STATUS_REPLY reports the device's current state
+    kind: consistent
+    event: device.send(STATUS_REPLY)
+    field: data.state
+    equals: last(device.state).name
+
+  - id: C6
+    desc: the client has at most one move command open at a time
+    kind: at_most_one_open
+    per: req_id
+    opens: client.send(MOVE_UP|MOVE_DOWN)
+    closes: client.handle(DONE|ERROR)
+
+  - id: C7
+    desc: the device sends no more DONE/ERROR for a req_id than requests it received with that req_id
+    kind: count_le
+    per: req_id
+    event: device.send(DONE|ERROR)
+    bound: device.recv(MOVE_UP|MOVE_DOWN)
+
+  - id: C8
+    desc: the device never sends both DONE and ERROR for the same req_id
+    kind: mutually_exclusive
+    per: req_id
+    events: [device.send(DONE), device.send(ERROR)]
+
+  - id: C9
+    desc: the motor stops exactly once per req_id, within 3 s of its start (plus 2 ms for a device clock)
+    kind: exactly_once
+    per: req_id
+    start: device.effect(motor_start)
+    event: device.effect(motor_stop)
+    within: 3002ms
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "44-46"
+      quote: "A legal one starts the motor and the state becomes MOVING_UP or MOVING_DOWN; 3 s later the motor stops, the state becomes UP or DOWN, and DONE is sent."
+      found: hardware testbed
+  - id: C10
+    desc: the device sends DONE for a req_id only after the motor stopped for that req_id
+    kind: only_after
+    per: req_id
+    event: device.send(DONE)
+    after: device.effect(motor_stop)
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "26, 45-46"
+      quote: "the move finished ... 3 s later the motor stops, the state becomes UP or DOWN, and DONE is sent."
+      found: hardware testbed
+  - id: C11
+    desc: an ERROR from the device gives the reason illegal
+    kind: consistent
+    event: device.send(ERROR)
+    field: data.reason
+    equals: "'illegal'"
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "43-44"
+      quote: "An illegal command is answered with ERROR (reason illegal)."
+      found: document check
+  - id: C12
+    desc: the device sends no more ACK for a req_id than move requests it received with that req_id
+    kind: count_le
+    per: req_id
+    event: device.send(ACK)
+    bound: device.recv(MOVE_UP|MOVE_DOWN)
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "47-48"
+      quote: "After a reconnect the device sends nothing on its own."
+      found: document check
+  - id: C13
+    desc: the device sends no more STATUS_REPLY for a req_id than STATUS requests it received with that req_id
+    kind: count_le
+    per: req_id
+    event: device.send(STATUS_REPLY)
+    bound: device.recv(STATUS)
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "47-49"
+      quote: "After a reconnect the device sends nothing on its own. ... STATUS is answered immediately with the current state."
+      found: document check
