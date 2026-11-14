@@ -316,6 +316,20 @@ def test_contracts_alone_catch_a_wrong_reply_from_the_whole_device_log():
     assert {x["contract"] for x in r["not_judged"]} == {"C3", "C5"} and [v["contract"] for v in r["violated"]] == ["C8"]
 
 
+def test_only_after_is_judged_on_a_device_log_only_with_both_kinds_complete():
+    cs = load_contracts("contracts:\n  - {id: K, kind: only_after, per: req_id, event: device.send(DONE), "
+                        "after: device.effect(motor_stop)}")
+    unmoved = NORMAL[:11] + ["2500 recv MOVE_DOWN r-0002", "2500 send DONE r-0002"] + NORMAL[11:]
+    full = contract_report(read_device_log(dlog(*unmoved)), cs, Completeness.parse(["device:recv,send,state,effect"]))
+    assert [(v["contract"], v["req_id"], v["t_us"]) for v in full["violated"]] == [("K", "r-0002", 2500_000)]
+    assert contract_report(read_device_log(dlog(*NORMAL)), cs,
+                           Completeness.parse(["device:recv,send,state,effect"]))["ok"] == ["K"]
+    # a missing effect line would read as no stop: not judged without effect declared, nor without send
+    for kinds_ in ("device:recv,send,state", "device:state,effect"):
+        r = contract_report(read_device_log(dlog(*unmoved)), cs, Completeness.parse([kinds_]))
+        assert r["violated"] == [] and [x["contract"] for x in r["not_judged"]] == ["K"]
+
+
 def test_contracts_alone_ignore_lines_outside_the_allow_list():
     full = Completeness.parse(["device:recv,send,state,effect"])
     bare = [x for x in M4_LOG if "defect" not in x]

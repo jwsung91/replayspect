@@ -129,3 +129,51 @@ def first_violations(trace: Trace, end_us: int, **kw) -> dict[str, int]:
 
 def violated(trace: Trace, end_us: int, **kw) -> set[str]:
     return {v.contract for v in check(trace, end_us, **kw)}
+
+
+# -- rev2 additions (contracts/lift.v0.rev2.yaml, to come) ------------------------------------
+
+STOP_WITHIN_US = 3_002_000  # protocol: the motor stops 3 s after it starts; 2 ms for a device clock
+
+REV2_CONTRACTS = {
+    "C9": "the motor stops exactly once per req_id, within 3 s of its start (plus 2 ms for the device clock)",
+    "C10": "the device sends DONE for a req_id only after the motor stopped for that req_id",
+}
+
+
+def check_rev2(trace: Trace, end_us: int) -> list[Violation]:
+    """C9 and C10, by hand. C9: every req_id whose motor started has exactly one motor_stop, no later than
+    3.002 s after the first start (a stop of a req_id that never started is ignored). C10: a DONE of a req_id
+    with no earlier motor_stop of that req_id, reported at that DONE, once per req_id."""
+    out: list[Violation] = []
+    started: dict[str, int] = {}
+    stops = Counter()
+    stopped: set[str] = set()
+    done_reported: set[str] = set()
+    for e in trace:
+        r = e.req_id
+        if e.actor == "device" and e.kind == "effect" and e.name == "motor_start":
+            started.setdefault(r, e.t_us)
+        elif e.actor == "device" and e.kind == "effect" and e.name == "motor_stop":
+            if r in started:
+                stops[r] += 1
+                if stops[r] == 2:
+                    out.append(Violation("C9", r, e.seq, "second motor_stop"))
+                elif stops[r] == 1 and e.t_us - started[r] > STOP_WITHIN_US:
+                    out.append(Violation("C9", r, e.seq, "motor_stop after 3.002 s"))
+            stopped.add(r)
+        elif e.actor == "device" and e.kind == "send" and e.name == "DONE":
+            if r not in stopped and r not in done_reported:
+                done_reported.add(r)
+                out.append(Violation("C10", r, e.seq, "DONE before any motor_stop"))
+    for r, t0 in started.items():
+        if not stops[r] and end_us - t0 > STOP_WITHIN_US:
+            out.append(Violation("C9", r, len(trace), "motor never stopped"))
+    return out
+
+
+def first_violations_rev2(trace: Trace, end_us: int) -> dict[str, int]:
+    first: dict[str, int] = {}
+    for v in check_rev2(trace, end_us):
+        first[v.contract] = min(v.seq, first.get(v.contract, v.seq))
+    return first

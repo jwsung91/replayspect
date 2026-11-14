@@ -111,9 +111,10 @@ data`. The header, `fidelity`, `source` and `log` are not part of it.
     deadline past the window's end is not judged as passed. `--end` still
     overrides it.
   - **A cut start.** A window that starts after time 0 may have cut earlier
-    events. Three things can then report a violation that did not happen:
+    events. Four things can then report a violation that did not happen:
     `state_machine` (the first state event's `from` meets no previous state),
-    `count_le` (the bound events before the cut are not counted) and any
+    `count_le` (the bound events before the cut are not counted),
+    `only_after` (the earlier `after` may be before the cut) and any
     contract that reads `last(...)` (null where the event was cut). Such
     contracts are *not judged* on that slice, and the output names them.
   - **Every other kind** is judged on the events kept. A cut can hide one of

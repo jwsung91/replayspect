@@ -13,6 +13,7 @@ from replayspect.contract import (
     first_violation_details,
     first_violations,
     judge,
+    judge_report,
     load_contracts,
     matched_patterns,
 )
@@ -279,6 +280,72 @@ def test_first_violations():
     assert first_violations(judge(tr, cs, END)) == {"C1": 1}
 
 
+def test_only_after_needs_an_earlier_after_of_the_same_key():
+    cs = one("  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop)}")
+    tr = trace_of(
+        (0, "d", "effect", "motor_stop", "a", None),
+        (1, "d", "send", "DONE", "a", None),       # 1  a: stopped before, fine
+        (2, "d", "send", "DONE", "a", None),       # 2  a repeated DONE after its stop: fine
+        (3, "d", "send", "DONE", "b", None),       # 3  b: the only stop so far is a's
+        (4, "d", "send", "DONE", "b", None),       # 4  reported once per key
+        (5, "d", "effect", "motor_stop", "b", None),
+        (6, "d", "send", "DONE", "b", None),       # 6  fine now, b was already reported
+        (7, "d", "send", "DONE", None, None),      # 7  a null key is a key like any other
+    )
+    assert found(tr, cs) == [("K", "b", 3), ("K", None, 7)]
+
+
+def test_only_after_follows_trace_order_within_one_time():
+    cs = one("  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop)}")
+    stop_first = trace_of((5, "d", "effect", "motor_stop", "a", None), (5, "d", "send", "DONE", "a", None))
+    done_first = trace_of((5, "d", "send", "DONE", "a", None), (5, "d", "effect", "motor_stop", "a", None))
+    assert found(stop_first, cs) == [] and found(done_first, cs) == [("K", "a", 0)]
+
+
+def test_only_after_does_not_judge_a_key_with_a_reordered_event():
+    cs = one("  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop)}")
+    flag = {"line": 9, "flags": ["out_of_order"]}
+    events = [
+        Event(0, 1, "d", "send", "DONE", "a"),                     # a: violated, nothing reordered
+        Event(1, 2, "d", "send", "DONE", "b", log={"line": 3}),    # b: would be violated...
+        Event(2, 3, "d", "effect", "motor_stop", "b", log=flag),   # ...but its stop's place is not known
+        Event(3, 4, "d", "send", "DONE", "c", log={"line": 5, "flags": ["out_of_tolerance"]}),  # c: the DONE itself
+        Event(4, 5, "d", "send", "STATUS_REPLY", "a", log=flag),   # a flag on another pattern changes nothing
+    ]
+    violations, unjudged = judge_report(Trace.from_events(events), cs, END)
+    assert [(v.contract, v.req_id, v.seq) for v in violations] == [("K", "a", 0)]
+    assert unjudged == {"K": ["b", "c"]}
+    assert judge(Trace.from_events(events), cs, END) == violations
+
+
+PROVENANCE = ("  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop), "
+              "grade: stated, source: {doc: docs/protocol-lift.md, lines: '43-46', quote: 'and DONE is sent', "
+              "found: testbed-04 blind}}")
+
+
+def test_grade_and_source_are_kept_and_do_not_change_judging():
+    with_p, without = one(PROVENANCE), one(
+        "  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop)}")
+    c = with_p.contracts[0]
+    assert c.grade == "stated" and c.source == {"doc": "docs/protocol-lift.md", "lines": "43-46",
+                                                "quote": "and DONE is sent", "found": "testbed-04 blind"}
+    assert without.contracts[0].grade is None and without.contracts[0].source is None
+    tr = trace_of((0, "d", "send", "DONE", "a", None))
+    assert found(tr, with_p) == found(tr, without) == [("K", "a", 0)]
+
+
+@pytest.mark.parametrize("extra, match", [
+    ("grade: guessed", "grade must be one of"),
+    ("source: {doc: x, page: 3}", r"unexpected \['page'\] in source"),
+    ("source: {lines: 43}", "source lines must be a non-empty string"),
+    ("source: {}", "source must be a non-empty mapping"),
+    ("source: x", "source must be a non-empty mapping"),
+])
+def test_bad_provenance_is_rejected(extra, match):
+    with pytest.raises(ContractError, match=match):
+        one("  - {id: K, kind: at_most_once, per: req_id, event: d.send(X), " + extra + "}")
+
+
 # -- equivalence with the reference oracle -----------------------------------------------
 
 
@@ -289,6 +356,40 @@ def test_judge_matches_oracle_on_first_violations(mutant, n):
     for seed in range(n):
         tr = run_lift(seed, mutants=[mutant] if mutant else [])
         assert first_violations(judge(tr, cs, END)) == lift_oracle.first_violations(tr, END), seed
+
+
+#: C9 and C10 as contracts/lift.v0.rev2.yaml will hold them (that file comes in a later PR).
+REV2 = load_contracts("""
+protocol: lift.v0
+contracts:
+  - id: C9
+    kind: exactly_once
+    per: req_id
+    start: device.effect(motor_start)
+    event: device.effect(motor_stop)
+    within: 3002ms
+  - id: C10
+    kind: only_after
+    per: req_id
+    event: device.send(DONE)
+    after: device.effect(motor_stop)
+""")
+
+
+@pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])
+@pytest.mark.parametrize("mutant", [None] + sorted(MUTANTS))
+def test_judge_matches_oracle_on_the_rev2_additions(mutant, n):
+    for seed in range(n):
+        tr = run_lift(seed, mutants=[mutant] if mutant else [])
+        assert first_violations(judge(tr, REV2, END)) == lift_oracle.first_violations_rev2(tr, END), seed
+
+
+def test_the_rev2_oracle_catches_what_each_addition_is_for():
+    late = trace_of((0, "device", "effect", "motor_start", "r-1", None),
+                    (3_002_001, "device", "effect", "motor_stop", "r-1", None))
+    unmoved = trace_of((0, "device", "send", "DONE", "r-1", None))
+    assert lift_oracle.first_violations_rev2(late, END) == first_violations(judge(late, REV2, END)) == {"C9": 1}
+    assert lift_oracle.first_violations_rev2(unmoved, END) == first_violations(judge(unmoved, REV2, END)) == {"C10": 0}
 
 
 # -- judge API details -------------------------------------------------------------------
@@ -308,6 +409,11 @@ def test_first_violation_details_breaks_seq_ties_by_req_id():
     assert [(v.contract, v.req_id, v.seq) for v in first_violation_details(vs)] == [
         ("C3", "a", 1), ("C1", "z", 3), ("C2", "a", 9),
     ]
+
+
+def test_contract_patterns_include_the_after_pattern():
+    cs = one("  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop)}")
+    assert contract_patterns(cs) == {EventPattern.parse("d.send(DONE)"), EventPattern.parse("d.effect(motor_stop)")}
 
 
 def test_contract_patterns_include_last_references():

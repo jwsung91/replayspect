@@ -46,6 +46,10 @@ class Checker:
     def on_end(self, end_us: int, end_seq: int) -> list[Violation]:
         return []
 
+    def unjudged_keys(self) -> set[str | None]:
+        """Keys this checker could not judge (see :class:`OnlyAfter`); every other kind judges every key."""
+        return set()
+
     def last_patterns(self) -> set[EventPattern]:
         return set()
 
@@ -206,6 +210,42 @@ class MutuallyExclusive(Checker):
         return []
 
 
+REORDERED = ("out_of_order", "out_of_tolerance")  # log flags (docs/trace-schema.md): times as logged, not in order
+
+
+class OnlyAfter(Checker):
+    """Each ``event`` needs an earlier ``after`` with the same key (earlier in trace order).
+
+    Reported at the first ``event`` of a key with none, once per key. A key one
+    of whose ``event`` or ``after`` events a log adapter flagged as reordered
+    (``out_of_order``, ``out_of_tolerance``) is not judged: its order is not
+    known. Violations are held until the end for that reason, and keep the seq
+    of the event that proves them.
+    """
+
+    def __init__(self, contract: Contract) -> None:
+        super().__init__(contract)
+        self.seen: set[str | None] = set()
+        self.found: dict[str | None, Violation] = {}
+        self.reordered: set[str | None] = set()
+
+    def on_event(self, ev, last):
+        is_event, is_after = self.p["event"].matches(ev), self.p["after"].matches(ev)
+        if (is_event or is_after) and ev.log and set(ev.log.get("flags") or ()) & set(REORDERED):
+            self.reordered.add(ev.req_id)
+        if is_event and ev.req_id not in self.seen and ev.req_id not in self.found:
+            self.found[ev.req_id] = self.v(ev.req_id, ev.seq, f"{ev.name} with no earlier {self.p['after']}")
+        if is_after:
+            self.seen.add(ev.req_id)
+        return []
+
+    def on_end(self, end_us, end_seq):
+        return [v for k, v in self.found.items() if k not in self.reordered]
+
+    def unjudged_keys(self):
+        return set(self.reordered)
+
+
 def build_checkers(cs: ContractSet) -> list[Checker]:
     out: list[Checker] = []
     for c in cs.contracts:
@@ -220,6 +260,7 @@ def build_checkers(cs: ContractSet) -> list[Checker]:
                 "at_most_one_open": AtMostOneOpen,
                 "count_le": CountLe,
                 "mutually_exclusive": MutuallyExclusive,
+                "only_after": OnlyAfter,
             }[c.kind](c))
     return out
 
@@ -231,6 +272,12 @@ def judge(trace: Trace | Iterable[Event], contracts: ContractSet, end_us: int) -
     than the last event; a smaller value usually means a unit mistake, which
     would silently flip deadline checks.
     """
+    return judge_report(trace, contracts, end_us)[0]
+
+
+def judge_report(trace: Trace | Iterable[Event], contracts: ContractSet,
+                 end_us: int) -> tuple[list[Violation], dict[str, list[str | None]]]:
+    """:func:`judge`, plus the keys each contract could not judge (only ``only_after`` has any)."""
     events = list(trace)
     if events and end_us < events[-1].t_us:
         raise ValueError(f"end_us={end_us} is before the last event at {events[-1].t_us}us")
@@ -246,17 +293,20 @@ def judge(trace: Trace | Iterable[Event], contracts: ContractSet, end_us: int) -
                 last[pat] = ev
     for c in checkers:
         out.extend(c.on_end(end_us, len(events)))
-    return out
+    unjudged = {c.contract.id: sorted(c.unjudged_keys(), key=lambda k: (k is None, k or ""))
+                for c in checkers if c.unjudged_keys()}
+    return out, unjudged
 
 
 def needs_earlier_events(c: Contract) -> bool:
     """Whether cutting events from the start of a trace can make ``c`` report a violation that did not happen.
 
     ``state_machine`` compares the first state event's ``from`` with no previous state, ``count_le`` misses
-    the bound events counted before the cut, and any contract reading ``last(...)`` sees null where the event
-    was cut. Every other kind can only miss violations when earlier events are gone.
+    the bound events counted before the cut, ``only_after`` misses an ``after`` that came before the cut, and
+    any contract reading ``last(...)`` sees null where the event was cut. Every other kind can only miss
+    violations when earlier events are gone.
     """
-    if c.kind in ("state_machine", "count_le"):
+    if c.kind in ("state_machine", "count_le", "only_after"):
         return True
     return bool(build_checkers(ContractSet("", frozenset(), (c,)))[0].last_patterns())
 
@@ -318,7 +368,7 @@ def contract_patterns(contracts: ContractSet) -> set[EventPattern]:
     """Every event pattern the contracts refer to, including inside ``last(...)``."""
     pats: set[EventPattern] = set()
     for c in contracts.contracts:
-        for key in ("event", "start", "opens", "closes", "bound"):
+        for key in ("event", "start", "opens", "closes", "bound", "after"):
             if key in c.params:
                 pats.add(c.params[key])
         pats.update(c.params.get("events", ()))

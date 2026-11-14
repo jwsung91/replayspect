@@ -28,6 +28,12 @@ integer, ``null``), or ``last(<pattern>).<operand>``, which reads the most
 recent earlier event matching the pattern (``null`` if there is none).
 
 **Condition**: ``<operand> == <operand>`` or ``<operand> != <operand>``.
+
+**Provenance** (optional, any kind; not used in judging): ``grade`` (one of
+:data:`GRADES`; ``stated``: the protocol document says it) and ``source``, a
+mapping of ``doc`` (the document), ``lines`` (its line numbers), ``quote``
+(the sentence) and ``found`` (how the rule was found), each a non-empty
+string.
 """
 
 from __future__ import annotations
@@ -50,7 +56,10 @@ KINDS = (
     "at_most_one_open",
     "count_le",
     "mutually_exclusive",
+    "only_after",
 )
+GRADES = ("stated",)  # stated: the protocol document says it
+SOURCE_KEYS = ("doc", "lines", "quote", "found")
 
 
 class ContractError(ValueError):
@@ -233,6 +242,8 @@ class Contract:
     kind: str
     desc: str
     params: Mapping[str, Any]
+    grade: str | None = None  # provenance, not used in judging
+    source: Mapping[str, str] | None = None
 
 
 _REQUIRED = {
@@ -244,8 +255,26 @@ _REQUIRED = {
     "at_most_one_open": {"per", "opens", "closes"},
     "count_le": {"per", "event", "bound"},
     "mutually_exclusive": {"per", "events"},
+    "only_after": {"per", "event", "after"},
 }
-_COMMON = {"id", "kind", "desc"}
+_COMMON = {"id", "kind", "desc", "grade", "source"}
+
+
+def _provenance(cid: str, raw: Mapping[str, Any]) -> tuple[str | None, Mapping[str, str] | None]:
+    grade, source = raw.get("grade"), raw.get("source")
+    if "grade" in raw and grade not in GRADES:
+        raise ContractError(f"{cid}: grade must be one of {GRADES}, got {grade!r}")
+    if "source" in raw:
+        if not isinstance(source, Mapping) or not source:
+            raise ContractError(f"{cid}: source must be a non-empty mapping of {', '.join(SOURCE_KEYS)}")
+        extra = set(source) - set(SOURCE_KEYS)
+        if extra:
+            raise ContractError(f"{cid}: unexpected {sorted(map(str, extra))} in source; use {', '.join(SOURCE_KEYS)}")
+        bad = [k for k, v in source.items() if type(v) is not str or not v.strip()]
+        if bad:
+            raise ContractError(f"{cid}: source {', '.join(bad)} must be a non-empty string (quote line ranges)")
+        source = dict(source)
+    return grade, source
 
 
 def _contract(raw: Mapping[str, Any]) -> Contract:
@@ -268,7 +297,7 @@ def _contract(raw: Mapping[str, Any]) -> Contract:
 
     p: dict[str, Any] = {}
     try:
-        for key in ("event", "start", "opens", "closes", "bound"):
+        for key in ("event", "start", "opens", "closes", "bound", "after"):
             if key in raw:
                 p[key] = EventPattern.parse(raw[key])
         if "events" in raw:
@@ -284,7 +313,8 @@ def _contract(raw: Mapping[str, Any]) -> Contract:
             p["equals"] = Operand.parse(raw["equals"])
     except ContractError as exc:
         raise ContractError(f"{cid}: {exc}") from None
-    return Contract(cid, kind, str(raw.get("desc", "")), p)
+    grade, source = _provenance(cid, raw)
+    return Contract(cid, kind, str(raw.get("desc", "")), p, grade, source)
 
 
 @dataclass(frozen=True)

@@ -50,7 +50,7 @@ from replayspect.contract import (
     ContractSet,
     EventPattern,
     first_violation_details,
-    judge,
+    judge_report,
     load_contracts,
     misses_without_earlier_events,
     needs_earlier_events,
@@ -232,6 +232,7 @@ class ContractStatus:
     not_judged: list[str] = field(default_factory=list)  # needs events before ``cut_start_us``
     in_slice: list[str] = field(default_factory=list)  # no violation in the slice; earlier events not seen
     cut_start_us: int | None = None
+    keys_not_judged: dict[str, list[str | None]] = field(default_factory=dict)  # only_after: reordered at ingest
 
     def to_dict(self) -> dict[str, Any]:
         """Each contract's status: violated, ok, no violation in the slice, not exercised or not judged."""
@@ -272,9 +273,11 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
     judged = ContractSet(cs.protocol, cs.transitions, tuple(c for c in cs.contracts if c.id not in not_judged))
     # Judged renumbered 0, 1, 2...: a slice's seq has gaps. Violations point at
     # positions in ``events``; status_lines prints the original seq.
-    firsts = first_violation_details(judge(core_trace(events), judged, end_us))
+    found, keys_not_judged = judge_report(core_trace(events), judged, end_us)
+    firsts = first_violation_details(found)
     violated = {v.contract for v in firsts}
-    st = ContractStatus(end_us, end_why, firsts, not_judged=not_judged, cut_start_us=cut_start_us)
+    st = ContractStatus(end_us, end_why, firsts, not_judged=not_judged, cut_start_us=cut_start_us,
+                        keys_not_judged=keys_not_judged)
     for c in judged.contracts:
         if c.id in violated:
             continue
@@ -300,6 +303,9 @@ def status_lines(st: ContractStatus, events: Sequence[Event], label: str) -> lis
                  + (f", not exercised: {', '.join(st.not_exercised)}" if st.not_exercised else "")
                  + (f", not judged: {', '.join(st.not_judged)} (the slice starts at t={fmt_t(st.cut_start_us)}; "
                     "earlier events may be cut)" if st.not_judged else ""))
+    for cid, keys in st.keys_not_judged.items():
+        lines.append(f"  {cid}: not judged for {', '.join(k or '-' for k in keys)} "
+                     "(an event of theirs was reordered by the log adapter)")
     return lines
 
 

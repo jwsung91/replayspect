@@ -286,6 +286,21 @@ def test_a_kind_that_a_cut_start_can_only_make_miss(tmp_path, capsys, window, ev
     assert st.to_dict() == {"C1": status}
 
 
+def test_rewind_names_the_keys_only_after_could_not_judge(tmp_path, capsys):
+    import yaml
+    c = tmp_path / "c.yaml"
+    c.write_text(yaml.safe_dump({"protocol": "p", "contracts": [{
+        "id": "C10", "desc": "DONE only after the stop", "kind": "only_after", "per": "req_id",
+        "event": "device.send(DONE)", "after": "device.effect(motor_stop)"}]}), encoding="utf-8")
+    ev = {"actor": "device", "kind": "send", "name": "DONE", "source": "adapter:x"}
+    path = header_file(tmp_path, {"source": "adapter:x"}, [
+        {**ev, "seq": 0, "t_us": 10, "req_id": "r-0001", "log": {"line": 1}},
+        {**ev, "seq": 1, "t_us": 20, "req_id": "r-0002", "log": {"line": 3, "flags": ["out_of_order"]}}])
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    assert "  C10 violated at #0 0.000010s r-0001: DONE with no earlier device.effect(motor_stop)" in out
+    assert "  C10: not judged for r-0002 (an event of theirs was reordered by the log adapter)" in out
+
+
 def test_which_contract_kinds_a_cut_start_can_break():
     cs = LIFT.contracts()
     assert {c.id for c in cs.contracts if misses_without_earlier_events(c)} == {"C1", "C2", "C6", "C8"}
@@ -296,6 +311,10 @@ def test_which_contract_kinds_a_cut_start_can_break():
     with_last = load_contracts({"protocol": "p", "contracts": [
         {**base, "when": "last(device.effect(motor_stop)).req_id != req_id"}]})
     assert not needs_earlier_events(plain.contracts[0]) and needs_earlier_events(with_last.contracts[0])
+    after = load_contracts({"protocol": "p", "contracts": [{
+        "id": "C10", "kind": "only_after", "per": "req_id", "event": "device.send(DONE)",
+        "after": "device.effect(motor_stop)"}]}).contracts[0]
+    assert needs_earlier_events(after) and not misses_without_earlier_events(after)  # the stop may be before the cut
 
 
 # -- bad files fail with the line number ------------------------------------------------------

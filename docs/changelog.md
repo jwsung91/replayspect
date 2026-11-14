@@ -527,3 +527,20 @@ contract package names the four kinds.
 A cut at the window's end needs no such status: judging stops there, as at a rewind time. A window from
 time 0 reads as before. The trace schema notes the asymmetry, and one case not handled yet: an actor-only
 slice that removes a contract's other actor.
+
+## Contracts: `only_after`, and where a contract comes from
+
+A ninth contract kind, `only_after` (`event`, `after`, `per: req_id`): each `event` needs an earlier
+`after` with the same key, in trace order. It is reported at the first `event` of a key with none, once
+per key. It states what the eight kinds could not: "`DONE` only after the motor stopped for that
+request". `count_le` fails there on a correct device, because a request copied after `DONE` is answered
+`DONE` again, and a `forbid` on `last(...)` fails on a late copy that arrives after another move.
+- **Not judged.** A key with an event the log adapter flagged as reordered (`out_of_order`,
+  `out_of_tolerance`) is not judged, because its order is not known. `judge_report` returns those keys,
+  and `rewind` names them. On a device log, both kinds must be declared complete. On a slice whose window
+  starts after 0, the contract is not judged, because the earlier `after` may have been cut.
+- **Provenance keys.** Any contract may carry `grade` (`stated`: the protocol document says it) and
+  `source` (`doc`, `lines`, `quote`, `found`), both optional and unused in judging; the loader rejects
+  other keys and empty values.
+- **Oracle.** The reference oracle gains C9 and C10 as the rev2 contract file will hold them, and the
+  judge matches it on seeds 0–99 for the correct lift and every mutant. No contract file changes here.
