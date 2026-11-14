@@ -8,11 +8,16 @@
 // Defect switch (stage 3): -DLIFT_DEFECT=N builds the public device-side lift defect MN of the model
 // (sut/lift.py MUTANTS): 1, 2, 4, 5, 9, 10 or 11; 0 (the default) is none. M3 (resend the last DONE
 // after a reconnect) is not offered: on serial the device never sees a disconnect.
-// The build is named only in the device log ("build defect=..."), never in READY, so the client log
-// does not carry the answer. Each time the defect's own branch changes what the device does, the
-// device log gets "defect fired MN REQ_ID", after any protocol line of that step (later effects of
-// it, such as a result it caused being answered from the table, are not marked again). Both lines are written whether or not
-// the device log is on, like error lines.
+// The build is named only on the device log channel ("build defect=..."), never in READY, so the
+// client log does not carry the answer; the testbed link files that line in the truth file, not in
+// the device log. With -DLIFT_FIRED_LOG=1 (the native harness only, never the Uno), each time the
+// defect's own branch changes what the device does, the device log gets "defect fired MN REQ_ID",
+// after any protocol line of that step (later effects of it, such as a result it caused being
+// answered from the table, are not marked again). The Uno build leaves it out: on the serial line it
+// would delay the replies after it by about 2 ms exactly where the defect fired, a mark in the timing
+// even with the line removed. Where a defect fired is computed afterwards by running the device
+// log's inputs through the harness (harness/fired_points.py). The build line is written whether or
+// not the device log is on, like error lines.
 //
 // Wire format, one line per message:  NAME REQ_ID [key=value ...]
 // Device log lines (when enabled):    # MILLIS KIND NAME [REQ_ID] [key=value ...]
@@ -27,6 +32,9 @@
 
 #ifndef LIFT_DEFECT
 #define LIFT_DEFECT 0
+#endif
+#ifndef LIFT_FIRED_LOG
+#define LIFT_FIRED_LOG 0
 #endif
 #if LIFT_DEFECT != 0 && LIFT_DEFECT != 1 && LIFT_DEFECT != 2 && LIFT_DEFECT != 4 && LIFT_DEFECT != 5 && \
     LIFT_DEFECT != 9 && LIFT_DEFECT != 10 && LIFT_DEFECT != 11
@@ -231,7 +239,7 @@ class Device {
   }
 
   void fired(uint32_t now, const char* id) {
-    logf(now, "defect fired M" LIFT_STR(LIFT_DEFECT), "", id, "");
+    if (LIFT_FIRED_LOG) logf(now, "defect fired M" LIFT_STR(LIFT_DEFECT), "", id, "");
   }
 
   void execute(Cmd cmd, const char* id, uint32_t now) {

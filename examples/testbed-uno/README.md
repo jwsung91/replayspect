@@ -32,13 +32,15 @@ is lit while the lift moves.
 | request (client to device) | `MOVE_UP r-0001`, `STATUS s-0003` |
 | reply (device to client) | `ACK r-0001`, `DONE r-0001`, `ERROR r-0002 reason=illegal`, `STATUS_REPLY s-0003 state=MOVING_UP` |
 | boot (device) | `READY log=1`: once after reset, with the device log option. It never names a defect: `READY` reaches the client log |
-| boot, device log | `# 0 build defect=none` (or `defect=M4`): the build's defect switch, written whether or not the device log is on |
+| boot, build line | `# 0 build defect=none` (or `defect=M4`): the build's defect switch, written whether or not the device log is on. The link files it in the truth file, not the device log |
 | device log (device) | `# 12395 state MOVING_UP r-0001 from=DOWN on=MOVE_UP`: the device clock (`millis()`), then a trace-like event |
-| defect fired, device log | `# 8050 defect fired M4 r-0004`: the defect's own branch changed what the device did (stage 3; always written) |
+| defect fired, harness only | `8050 LOG defect fired M4 r-0004`: the defect's own branch changed what the device did. Only a build with `-DLIFT_FIRED_LOG=1` (the native harness) writes it, never the Uno build |
 
 Opening the port resets the Uno, so every run starts in `DOWN`. The client sends nothing before
 `READY`. The link sends `#` lines to the device log file, with the Orin receive time in front, and
-never passes them to the client.
+never passes them to the client. The build line, and a `defect fired` line from an older build, go to
+the truth file instead (`"action": "build"` / `"defect_fired"`): the device log is an input to the
+analysis (`replayspect device`), and these lines are the experiment's answer.
 
 ## Limits and where the firmware differs from the model
 
@@ -74,7 +76,7 @@ checks that its replies and state changes equal the Python model's. The scripts 
 repeats after `DONE` and after a refusal, polls during a move, an opposite command while moving,
 two new ids within 50 ms, repeats of older ids, unknown messages, and six commands with polls. It
 runs every script with no defect and with each defect switch against the model's mutant, and
-checks where the device log says each defect fired. It needs only a C++ compiler, not the board.
+checks where each defect fired (`-DLIFT_FIRED_LOG=1`). It needs only a C++ compiler, not the board.
 
 ## A run is invalid when
 
@@ -206,28 +208,38 @@ arduino-cli compile --fqbn arduino:avr:uno \
   --build-property "compiler.cpp.extra_flags=-DLIFT_DEFECT=4" examples/testbed-uno/firmware/lift_uno
 ```
 
-- **The answer stays out of the client log.** `READY` does not name the defect. The build names it
-  only in the device log (`build defect=M4`). The client also leaves out any `defect=` field from
-  an older build's `READY` when it writes its header.
-- **Where it fired.** Each time the defect's own branch changes what the device does, the device
-  log gets `defect fired MN REQ_ID`, after any reply of that step. Later effects of an earlier
-  firing, such as a stored result it caused, are not marked again. A run whose device log has no
-  such line did not touch the defect.
-- **The build line and the fired lines are written even with the device log off,** like error
-  lines. With the log on (the testbed's setting), they add a line on the serial link where they
-  occur.
+- **The answer stays out of the client log and the device log.** `READY` does not name the defect.
+  The build names it only in its build line (`build defect=M4`), which the link files in the truth
+  file. The client also leaves out any `defect=` field from an older build's `READY` when it writes
+  its header.
+- **Where it fired is computed afterwards.** The Uno build does not write `defect fired`. On the
+  serial line that line delayed the replies after it by about 2 ms, exactly where the defect fired
+  (testbed-03), so the timing showed it even with the line removed. Instead,
+  `firmware/harness/fired_points.py DEVICE_LOG --defect N` feeds the device log's receives to the
+  native harness built with the same defect and `-DLIFT_FIRED_LOG=1`, and prints each firing
+  (`{"t_ms", "defect", "req_id"}`). It first checks that the harness reproduces every send, state
+  change and effect of the log, millisecond by millisecond, and refuses otherwise. Each time the
+  defect's own branch changes what the device does is one firing. Later effects of an earlier
+  firing, such as a stored result it caused, are not marked again. Run it outside the repository,
+  after the analysis it scores.
+  - **Checked on the 182 real device logs** (development data): the harness reproduced every log.
+    On the 27 defect-build logs of testbed-03, the computed firings equal the `defect fired` lines
+    those builds still wrote, 18 of 18.
+- **The build line is written even with the device log off,** like error lines.
 - **Memory** (compiled on the Orin, arduino-cli 1.6.0, arduino:avr 1.8.8, device log on, not
   flashed): the testbed-02 build used 5,166 B flash and 841 B RAM. With the switch:
 
-  | Build | Flash | RAM |
-  | --- | --- | --- |
-  | no defect | 5,426 B | 993 B (48%) |
-  | M2 | 5,462 B | 991 B |
-  | M4 | 5,472 B | 991 B |
-  | M10 | 5,408 B | 993 B |
+  | Build | Flash (testbed-03) | RAM (testbed-03) | Flash (no fired line) | RAM (no fired line) |
+  | --- | --- | --- | --- | --- |
+  | no defect | 5,426 B | 993 B (48%) | 5,334 B | 977 B (47%) |
+  | M2 | 5,462 B | 991 B | 5,374 B | 975 B |
+  | M4 | 5,472 B | 991 B | 5,366 B | 975 B |
+  | M10 | 5,408 B | 993 B | 5,286 B | 975 B |
 
-  About 152 B more RAM: the 8-entry table of the ids a correct device would know (128 B), and the
-  new log strings, which sit in RAM on the Uno. 1,055 B are left for the stack.
+  The testbed-03 builds needed about 152 B more RAM than testbed-02: the 8-entry table of the ids a
+  correct device would know (128 B), and the new log strings, which sit in RAM on the Uno. Without
+  the fired line, the builds use about 16 B less RAM again, leaving 1,071 B for the stack. The four
+  compiled binaries contain no `defect fired` string.
 
 **Result:** [docs/experiments/testbed-03.md](../../docs/experiments/testbed-03.md) (95 runs: no
 defect, M2, M4, M10).

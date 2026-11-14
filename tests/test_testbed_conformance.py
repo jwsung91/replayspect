@@ -51,16 +51,18 @@ DEFECTS = (1, 2, 4, 5, 9, 10, 11)
 
 @pytest.fixture(scope="module")
 def build(tmp_path_factory):
-    """The harness built with ``-DLIFT_DEFECT=n`` (0: none), compiled once per defect."""
+    """The harness built with ``-DLIFT_DEFECT=n`` (0: none), compiled once per defect; with ``fired``,
+    also ``-DLIFT_FIRED_LOG=1`` (the "defect fired" lines, never in the Uno build)."""
     d, built = tmp_path_factory.mktemp("fw"), {}
 
-    def get(n=0):
-        if n not in built:
-            out = d / f"harness{n}"
-            subprocess.run([CXX, "-std=c++11", "-Wall", "-Wextra", "-Werror", "-O1", f"-DLIFT_DEFECT={n}", "-o",
-                            str(out), str(FW / "harness" / "harness.cpp")], check=True)
-            built[n] = out
-        return built[n]
+    def get(n=0, fired=False):
+        if (n, fired) not in built:
+            out = d / f"harness{n}{'f' if fired else ''}"
+            subprocess.run([CXX, "-std=c++11", "-Wall", "-Wextra", "-Werror", "-O1", f"-DLIFT_DEFECT={n}",
+                            f"-DLIFT_FIRED_LOG={int(fired)}", "-o", str(out), str(FW / "harness" / "harness.cpp")],
+                           check=True)
+            built[(n, fired)] = out
+        return built[(n, fired)]
     return get
 
 
@@ -149,7 +151,7 @@ FIRED = {
 
 @pytest.mark.parametrize("n,name", sorted(FIRED))
 def test_the_device_log_says_where_the_defect_fired(build, n, name):
-    _, _, raw = firmware(build(n), SCRIPTS[name])
+    _, _, raw = firmware(build(n, fired=True), SCRIPTS[name])
     lines = raw.splitlines()
     assert lines[1] == f"0 LOG build defect=M{n}"
     got = [(int(t), body.split()[-1]) for t, kind, body in (x.split(" ", 2) for x in lines)
@@ -245,7 +247,7 @@ def test_the_correct_model_first_leaves_a_defect_log_where_the_defect_fired(buil
 def test_the_build_and_defect_lines_never_reach_the_result(build, n, name):
     # the firmware writes 'build defect=Mn' and 'defect fired' into its log: the report is the same,
     # byte for byte, with them or without them
-    text = device_log(firmware(build(n), SCRIPTS[name])[2])
+    text = device_log(firmware(build(n, fired=True), SCRIPTS[name])[2])
     assert "build defect=M" in text
     bare = "".join(x + "\n" for x in text.splitlines() if "defect" not in x)
     models = ["M1", "M2", "M4", "M5", "M9", "M10", "M11"]
@@ -253,3 +255,37 @@ def test_the_build_and_defect_lines_never_reach_the_result(build, n, name):
                       for x in (text, bare))
     assert full == stripped
     assert "defect" not in full  # a model's name appears only as a model compared
+
+
+@pytest.mark.parametrize("n,name", sorted(FIRED))
+def test_the_uno_build_never_writes_defect_fired_and_is_otherwise_the_same(build, n, name):
+    # On the serial line the line would delay the replies after it exactly where the defect fired: a
+    # mark in the timing even with the line removed. So only the harness may write it.
+    plain = firmware(build(n), SCRIPTS[name])[2]
+    marked = firmware(build(n, fired=True), SCRIPTS[name])[2]
+    assert "defect fired" not in plain
+    assert plain.splitlines() == [x for x in marked.splitlines() if "defect fired" not in x]
+
+
+import sys  # noqa: E402
+
+sys.path.insert(0, str(FW / "harness"))
+import fired_points as fp  # noqa: E402
+
+
+@pytest.mark.parametrize("n,name", sorted(FIRED))
+def test_where_a_defect_fired_is_computed_afterwards_from_the_device_log(build, n, name, tmp_path):
+    # the Uno build's device log has no "defect fired" line; the harness recomputes the points
+    text = device_log(firmware(build(n), SCRIPTS[name])[2])
+    points, problem = fp.fired_points(text, fp.build(n, tmp_path, CXX))
+    assert problem is None
+    assert [(p["t_ms"], p["req_id"]) for p in points] == FIRED[(n, name)]
+    assert all(p["defect"] == f"M{n}" for p in points)
+
+
+def test_computed_points_are_refused_when_the_harness_does_not_reproduce_the_log(build, tmp_path):
+    # an M4 log run through the no-defect harness: the device did what that build would not
+    text = device_log(firmware(build(4), SCRIPTS["retries_and_repeats"])[2])
+    points, problem = fp.fired_points(text, fp.build(0, tmp_path, CXX))
+    assert points == [] and problem.startswith("the harness does not reproduce the device log: 8050 ms")
+    assert fp.main([str(tmp_path / "nope.log"), "--defect", "4"]) == 2
