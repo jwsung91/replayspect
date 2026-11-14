@@ -402,3 +402,20 @@ and no fit ([device-log.md](device-log.md)).
   - the count check matches the truth files in 181 of 182 runs. The miss, testbed-02 R03, is a loss
     and a copy of the same message that cancel out.
 - `drive` and `drive --fit` are unchanged.
+
+## Testbed: the answer leaves the device log, and the firing points are computed afterwards
+
+- **No `defect fired` line on the Uno.** `lift_device.h` writes it only when built with
+  `-DLIFT_FIRED_LOG=1`, which the native harness uses and the Uno build does not. On the serial line,
+  the line delayed the replies after it by about 2 ms exactly where the defect fired, so the timing
+  showed it even when the line was removed from the analysis. The four compiled Uno builds (none,
+  M2, M4, M10) contain no such string, and use 975–977 B of RAM.
+- **The build line goes to the truth file.** The link files `build defect=…`, and any `defect fired`
+  line from an older build, in the truth file (`"action": "build"` / `"defect_fired"`) instead of
+  the device log.
+- **Firing points afterwards:** `examples/testbed-uno/firmware/harness/fired_points.py DEVICE_LOG
+  --defect N` runs the device log's receives through the native harness with the same defect. It
+  first checks that the harness reproduces every send, state change and effect of the log.
+  - On the 182 real device logs, the harness reproduced every log.
+  - On the 27 testbed-03 defect-build logs, the computed points equal the `defect fired` lines
+    those builds wrote, 18 of 18.

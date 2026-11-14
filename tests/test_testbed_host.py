@@ -144,9 +144,19 @@ def test_device_error_or_reset_makes_the_run_invalid():
 def test_the_client_log_never_names_a_defect():
     # Stage 3: the build's defect is the answer. The firmware names it only in the device log; a
     # READY that still names one (an older build) is not copied into the client log either.
-    log, dlog, _, valid = run_client(run_s=3, ready=b"READY log=1 defect=M4", extra=b"# 0 build defect=M4\n")
+    log, dlog, truth, valid = run_client(run_s=3, ready=b"READY log=1 defect=M4", extra=b"# 0 build defect=M4\n")
     assert valid and "defect" not in log and "firmware log=1;" in log.splitlines()[0]
-    assert "build defect=M4" in dlog
+
+
+def test_the_build_line_and_any_defect_fired_line_go_to_the_truth_file_not_the_device_log():
+    # The device log is an input to the analysis; the build's defect is the answer. An older build's
+    # "defect fired" line is filed with it.
+    extra = b"# 0 build defect=M4\n# 0 state DOWN from=- on=init\n# 8050 defect fired M4 r-0004\n"
+    _, dlog, truth, valid = run_client(run_s=3, extra=extra)
+    assert valid and "defect" not in dlog and "# 0 state DOWN from=- on=init" in dlog
+    recs = [r for r in truth_of(truth) if r["action"] in ("build", "defect_fired")]
+    assert [(r["action"], r["device_ms"], r["line"]) for r in recs] == [
+        ("build", 0, "0 build defect=M4"), ("defect_fired", 8050, "8050 defect fired M4 r-0004")]
 
 
 def test_nul_bytes_around_a_reset_are_dropped():

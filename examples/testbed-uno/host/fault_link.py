@@ -189,9 +189,17 @@ class FaultLink:
         return self._release(self._s2c, now)
 
     def _device_line(self, line: str) -> None:
+        parts = line.split()
+        # The experiment's answer goes to the truth file, never to the device log: the build line
+        # ("# 0 build defect=M4") and, from an older build, "# T defect fired M4 r-0004".
+        if len(parts) >= 3 and (parts[2].startswith("build") or parts[2:4] == ["defect", "fired"]):
+            rec = {"action": "build" if parts[2].startswith("build") else "defect_fired",
+                   "t_us": self.clock.now_us(), "device_ms": int(parts[1]) if parts[1].isdigit() else None,
+                   "line": line[1:].strip()}
+            self._record(rec)
+            return
         if self.device_log is not None:
             self.device_log.write(f"{self.clock.stamp()} {line}\n")
-        parts = line.split()
         if len(parts) >= 3 and parts[2] == "error":
             self.errors.append(line)
 
