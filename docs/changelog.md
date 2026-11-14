@@ -438,3 +438,14 @@ and no fit ([device-log.md](device-log.md)).
   - the results are the same as before;
   - input-first order changes the correct model's result in 6 no-defect logs only, and no defect
     run's verdict or first mismatch.
+
+## Testbed: where an unnamed firmware change first acted
+
+`fired_points.py DEVICE_LOG --reference DIR` runs two firmwares on the device log's inputs: the copy
+of the script's own tree (changed) and an unchanged copy in `DIR`. It first checks that the changed
+one reproduces the log. It then prints the first output line where the two differ, or that they
+never differ. No defect switch and no `defect fired` line are needed. The testbed-04 blind group is
+scored with it, on the operator's computer.
+- **On testbed-03,** with the defect switch as the change, the first difference fell on the firing's
+  request in 18 of 18 runs: at the same millisecond for M4 and M10, 50 ms later for M2. No difference
+  was found in the 9 runs where the defect did not fire.

@@ -290,3 +290,48 @@ def test_computed_points_are_refused_when_the_harness_does_not_reproduce_the_log
     points, problem = fp.fired_points(text, fp.build(0, tmp_path, CXX))
     assert points == [] and problem.startswith("the harness does not reproduce the device log: 8050 ms")
     assert fp.main([str(tmp_path / "nope.log"), "--defect", "4"]) == 2
+
+
+
+def test_with_a_reference_firmware_the_first_difference_is_where_a_change_first_acted(build, tmp_path):
+    # the blind group's scoring: an unnamed change, found by running both firmwares on the log's inputs
+    text = device_log(firmware(build(4), SCRIPTS["retries_and_repeats"])[2])
+    ref_dir = tmp_path / "reference"
+    shutil.copytree(FW, ref_dir)
+    changed = fp.build(4, tmp_path, CXX)
+    reference = fp.build(0, tmp_path, CXX, ref_dir / "harness" / "harness.cpp", "ref")
+    diff, problem = fp.first_difference(text, changed, reference)
+    assert problem is None
+    assert diff == {"t_ms": 8050, "req_id": "r-0004", "changed": "8050 LOG effect motor_start r-0004 dir=up",
+                    "reference": "8050 OUT ERROR r-0004 reason=illegal"}
+    assert fp.first_difference(text, reference, reference) == (None, "the harness does not reproduce the device "
+                                                                     "log: 8050 ms 'effect motor_start r-0004 dir=up' "
+                                                                     "in the device log, not from the harness")
+
+
+def test_the_operator_workflow_on_a_changed_copy_of_the_firmware(tmp_path):
+    # The operator copies the firmware, changes lift_device.h (here: a move runs 60 ms after its ACK,
+    # not 50), runs the board, then runs the changed copy's fired_points.py against the unchanged one.
+    changed_dir, ref_dir = tmp_path / "changed", tmp_path / "reference"
+    shutil.copytree(FW, changed_dir)
+    shutil.copytree(FW, ref_dir)
+    h = changed_dir / "lift_uno" / "lift_device.h"
+    src = h.read_text()
+    assert "const uint32_t PROC_MS = 50;" in src
+    h.write_text(src.replace("const uint32_t PROC_MS = 50;", "const uint32_t PROC_MS = 60;"))
+    exe = tmp_path / "board"
+    subprocess.run([CXX, "-std=c++11", "-O1", "-o", str(exe), str(changed_dir / "harness" / "harness.cpp")], check=True)
+    log = tmp_path / "device.log"
+    log.write_text(device_log(firmware(exe, SCRIPTS["basic"])[2]))
+    out = subprocess.run([sys.executable, str(changed_dir / "harness" / "fired_points.py"), str(log),
+                          "--reference", str(ref_dir)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"t_ms": 50, "req_id": "r-0001", "changed": "60 LOG effect motor_start r-0001 dir=up",
+                                      "reference": "50 LOG effect motor_start r-0001 dir=up"}
+    # a log the change never acted on: no difference
+    quiet = tmp_path / "quiet.log"
+    quiet.write_text(device_log(firmware(exe, [(0, "STATUS s-0001"), (100, "END")])[2]))
+    out = subprocess.run([sys.executable, str(changed_dir / "harness" / "fired_points.py"), str(quiet),
+                          "--reference", str(ref_dir)], capture_output=True, text=True)
+    assert out.returncode == 0 and json.loads(out.stdout) == {"difference": None}
+    assert fp.main([str(quiet), "--reference", str(tmp_path / "nowhere")]) == 2

@@ -225,6 +225,16 @@ arduino-cli compile --fqbn arduino:avr:uno \
   - **Checked on the 182 real device logs** (development data): the harness reproduced every log.
     On the 27 defect-build logs of testbed-03, the computed firings equal the `defect fired` lines
     those builds still wrote, 18 of 18.
+- **A change nobody named:** `fired_points.py DEVICE_LOG --reference DIR`. Run the copy of the script
+  that sits in the changed firmware tree, with `DIR` an unchanged copy of
+  `examples/testbed-uno/firmware`. It runs both firmwares on the log's inputs, after checking that
+  the changed one reproduces the log. It prints the first output line where they differ
+  (`{"t_ms", "req_id", "changed", "reference"}`), or `{"difference": null}` when the change never
+  acted on those inputs. Build lines are left out of the comparison.
+  - **What the first difference is:** the first place the outputs differ, which can come after the
+    change's own branch. On testbed-03, with the defect switch as the change, it fell on the firing's
+    request in 18 of 18 runs: at the same millisecond for M4 and M10, and 50 ms later for M2. It
+    found no difference in the 9 runs where the defect did not fire.
 - **The build line is written even with the device log off,** like error lines.
 - **Memory** (compiled on the Orin, arduino-cli 1.6.0, arduino:avr 1.8.8, device log on, not
   flashed): the testbed-02 build used 5,166 B flash and 841 B RAM. With the switch:
