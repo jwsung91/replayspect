@@ -338,3 +338,15 @@ and after the runs. Every session was valid.
   within the cap, and the tool printed "correct model" where the registered rule says undecided.
 - **Fitter measurement:** no wrong "unexplained"; truth in the minimal set in 58 of 60; common
   command faults real in 42 of 46.
+
+## Device models: a log the correct model does not settle is not judged
+
+`judge_models` printed "correct model" when the correct model's own fit was not settled and no
+defect model was a candidate. In testbed-03 runs R014 and R037 the run cap ended every fit, the
+correct model's included, and the verdict read as "no defect" although no comparison took place.
+- **Now:** with no accusation, the verdict is `undecided` whenever the correct model's fit is not
+  settled (unexplained, ended by the cap, or a random draw found fewer). The verdict line gives the
+  reason and says the log is not judged. `--fit-out` adds `correct_settled`.
+- **Effect on stored judgments** (re-judged from the stored model rows, no refit): testbed-03, 2 of
+  95 change (R014 and R037, "correct model" to `undecided`); the 87 development logs and the 106
+  judgments of the testbed-03 simulator campaign, none.

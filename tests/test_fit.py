@@ -575,6 +575,42 @@ def test_fewer_faults_counts_the_difference_capped_models_are_no_candidates_and_
     assert d["verdict"] == "undecided" and d["undecided"] == ["M4"] and d["capped"] == ["M4"]
 
 
+def test_a_log_the_correct_model_does_not_settle_is_not_judged():
+    # testbed-03 R014/R037: the cap ended every fit, the correct model's included, and the verdict
+    # was "correct model". With no candidate, a correct model that is not settled means the log was
+    # not judged: the verdict is undecided, never "correct model".
+    from dataclasses import replace
+    ok = fit_log(short([f("s2c", "ACK", "r-0001", drop=True), f("s2c", "DONE", "r-0002", drop=True)]),
+                 usual=USUAL)
+    assert F._settled(ok) and ok.units
+    incomplete, unexplained = replace(ok, status="incomplete"), replace(ok, status="unexplained")
+    not_shown = replace(ok, units=[replace(u, minimal_shown=False) for u in ok.units])
+    fewer = replace(ok, random_check={"fewer": [["x"]]})
+    cases = [  # (correct, others, reason in the verdict line)
+        (incomplete, {"M4": incomplete, "M10": incomplete}, "incomplete, the run cap ended it"),
+        (incomplete, {"M4": unexplained}, "incomplete, the run cap ended it"),
+        (not_shown, {"M4": incomplete, "M10": unexplained}, "reproduced, the run cap ended it"),
+        (fewer, {"M4": unexplained}, "reproduced, a random draw found fewer faults"),
+        (unexplained, {"M4": unexplained, "M10": incomplete}, "unexplained, no defect model explains it"),
+    ]
+    for correct, others, why in cases:
+        d = F.judge_models(correct, others)
+        assert d["verdict"] == "undecided" and d["accused"] == [] and d["undecided"] == [], why
+        assert d["correct_settled"] is False
+        line = F.model_lines(d)[-1]
+        assert line.startswith("verdict: undecided (the correct model's fit is not settled: " + why), line
+        assert "the log is not judged" in line
+    d = F.judge_models(incomplete, {"M4": incomplete})
+    assert d["capped"] == ["correct", "M4"] and d["capped_count"] == 2
+    # Unchanged: a settled defect model with an unexplained correct model is accused; a settled correct
+    # model with no candidate is "correct model".
+    d = F.judge_models(unexplained, {"M10": ok, "M4": incomplete})
+    assert d["verdict"] == "defect suspected: M10" and d["difference"] is None
+    d = F.judge_models(ok, {"M4": incomplete, "M10": unexplained})
+    assert d["verdict"] == "correct model" and d["correct_settled"] is True
+    assert "not settled" not in F.model_lines(d)[-1]
+
+
 def test_cli_drive_fit(tmp_path, capsys):
     plan = FaultPlan.from_dict({"base": "fixed", "faults": [f("c2s", "MOVE_UP", "r-0001", dup_extra_us=300_000)]})
     log, trace, out_json = tmp_path / "c.log", tmp_path / "c.jsonl", tmp_path / "fit.json"
