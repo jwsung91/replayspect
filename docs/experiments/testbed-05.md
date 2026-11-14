@@ -139,7 +139,7 @@ are ms from the device's start.
   - S1 12 of 12, three of them by the wrong-id rule (S02, S11, S15).
   - S2 12 of 12.
   - The first mismatch was in the same millisecond as the first difference in all 12.
-- **Changed build, the change did not act:** S01 right. S05 invalid, not scored.
+- **Changed build, the change did not act:** S01 right. S05 invalid (stopped on the host side), not scored.
 - **Unchanged build:** S08 and S14 right. False mismatches: 0 of 2.
 
 **Contract result** (rev2, C1–C13)
@@ -149,9 +149,14 @@ are ms from the device's start.
   first difference, C8 two seconds later). With C1–C8 alone, the count would be 4 of 12 (S07, S11, S13,
   S15).
 - **Where the violation points:**
-  - on the first difference's request and millisecond in 5 of 7 (S02, S07, S09, S12, and S13 by C11);
-  - S11: on the id written on the wrong reply, in the same millisecond;
+  - on the request being handled, in its millisecond, in 4 of 7 (S07, S09, S12, and S13 by C11);
+  - S02 and S11: on the id written on the wrong reply, in the same millisecond;
   - S15: 662 ms later, on the id written on the wrong reply.
+  - **This count was corrected after scoring.** The advisor's first scoring said 5 of 7, counting S02
+    with the first group. The analyst found it when checking the scoring against `scores.txt`. By the
+    note fixed before the runs, the request being handled is the id on the reference line (r-0002 in
+    S02), and S02's C12 violation is on r-0001. The advisor corrected `scoring.md` (new sha256
+    `50287a37…`); no other number changed.
 - **False violations: 0** (S01, S08, S14; none on S05's partial log).
 
 ## Against the predictions
@@ -198,14 +203,19 @@ The contract language was not changed for this result.
 
 ## Limits
 
-- **S05 is invalid; its cause is not established.**
-  - Both logs stop at 49 s with no end line, and the device was still answering polls.
-  - In the advisor's reading, the likely cause is the operator's run script, not the build:
-    `02_run_all.sh` (written by the advisor) skips a slot whose client log exists. A session cut short,
-    by an interrupted script or a dropped SSH session, is therefore not run again. It cannot be: the
-    registration refuses a slot that already has a log.
-  - The operator's `run_all.log` is to say what happened. Until the operator confirms, the cause stays
-    unconfirmed.
+- **S05 is invalid: stopped on the host side; what stopped it is not recorded.** The operator
+  confirmed the following from their Orin records and memory.
+  - **The stop:** the session stopped at 01:01:11 KST, 49 s after its start. The device answered polls
+    up to the last line, and the client log and the device log stopped at the same moment. The stop
+    was on the host side.
+  - **The rerun was skipped:** the operator's run script started again about 2.5 minutes later (S06
+    began about 01:04:15 and ended at 01:05:45). The restarted script skipped S05 because its client
+    log already existed. That is a defect of the advisor's `02_run_all.sh`: it takes a log with no
+    end line as finished.
+  - **What is recorded:** the Orin's `run_all.log` starts at S06; the first run's log is not kept. The
+    operator also remembers the run being cut short, but no record says what cut it.
+  - **The build:** no evidence points at the build (K080). As the registration requires, S05 was not
+    run again.
 - **The analyst knew an old slot composition.** After the registration, the analyst learned the old
   composition (the counts) from a paste by the operator. That composition was discarded before the
   draw; the drawn one differs.
@@ -216,9 +226,10 @@ The contract language was not changed for this result.
 - **Two unchanged slots only** (the draw's minimum).
 - **Scheduled-time logs.** As in testbed-04, the device log's timer events carry their scheduled
   times.
-- **Scoring before the hash?** The operator ran the scoring script before handing over the files.
-  Whether that was before or after the analyst's submission hash is for the operator to state; it is
-  not stated yet. Nothing from it reached the analyst before the hash.
+- **The scoring script ran before the submission hash** (operator confirmed). Per the advisor's
+  conversation record, its output was pasted at 01:31 KST and the submission hash reached the operator
+  at 01:34. The operator confirms that neither the scoring output nor the assignment file was given to
+  the analyst before the submission hash.
 - **The advisor knows the tool** (registration, Limits). It wrote the rules and made the draw.
 - **The device log is the suspect's statement.** No drawn change acted only on logging; the rules
   exclude logging lines.

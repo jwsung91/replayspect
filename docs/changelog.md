@@ -584,7 +584,7 @@ them by rule and drew the slots by script with a recorded seed. This was the fir
 rev2 contracts. The registered analysis ran once, at the registered harness.
 - **Device model:** in the 12 slots where a change acted, `differs` 12 of 12, with the request (S1) and
   the content (S2) right in 12 of 12. No false mismatch on the 2 unchanged slots. One changed slot
-  where the change did not act conforms; one slot (S05) is invalid, its cause not established.
+  where the change did not act conforms; one slot (S05) is invalid: stopped on the host side, what stopped it not recorded.
 - **rev2 contracts:** caught 7 of 12 with no false violation. The new contracts C9–C13 fire in 4, and
   alone make the difference in 3: with C1–C8 the count would be 4 of 12. The 5 missed are all a wrong
   or missing answer to a repeated request: the coverage note's lines 37–39 row, and C12's "in part".
