@@ -71,6 +71,7 @@ class FaultLink:
         self.plan = plan or Plan()
         self.plan_id = self.plan.id
         self.errors: list[str] = []
+        self.build: str | None = None  # the build line's defect field, filed in the truth file
         self.on_change = None  # callback(up: bool, now_us: int), set by the client
         self._buf = b""
         self._counts: dict = {}
@@ -193,6 +194,8 @@ class FaultLink:
         # The experiment's answer goes to the truth file, never to the device log: the build line
         # ("# 0 build defect=M4") and, from an older build, "# T defect fired M4 r-0004".
         if len(parts) >= 3 and (parts[2].startswith("build") or parts[2:4] == ["defect", "fired"]):
+            if parts[2].startswith("build"):
+                self.build = next((w.split("=", 1)[1] for w in parts[2:] if w.startswith("defect=")), "")
             rec = {"action": "build" if parts[2].startswith("build") else "defect_fired",
                    "t_us": self.clock.now_us(), "device_ms": int(parts[1]) if parts[1].isdigit() else None,
                    "line": line[1:].strip()}

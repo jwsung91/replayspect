@@ -449,3 +449,14 @@ scored with it, on the operator's computer.
 - **On testbed-03,** with the defect switch as the change, the first difference fell on the firing's
   request in 18 of 18 runs: at the same millisecond for M4 and M10, 50 ms later for M2. No difference
   was found in the 9 runs where the defect did not fire.
+
+## Testbed: blind runs and the build check in the client
+
+- **The build check in the client.** `client.py --expect-build DEFECT` checks the build record the link
+  files in the truth file. A mismatch makes the run invalid (`wrong_build`, `no_build_line`, never
+  naming a build) and exits 3. The build line no longer reaches the device log, so the run scripts
+  check it this way.
+- **The blind procedure** is in the testbed README: making, compiling and flashing a change on a
+  computer the analyst cannot reach (always `-DLIFT_DEFECT=0`), running the session on the Orin with
+  `--expect-build none`, and scoring with `fired_points.py --reference` after the analyst's
+  submission.

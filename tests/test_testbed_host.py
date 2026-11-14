@@ -81,13 +81,13 @@ class FakePort:
             self.sched.at_us((now + self.delay) * 1000, lambda n=name, r=rid: self.on_message(Message(n, r, {})))
 
 
-def run_client(run_s=90, extra=b"", seed=0, plan=None, ready=b"READY log=1"):
+def run_client(run_s=90, extra=b"", seed=0, plan=None, ready=b"READY log=1", expect_build=None):
     ft = FakeTime()
     clock = tb_client.Clock(WALL, ft)
     port = FakePort(clock, extra=extra, ready=ready)
     log, dlog, truth = io.StringIO(), io.StringIO(), io.StringIO()
     link = FaultLink(port, clock, truth, dlog, Plan(plan))
-    c = tb_client.Client(link, clock, log, seed=seed, run_s=run_s)
+    c = tb_client.Client(link, clock, log, seed=seed, run_s=run_s, expect_build=expect_build)
     while c.started_at is None:
         c.step(clock.now_us())
         ft.t += 0.001
@@ -275,3 +275,16 @@ def test_cli_window_auto(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "windows: 1" in out and "late DONE" in out and "fit in window" in out
     assert main(["drive", str(tp), "--fit", "--window", "1s"]) == 2
+
+
+def test_the_client_checks_the_build_record_without_naming_it():
+    # testbed-04: the build line no longer reaches the device log, so the run checks the link's record.
+    # A mismatch makes the run invalid and names neither build (the blind group expects "none" always).
+    log, dlog, truth, valid = run_client(run_s=3, extra=b"# 0 build defect=none\n", expect_build="none")
+    assert valid and log.splitlines()[-1].endswith("valid=yes")
+    log, _, _, valid = run_client(run_s=3, extra=b"# 0 build defect=M4\n", expect_build="none")
+    assert not valid and log.splitlines()[-1].endswith("valid=no reasons=wrong_build") and "M4" not in log
+    log, _, _, valid = run_client(run_s=3, expect_build="M4")
+    assert not valid and log.splitlines()[-1].endswith("valid=no reasons=no_build_line")
+    log, _, _, valid = run_client(run_s=3, extra=b"# 0 build defect=M4\n")  # no expectation: not checked
+    assert valid

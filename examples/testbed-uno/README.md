@@ -254,6 +254,66 @@ arduino-cli compile --fqbn arduino:avr:uno \
 **Result:** [docs/experiments/testbed-03.md](../../docs/experiments/testbed-03.md) (95 runs: no
 defect, M2, M4, M10).
 
+## Blind runs: a firmware change the analyst does not know
+
+The analyst (the agent) reads only the logs. The operator makes the change on a computer the analyst
+cannot reach, flashes it there, and moves the board to the Orin. So the changed source never exists
+on the development machine or the Orin.
+
+**On the operator's computer.** You need:
+- arduino-cli 1.6.0 with the core arduino:avr 1.8.8;
+- for scoring, a C++ compiler and Python 3;
+- from the repository at the registered commit, the folder `examples/testbed-uno/firmware`:
+  - `lift_uno/lift_uno.ino`, `lift_uno/lift_device.h`;
+  - `harness/harness.cpp`, `harness/fired_points.py`.
+
+```bash
+arduino-cli core update-index && arduino-cli core install arduino:avr@1.8.8
+cp -r firmware reference-firmware            # an unchanged copy, kept as it is
+# edit firmware/lift_uno/lift_device.h. Keep the wire format, the device log's line format, the
+# build line and the device log switch as they are, and add no log line.
+arduino-cli compile --fqbn arduino:avr:uno --output-dir build-blind \
+  --build-property "compiler.cpp.extra_flags=-DLIFT_DEFECT=0" firmware/lift_uno
+#   note "Sketch uses ..." and "Global variables use ...": keep RAM at about 1,000 B or less
+arduino-cli board list                       # the Uno's port: /dev/ttyACM0, /dev/cu.usbmodem..., COM3
+arduino-cli upload -p PORT --fqbn arduino:avr:uno --input-dir build-blind firmware/lift_uno
+arduino-cli monitor -p PORT -c baudrate=115200
+#   expect "READY log=1", "# 0 build defect=none", "# 0 state DOWN from=- on=init"; close the monitor
+sha256sum firmware/lift_uno/lift_device.h build-blind/lift_uno.ino.hex   # keep with your assignment
+```
+
+- **Compile every blind build with `-DLIFT_DEFECT=0`,** so its build line says `defect=none` like
+  every other run.
+- **An unchanged slot** takes the same commands on `reference-firmware`, from the same computer.
+  Flash before every slot, unchanged slots included, so the replugs and flashes look the same for
+  every slot.
+
+**On the Orin.** Plug the board into the hub port and run one session with the build expected to be
+`none`:
+
+```bash
+python3 host/client.py --port /dev/ttyACM0 --seed SEED --plan PLAN.json --expect-build none \
+  --log blind/LABEL-client.log --device-log blind/LABEL-device.log --truth blind/LABEL-truth.log
+```
+
+- **`--expect-build`:** the client checks the build record the link files in the truth file. A
+  mismatch makes the run invalid (`wrong_build`, or `no_build_line`) and exits 3. It never names a
+  build in the client log.
+- **What the analyst receives:** only the client and device logs. Keep the truth files.
+
+**Scoring, after the analyst has submitted.** On the operator's computer, for each slot, run the copy
+of the script in your changed tree:
+
+```bash
+python3 firmware/harness/fired_points.py blind/LABEL-device.log --reference reference-firmware
+```
+
+It checks that your changed firmware reproduces the device log. Then it prints the first output line
+where your firmware and the unchanged one differ on that log's inputs, with the request id, or
+`{"difference": null}` when your change never acted. This first output difference is what the
+analyst's conformance check looks for too. It can come after the change's own branch: with M2 it
+came 50 ms later, when the repeat executed.
+
 ## Not yet
 
 - **Two sources:** the client log and the device log together, with the clock between them estimated.
