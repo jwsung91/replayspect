@@ -319,6 +319,10 @@ device log against the model, and 8 blind slots). The operator had no second com
 compiled and flashed the change on the Orin, which the analyst did not use from before the
 assignment's hash until after the submission.
 
+**Result:** [docs/experiments/testbed-05.md](../../docs/experiments/testbed-05.md) (16 blind slots on
+mechanically mutated firmware, with the rev2 contracts). The builds, flashing and runs were on the Orin,
+with the scripts `blind_flash.sh` and `run_blind.sh` kept with the registration outside the repository.
+
 ## Not yet
 
 - **Two sources:** the client log and the device log together, with the clock between them estimated.
