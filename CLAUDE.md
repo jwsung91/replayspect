@@ -92,6 +92,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] 두 출처 1단계 testbed-04: 실물 로그 83개(결함 없음 56, M2 12, M4 8, M10 7), 하네스 `474432c` 고정, 모두 유효. 결함 없는 빌드에서 거짓 불일치 0/56(같은 밀리초 규칙이 쓰인 2개도 일치, 2 ms 허용 범위는 쓰이지 않음), M4와 같은 자리의 진짜 유실 12/12, 요청 중복과 ACK 중복 12/12, 첫 불일치가 결함이 터진 요청과 같음 21/21, 개수 대조 79/83(상쇄 4개), M1·M2는 DONE 뒤 반복이 있을 때만 구분, 계약만으로 M4는 C3, M2·M10은 C8, 거짓 위반 0. 등록 예측과 모두 같음. 블라인드 8칸(운영자의 변경 A·B, 결함 있는 칸 5, 없는 칸 3): 판정 8/8, 변경이 작동한 4칸에서 요청과 내용 모두 맞음, 계약 위반은 8칸 모두 0. 소스는 다른 PC가 없어 Orin에 두었고 에이전트가 접속하지 않는 것으로 보호. `docs/experiments/testbed-04.md`
 - [x] 계약 rev2: 잘린 구간 판정(창 끝까지, 잘린 시작에서 거짓 위반 가능한 종류는 not judged, 놓칠 수만 있는 종류는 "no violation in the slice"), 새 종류 `only_after`(재정렬 표시 키·잘린 시작은 not judged, 판정한 키가 없으면 not judged), 출처 키 `grade`·`source`, 오라클 C9·C10, `contracts/lift.v0.rev2.yaml`(C9 모터 정지 3002 ms, C10 DONE은 정지 뒤, C11 ERROR reason, C12·C13 스스로 보내는 ACK·STATUS_REPLY 금지). 개발 점검: 실물 결함 없는 로그 211개 위반 0, 블라인드 B01·B06(C10)·B03·B05(C9), 시뮬레이터 1,000 시드에서 결함 없는 구현 0, 새로 잡는 것은 M4(C9)·M10(C10)뿐. 측정은 새 블라인드 결함으로 따로. `docs/notes/protocol-contract-coverage.md`
 - [x] testbed-05 블라인드(기계적 뮤턴트, 조언자가 규칙으로 생성하고 기록된 시드로 추첨, 16칸, rev2 계약 첫 측정): 변경이 작동한 12칸에서 모델 판정 12/12, 요청·내용 12/12, 결함 없는 2칸 거짓 불일치 0. rev2 계약은 7/12를 잡고 거짓 위반 0(C1~C8만이면 4/12). 놓친 5칸은 모두 반복 요청에 대한 틀리거나 없는 답(대조표 37–39행, C12의 일부). 등록 예측 5개 모두 맞음, 개수 대조는 16칸 모두 진실과 같음. S05 무효(호스트 쪽 중단, 중단의 원인은 기록 없음). `docs/experiments/testbed-05.md`
+- [x] WP6/7a 1단계 `never_after`(`docs/work-order-wp67a.md`): `only_after`의 거울(`after` 뒤의 첫 `event`, 키당 한 번), 재정렬 표시는 두 종류가 모두 있는 키만 판정 안 함, 잘린 시작은 "no violation in the slice", 장치 로그는 두 종류 모두 완전 선언일 때만. 로더가 `event`와 `after`가 같은 패턴인 `only_after`·`never_after`를 거부. 오라클 N1(테스트 안에만, "DONE·ERROR를 보낸 요청에 ACK 없음"), 시드 0–99에서 맞는 리프트 0, M1 89, M11 2. 계약 파일은 바꾸지 않음
 - [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)
@@ -106,7 +107,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - 계획을 준 실행은 `Run.plan_report`로 효과 없던 항목(없는 키, 끊김 중 송신, 안 일어난 끊김)을 알려 준다.
 
 ## 계약과 판정기 요약 (구현 완료)
-- 계약 종류 9개(8개와 `only_after`)의 의미와 보고 시점은 `docs/design-v0.md` "계약 DSL" 절이 기준이다.
+- 계약 종류 10개(8개와 `only_after`·`never_after`)의 의미와 보고 시점은 `docs/design-v0.md` "계약 DSL" 절이 기준이다.
 - 기본 계약 파일은 `contracts/lift.v0.yaml`(과거 실험의 기준)이다. rev2 묶음 `contracts/lift.v0.rev2.yaml`(C1~C13)은 경로를 지정해 쓴다. 계획기에게는 주석까지 파일 전체가 보이므로, 파일 어디에도 결함·뮤턴트·블라인드 칸 이름이나 `docs/notes` 경로를 쓰지 않는다. `source`에는 `found`를 넣지 않고, 발견 경로는 `docs/notes/protocol-contract-coverage.md`에만 쓴다(`tests/test_contracts_rev2.py`가 파일 전체 글을 검사).
 - 모든 위반은 그것을 증명하는 가장 이른 이벤트에서 보고하고, 실행 끝에서만 알 수 있는
   위반은 `seq = len(trace)`로 보고한다. 실행 종료 시각 `end_us`는 판정기에 명시적으로 넘긴다.

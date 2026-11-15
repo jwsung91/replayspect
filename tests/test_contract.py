@@ -320,6 +320,65 @@ def test_only_after_does_not_judge_a_key_with_a_reordered_event():
     assert judge(Trace.from_events(events), cs, END) == violations
 
 
+NEVER = "  - {id: K, kind: never_after, per: req_id, event: d.send(ACK), after: d.send(DONE|ERROR)}"
+
+
+def test_never_after_forbids_an_event_once_an_after_of_its_key_occurred():
+    tr = trace_of(
+        (0, "d", "send", "ACK", "a", None),        # 0  a: no DONE yet, fine
+        (1, "d", "send", "ACK", "a", None),        # 1  a repeated ACK before its end: fine
+        (2, "d", "send", "DONE", "a", None),
+        (3, "d", "send", "ACK", "b", None),        # 3  b: only a has ended
+        (4, "d", "send", "ACK", "a", None),        # 4  a: ACK after its DONE
+        (5, "d", "send", "ACK", "a", None),        # 5  reported once per key
+        (6, "d", "send", "ERROR", "b", None),
+        (7, "d", "send", "ACK", "b", None),        # 7  ERROR is an after too
+        (8, "d", "send", "ERROR", None, None),
+        (9, "d", "send", "ACK", None, None),       # 9  a null key is a key like any other
+    )
+    assert found(tr, one(NEVER)) == [("K", "a", 4), ("K", "b", 7), ("K", None, 9)]
+
+
+def test_never_after_follows_trace_order_within_one_time():
+    ack_first = trace_of((5, "d", "send", "ACK", "a", None), (5, "d", "send", "DONE", "a", None))
+    done_first = trace_of((5, "d", "send", "DONE", "a", None), (5, "d", "send", "ACK", "a", None))
+    assert found(ack_first, one(NEVER)) == [] and found(done_first, one(NEVER)) == [("K", "a", 1)]
+
+
+def test_never_after_an_event_that_is_also_an_after_does_not_follow_itself():
+    cs = one("  - {id: K, kind: never_after, per: req_id, event: d.send(DONE|STATUS_REPLY), after: d.send(DONE)}")
+    tr = trace_of((0, "d", "send", "DONE", "a", None), (1, "d", "send", "STATUS_REPLY", "a", None),
+                  (2, "d", "send", "DONE", "b", None), (3, "d", "send", "DONE", "b", None))
+    assert found(tr, cs) == [("K", "a", 1), ("K", "b", 3)]
+
+
+def test_never_after_does_not_judge_a_key_with_both_kinds_and_a_reordered_one():
+    flag = {"line": 9, "flags": ["out_of_order"]}
+    events = [
+        Event(0, 1, "d", "send", "DONE", "a"),                     # a: violated, nothing reordered
+        Event(1, 2, "d", "send", "ACK", "a"),
+        Event(2, 3, "d", "send", "DONE", "b", log={"line": 3}),    # b: would be violated...
+        Event(3, 4, "d", "send", "ACK", "b", log=flag),            # ...but its ACK's place is not known
+        Event(4, 5, "d", "send", "ACK", "c", log={"line": 5, "flags": ["out_of_tolerance"]}),
+        Event(5, 6, "d", "send", "ERROR", "c"),                    # c: fine in trace order, order not known
+        Event(6, 7, "d", "send", "ACK", "e", log=flag),            # e: no after, so no order can break it
+        Event(7, 8, "d", "send", "DONE", "f", log=flag),           # f: no event, nothing to judge
+        Event(8, 9, "d", "send", "STATUS_REPLY", "a", log=flag),   # a flag on another pattern changes nothing
+    ]
+    violations, unjudged = judge_report(Trace.from_events(events), one(NEVER), END)
+    assert [(v.contract, v.req_id, v.seq) for v in violations] == [("K", "a", 1)]
+    assert unjudged == {"K": ["b", "c"]}
+    assert judge(Trace.from_events(events), one(NEVER), END) == violations
+
+
+@pytest.mark.parametrize("kind", ["only_after", "never_after"])
+@pytest.mark.parametrize("after", ["d.send(DONE|ERROR)", "d.send(ERROR|DONE)", " d.send(ERROR|DONE) "])
+def test_event_and_after_must_differ(kind, after):
+    with pytest.raises(ContractError, match="K: event and after are the same pattern"):
+        one(f"  - {{id: K, kind: {kind}, per: req_id, event: d.send(DONE|ERROR), after: '{after}'}}")
+    one(f"  - {{id: K, kind: {kind}, per: req_id, event: d.send(DONE), after: d.send(DONE|ERROR)}}")  # overlap
+
+
 PROVENANCE = ("  - {id: K, kind: only_after, per: req_id, event: d.send(DONE), after: d.effect(motor_stop), "
               "grade: stated, source: {doc: docs/protocol-lift.md, lines: '43-46', quote: 'and DONE is sent', "
               "found: testbed-04 blind}}")
@@ -380,6 +439,40 @@ def test_the_rev2_oracle_catches_what_each_addition_is_for():
     unmoved = trace_of((0, "device", "send", "DONE", "r-1", None))
     assert lift_oracle.first_violations_rev2(late, END) == first_violations(judge(late, REV2, END)) == {"C9": 1}
     assert lift_oracle.first_violations_rev2(unmoved, END) == first_violations(judge(unmoved, REV2, END)) == {"C10": 0}
+
+
+#: The first never_after contract, in the tests only (lift_oracle.NEVER_AFTER_CONTRACTS writes it out by hand).
+NEVER_AFTER = load_contracts(
+    "protocol: lift.v0\ncontracts:\n"
+    "  - {id: N1, kind: never_after, per: req_id, event: device.send(ACK), after: device.send(DONE|ERROR),\n"
+    "     desc: the device sends no ACK for a req_id after it sent DONE or ERROR for that req_id}")
+
+
+@pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])
+@pytest.mark.parametrize("mutant", [None] + sorted(MUTANTS))
+def test_judge_matches_oracle_on_never_after(mutant, n):
+    for seed in range(n):
+        tr = run_lift(seed, mutants=[mutant] if mutant else [])
+        assert first_violations(judge(tr, NEVER_AFTER, END)) == lift_oracle.first_violations_never_after(tr, END), seed
+
+
+@pytest.mark.slow
+def test_never_after_comparison_is_not_empty_against_empty():
+    """On how many of seeds 0-99 each implementation violates N1. The correct lift must not."""
+    hits = {}
+    for mutant in [None] + sorted(MUTANTS):
+        n = sum(bool(first_violations(judge(run_lift(s, mutants=[mutant] if mutant else []), NEVER_AFTER, END)))
+                for s in range(100))
+        if n:
+            hits[mutant] = n
+    assert hits == {"M1": 89, "M11": 2}
+
+
+def test_the_never_after_oracle_catches_an_ack_after_done():
+    late_ack = trace_of((0, "device", "send", "ACK", "r-1", None), (1, "device", "send", "DONE", "r-1", None),
+                        (2, "device", "send", "ACK", "r-1", None))
+    assert lift_oracle.first_violations_never_after(late_ack, END) == first_violations(
+        judge(late_ack, NEVER_AFTER, END)) == {"N1": 2}
 
 
 # -- judge API details -------------------------------------------------------------------

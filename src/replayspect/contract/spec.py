@@ -57,6 +57,7 @@ KINDS = (
     "count_le",
     "mutually_exclusive",
     "only_after",
+    "never_after",
 )
 GRADES = ("stated",)  # stated: the protocol document says it
 SOURCE_KEYS = ("doc", "lines", "quote", "found")
@@ -256,6 +257,7 @@ _REQUIRED = {
     "count_le": {"per", "event", "bound"},
     "mutually_exclusive": {"per", "events"},
     "only_after": {"per", "event", "after"},
+    "never_after": {"per", "event", "after"},
 }
 _COMMON = {"id", "kind", "desc", "grade", "source"}
 
@@ -313,6 +315,8 @@ def _contract(raw: Mapping[str, Any]) -> Contract:
             p["equals"] = Operand.parse(raw["equals"])
     except ContractError as exc:
         raise ContractError(f"{cid}: {exc}") from None
+    if "after" in p and p["after"] == p["event"]:
+        raise ContractError(f"{cid}: event and after are the same pattern ({p['event']})")
     grade, source = _provenance(cid, raw)
     return Contract(cid, kind, str(raw.get("desc", "")), p, grade, source)
 

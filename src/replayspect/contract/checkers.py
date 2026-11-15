@@ -250,6 +250,41 @@ class OnlyAfter(Checker):
         return self.reordered & self.with_event
 
 
+class NeverAfter(Checker):
+    """No ``event`` once an ``after`` with the same key has occurred (earlier in trace order).
+
+    The mirror of :class:`OnlyAfter`. Reported at the first ``event`` that follows an ``after`` of its key,
+    once per key; an event that is also an ``after`` does not follow itself. A key that has both an
+    ``event`` and an ``after``, one of them flagged by a log adapter as reordered, is not judged: its order
+    is not known. A key with only one of the two cannot be broken by any order, so it is judged.
+    """
+
+    def __init__(self, contract: Contract) -> None:
+        super().__init__(contract)
+        self.seen: set[str | None] = set()
+        self.found: dict[str | None, Violation] = {}
+        self.reordered: set[str | None] = set()
+        self.with_event: set[str | None] = set()
+
+    def on_event(self, ev, last):
+        is_event, is_after = self.p["event"].matches(ev), self.p["after"].matches(ev)
+        if (is_event or is_after) and ev.log and set(ev.log.get("flags") or ()) & set(REORDERED):
+            self.reordered.add(ev.req_id)
+        if is_event:
+            self.with_event.add(ev.req_id)
+            if ev.req_id in self.seen and ev.req_id not in self.found:
+                self.found[ev.req_id] = self.v(ev.req_id, ev.seq, f"{ev.name} after {self.p['after']}")
+        if is_after:
+            self.seen.add(ev.req_id)
+        return []
+
+    def on_end(self, end_us, end_seq):
+        return [v for k, v in self.found.items() if k not in self.unjudged_keys()]
+
+    def unjudged_keys(self):
+        return self.reordered & self.with_event & self.seen
+
+
 def build_checkers(cs: ContractSet) -> list[Checker]:
     out: list[Checker] = []
     for c in cs.contracts:
@@ -265,6 +300,7 @@ def build_checkers(cs: ContractSet) -> list[Checker]:
                 "count_le": CountLe,
                 "mutually_exclusive": MutuallyExclusive,
                 "only_after": OnlyAfter,
+                "never_after": NeverAfter,
             }[c.kind](c))
     return out
 
@@ -281,7 +317,8 @@ def judge(trace: Trace | Iterable[Event], contracts: ContractSet, end_us: int) -
 
 def judge_report(trace: Trace | Iterable[Event], contracts: ContractSet,
                  end_us: int) -> tuple[list[Violation], dict[str, list[str | None]]]:
-    """:func:`judge`, plus the keys each contract could not judge (only ``only_after`` has any)."""
+    """:func:`judge`, plus the keys each contract could not judge (only ``only_after`` and ``never_after``
+    have any)."""
     events = list(trace)
     if events and end_us < events[-1].t_us:
         raise ValueError(f"end_us={end_us} is before the last event at {events[-1].t_us}us")
@@ -319,11 +356,12 @@ def misses_without_earlier_events(c: Contract) -> bool:
     """Whether cutting events from the start of a trace can hide a violation of ``c`` proved inside what is left.
 
     ``at_most_once`` (the first occurrence cut), ``exactly_once`` (the first ``start`` or the first occurrence
-    cut), ``at_most_one_open`` (a key opened before the cut) and ``mutually_exclusive`` (one pattern seen only
-    before the cut) carry state from earlier events but never report a violation that did not happen. On
-    such a cut, no violation means no violation in what is left, not that the contract holds.
+    cut), ``at_most_one_open`` (a key opened before the cut), ``mutually_exclusive`` (one pattern seen only
+    before the cut) and ``never_after`` (the ``after`` cut) carry state from earlier events but never report a
+    violation that did not happen. On such a cut, no violation means no violation in what is left, not that
+    the contract holds.
     """
-    return c.kind in ("at_most_once", "exactly_once", "at_most_one_open", "mutually_exclusive")
+    return c.kind in ("at_most_once", "exactly_once", "at_most_one_open", "mutually_exclusive", "never_after")
 
 
 def first_violations(violations: Iterable[Violation]) -> dict[str, int]:

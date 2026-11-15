@@ -232,7 +232,7 @@ class ContractStatus:
     not_judged: list[str] = field(default_factory=list)  # needs events before ``cut_start_us``
     in_slice: list[str] = field(default_factory=list)  # no violation in the slice; earlier events not seen
     cut_start_us: int | None = None
-    keys_not_judged: dict[str, list[str | None]] = field(default_factory=dict)  # only_after: reordered at ingest
+    keys_not_judged: dict[str, list[str | None]] = field(default_factory=dict)  # *_after: reordered at ingest
     in_judged_keys: list[str] = field(default_factory=list)  # no violation in the keys judged; others not judged
     reordered: list[str] = field(default_factory=list)  # not judged: every key it was about was reordered
 
@@ -289,7 +289,7 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
         pats = trigger_patterns(c)
         exercised = any(p.matches(e) for e in events for p in pats)
         skipped = set(keys_not_judged.get(c.id, ()))
-        if skipped:  # only_after: a key whose order is not known was not judged
+        if skipped:  # only_after, never_after: a key whose order is not known was not judged
             judged_keys = {e.req_id for e in events for p in pats if p.matches(e)} - skipped
             (st.in_judged_keys if judged_keys else st.reordered).append(c.id)
         elif not exercised:

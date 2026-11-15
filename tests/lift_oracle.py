@@ -177,3 +177,34 @@ def first_violations_rev2(trace: Trace, end_us: int) -> dict[str, int]:
     for v in check_rev2(trace, end_us):
         first[v.contract] = min(v.seq, first.get(v.contract, v.seq))
     return first
+
+
+# -- the first never_after contract (tests only; no contract file holds it) ----------------------
+
+NEVER_AFTER_CONTRACTS = {
+    "N1": "the device sends no ACK for a req_id after it sent DONE or ERROR for that req_id",
+}
+
+
+def check_never_after(trace: Trace, end_us: int) -> list[Violation]:
+    """N1, by hand: an ACK of a req_id for which a DONE or ERROR was sent earlier, reported at that ACK, once
+    per req_id. An ACK before the first DONE or ERROR of its req_id is fine."""
+    out: list[Violation] = []
+    ended: set[str] = set()
+    reported: set[str] = set()
+    for e in trace:
+        r = e.req_id
+        if e.actor == "device" and e.kind == "send" and e.name == "ACK":
+            if r in ended and r not in reported:
+                reported.add(r)
+                out.append(Violation("N1", r, e.seq, "ACK after DONE or ERROR"))
+        elif e.actor == "device" and e.kind == "send" and e.name in TERMINAL:
+            ended.add(r)
+    return out
+
+
+def first_violations_never_after(trace: Trace, end_us: int) -> dict[str, int]:
+    first: dict[str, int] = {}
+    for v in check_never_after(trace, end_us):
+        first[v.contract] = min(v.seq, first.get(v.contract, v.seq))
+    return first

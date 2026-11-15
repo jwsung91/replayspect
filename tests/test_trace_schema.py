@@ -360,6 +360,64 @@ def test_which_contract_kinds_a_cut_start_can_break():
         "id": "C10", "kind": "only_after", "per": "req_id", "event": "device.send(DONE)",
         "after": "device.effect(motor_stop)"}]}).contracts[0]
     assert needs_earlier_events(after) and not misses_without_earlier_events(after)  # the stop may be before the cut
+    never = load_contracts({"protocol": "p", "contracts": [{
+        "id": "N", "kind": "never_after", "per": "req_id", "event": "device.send(ACK)",
+        "after": "device.send(DONE|ERROR)"}]}).contracts[0]
+    assert misses_without_earlier_events(never) and not needs_earlier_events(never)  # the DONE may be before the cut
+
+
+NEVER = {"protocol": "p", "contracts": [{"id": "N", "desc": "no ACK after the end", "kind": "never_after",
+                                         "per": "req_id", "event": "device.send(ACK)", "after": "device.send(DONE)"}]}
+
+
+def send(seq, t_us, name, req_id="r-0001", flags=None):
+    return {"seq": seq, "t_us": t_us, "actor": "device", "kind": "send", "name": name, "req_id": req_id,
+            "source": "adapter:x", "log": {"line": seq + 1, **({"flags": flags} if flags else {})}}
+
+
+@pytest.mark.parametrize("window, events, line, status", [
+    # the DONE is in the slice: violated
+    ([10, 100], [send(3, 20, "DONE"), send(5, 30, "ACK")], "  N violated at #5 0.000030s r-0001: ACK after", "violated"),
+    # the DONE (seq 1, t=5) was cut: the ACK looks fine, so nothing is found in the slice
+    ([10, 100], [send(5, 30, "ACK")], "0 violated, 0 ok, no violation in the slice (earlier events not seen): N",
+     "no violation in the slice"),
+    ([0, 100], [send(5, 30, "ACK")], "0 violated, 1 ok (N)", "ok"),
+    ([10, 100], [send(5, 30, "DONE")], "0 violated, 0 ok, not exercised: N", "not exercised"),
+])
+def test_never_after_on_a_slice_with_a_cut_start(tmp_path, capsys, window, events, line, status):
+    import yaml
+    from replayspect.rewind import contract_status
+    c = tmp_path / "c.yaml"
+    c.write_text(yaml.safe_dump(NEVER), encoding="utf-8")
+    path = header_file(tmp_path, {"until_us": 200, "slice": {"window": window, "actors": None, "of": None}}, events)
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    assert line in out
+    cut = window[0] if window[0] > 0 else None
+    st = contract_status(read_trace_file(path).trace.events, load_contracts(NEVER), 100, "window end", cut)
+    assert st.to_dict() == {"N": status}
+
+
+@pytest.mark.parametrize("events, line, status", [
+    # one key judged and fine, one with both kinds and a reordered line: not "ok"
+    ([send(0, 10, "ACK"), send(1, 11, "DONE"),
+      send(2, 20, "DONE", "r-0002"), send(3, 21, "ACK", "r-0002", ["out_of_order"])],
+     "0 violated, 0 ok, no violation in the keys judged: N", "no violation in the keys judged"),
+    # every key that had an ACK was reordered
+    ([send(0, 20, "DONE", "r-0002"), send(1, 21, "ACK", "r-0002", ["out_of_tolerance"])],
+     "0 violated, 0 ok, not judged (every key reordered): N", "not judged"),
+    # a reordered ACK with no DONE of its key: no order can break it, so it is judged
+    ([send(0, 10, "ACK", "r-0002", ["out_of_order"])], "0 violated, 1 ok (N)", "ok"),
+])
+def test_never_after_with_keys_not_judged_is_not_ok(tmp_path, capsys, events, line, status):
+    import yaml
+    from replayspect.rewind import contract_status
+    c = tmp_path / "c.yaml"
+    c.write_text(yaml.safe_dump(NEVER), encoding="utf-8")
+    path = header_file(tmp_path, {"source": "adapter:x"}, events)
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    assert line in out and ("N: not judged for r-0002" in out) == (status != "ok")
+    st = contract_status(read_trace_file(path).trace.events, load_contracts(NEVER), 100, "end")
+    assert st.to_dict() == {"N": status}
 
 
 # -- bad files fail with the line number ------------------------------------------------------
