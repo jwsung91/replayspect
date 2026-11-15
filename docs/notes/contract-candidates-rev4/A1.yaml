@@ -1,0 +1,13 @@
+protocol: lift.v0
+contracts:
+  - id: A1
+    desc: the device sends DONE for a req_id only after the state became UP or DOWN for that req_id
+    kind: only_after
+    per: req_id
+    event: device.send(DONE)
+    after: device.state(UP|DOWN)
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "45-46"
+      quote: "3 s later the motor stops, the state becomes `UP` or `DOWN`, and `DONE` is sent."

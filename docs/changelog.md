@@ -749,3 +749,21 @@ events must keep the model's order.
   The rule was written after S15 and S19 were known.
 - **Tests:** `tests/test_device_order.py`, on simulator-made device logs. The existing first-mismatch test
   gains `kind`.
+
+## WP6/7b stage 2: the candidate "DONE only after the arrival state" (operator note)
+
+`docs/notes/contract-candidates-rev4.md` reports one candidate, A1, in
+`docs/notes/contract-candidates-rev4/A1.yaml`. It is an `only_after`: `DONE` for a request only after the
+state became `UP` or `DOWN` for it, stated by the protocol's lines 45–46. Its incidents are testbed-06 S19
+and S15 (development data), each with the device model's report remade after stage 1.
+- **`claim check`:** both incidents are caught on the request and at the time of the model's first mismatch.
+  No violation was found on the normal corpus: the 218 real no-defect logs (1288 `DONE` sends) and seeds
+  0–999 of the correct lift. It passes.
+- **Beside it, against rev3's C10:**
+  - on the blind slots of testbed-04, 05 and 06, A1 fires on seven; C10 fires on the same six with the same
+    first violation, and not on S19;
+  - in the simulator, A1 fires only for M10 (24 seeds), exactly where C10 does.
+
+  A1 adds one case to rev3: a `DONE` between the motor stop and the state change.
+- **Not done yet:** nothing enters a contract file before the operator confirms or drops A1. Whether the
+  sentence states an order is the operator's reading. The motor's direction (S06) stays a recorded gap.
