@@ -611,3 +611,46 @@ with that key may follow (`event`, `after`, `per: req_id`; trace order decides).
   for that req_id", is written by hand in `tests/lift_oracle.py` and lives in the tests only; no contract
   file changes. The judge matches it on seeds 0–99 for the correct lift and every mutant. On those seeds
   N1 is violated by M1 on 89 and M11 on 2, and by no other implementation, the correct lift included.
+
+## WP6/7a stage 2: `claim check`
+
+`replayspect claim check CANDIDATES` takes candidate contracts (the existing language, each with `grade`
+and `source`) and says whether each deserves a person's time. No model runs in it.
+- **Inputs:**
+  - incidents: trace files or device logs, each optionally with `--model`, the `replayspect device --out`
+    report for that incident;
+  - a normal corpus: `--normal` files or directories, and `--normal-seeds` of the system's implementation
+    with no defect;
+  - `--complete` for the device logs.
+- **Per incident:**
+  - the status and every violation;
+  - the first violation's request and time;
+  - whether that request is the model's first mismatch: `yes`, `no`, `not given` without a model result
+    (never `no`), or `not violated`.
+- **Per candidate on the normal corpus:** how many inputs exercised it, the count of each status, and every
+  violation.
+- **Verdict:**
+  - `passes`: violated on every incident, exercised, no normal violation;
+  - `fails`, with reasons: an incident not caught, not judged counting as not caught; or any normal
+    violation;
+  - `untested`: never exercised on the normal corpus.
+- **Output:** text, and JSON with `--out`; same inputs, same bytes. Every input is named with its sha256,
+  and the normal files also by the sha256 of their list.
+- **`never_after`, "exercised":** a key with an `after` and something later with the same key by the actor
+  of the `event` pattern. This is the measure used for the verdict, chosen in the #53 review. The measure
+  first proposed in the #52 review (anything later with the same key) is reported beside it. On seeds
+  0–99 of the lift, with `device.send(ACK)` after `device.send(DONE|ERROR)`:
+  - the wider count is 596 of 596 keys with an `after`, because the client's receipt of the `DONE` counts;
+  - the measure used is 215, in 94 of 100 inputs, each a repeat received after the end.
+
+  `docs/claims.md` states that this measure is conservative.
+- **Untested reasons:** when every normal input is not judged, the reason says so, with what was missing,
+  instead of "never exercised".
+- **One completeness rule:** `devicelog.needs_complete` serves both `device --contracts` and `claim check`.
+- **Tests** use simulator data only:
+  - C10 against an M10 incident passes;
+  - the `count_le` form of "DONE only after the stop" fails on the correct lift;
+  - a candidate about a message the lift never sends is untested.
+- **Documented** in `docs/claims.md`, including what a pass does not prove.
+- **Fix from the #52 review:** a slice with a cut start and keys not judged now reads "no violation in the
+  keys judged, in the slice" instead of dropping the slice caveat.

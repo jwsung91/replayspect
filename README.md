@@ -82,6 +82,11 @@ Implemented:
   analyst did not know ([docs/experiments/testbed-04.md](docs/experiments/testbed-04.md)),
   then on 16 blind slots of mechanically mutated firmware, with the rev2 contracts
   ([docs/experiments/testbed-05.md](docs/experiments/testbed-05.md))
+- Claims: `claim check` judges candidate contracts (with `grade` and `source`)
+  on incidents and on a normal corpus (trace files, device logs, simulator seeds
+  with no defect), and says per candidate passes, fails or untested, with the
+  device model's first mismatch compared when its report is given
+  ([docs/claims.md](docs/claims.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with

@@ -124,8 +124,10 @@ data`. The header, `fidelity`, `source` and `log` are not part of it.
       `mutually_exclusive` and `never_after` carry state from earlier events.
       On a slice with a cut start they can miss a violation whose proof is in
       the slice: the first occurrence, the first `start`, an earlier open, the
-      other pattern or the `after` was cut. When they find none, the status is *no violation in
-      the slice (earlier events not seen)*, not *ok*;
+      other pattern or the `after` was cut. When they find none, the status
+      is *no violation in the slice (earlier events not seen)*, not *ok*. A
+      `never_after` contract that also has keys not judged (reordered at
+      ingest) says both: *no violation in the keys judged, in the slice*;
     - `forbid` and `consistent` without `last(...)` look at one event at a
       time, so *ok* means no event in the slice breaks them.
   - **The window's end** needs no such status. Judging stops there, as at a

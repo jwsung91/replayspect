@@ -397,6 +397,22 @@ def test_never_after_on_a_slice_with_a_cut_start(tmp_path, capsys, window, event
     assert st.to_dict() == {"N": status}
 
 
+def test_a_cut_start_slice_with_a_key_not_judged_keeps_the_slice_caveat(tmp_path, capsys):
+    import yaml
+    from replayspect.rewind import contract_status
+    c = tmp_path / "c.yaml"
+    c.write_text(yaml.safe_dump(NEVER), encoding="utf-8")
+    events = [send(3, 20, "ACK", "a"), send(4, 30, "DONE", "b"), send(5, 31, "ACK", "b", ["out_of_order"])]
+    path = header_file(tmp_path, {"until_us": 200, "slice": {"window": [10, 100], "actors": None, "of": None}},
+                       events)
+    code, out, _ = out_of(capsys, ["rewind", str(path), "--contracts", str(c)])
+    # for the key judged, a DONE before the cut may still hide a violation: both statements stay
+    assert ("0 violated, 0 ok, no violation in the slice (earlier events not seen): N, "
+            "no violation in the keys judged: N") in out
+    st = contract_status(read_trace_file(path).trace.events, load_contracts(NEVER), 100, "window end", 10)
+    assert st.to_dict() == {"N": "no violation in the keys judged, in the slice"}
+
+
 @pytest.mark.parametrize("events, line, status", [
     # one key judged and fine, one with both kinds and a reordered line: not "ok"
     ([send(0, 10, "ACK"), send(1, 11, "DONE"),
