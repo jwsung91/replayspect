@@ -723,3 +723,29 @@ registered harness, and the scoring script ran after the submission hash.
 - **Overlap:** 14 of the 19 drawn changes are in testbed-05's candidate list.
 
 Results and limits are in `docs/experiments/testbed-06.md`; no code change.
+
+## WP6/7b stage 1: the order of one request's outputs in the device comparison
+
+`conform` now compares order as well as time. For one request id, the logged events that matched model
+events must keep the model's order.
+- **Order across request ids is not compared,** since two inputs in one millisecond may be taken in either
+  order. Neither are events with no request id.
+- **An order difference is a mismatch** at the first logged line out of place, on that request. The first
+  mismatch is the earlier of an unmatched event and an order difference; at the same time, the unmatched
+  event is reported.
+- **The report:** the JSON's `first` carries `kind` (`event` or `order`). An order difference also gives
+  `model_order` and `device_order`, from the first position that differs to the last. Each model row has
+  `order_differences`, the number of request ids out of order. The text output says "order difference" and
+  shows both orders.
+- **A switch:** `order="ignore"` in `conform` and `device_report` gives the comparison as before. Defect
+  models use the same rule, and under a partial declaration only matched events are compared.
+- **Development check** (real logs, every model, against `order="ignore"`):
+  - no mismatch on the 218 no-defect logs;
+  - testbed-06 S15 and S19 now differ on r-0001 at 3054 and 3055 ms, the first line out of place being
+    `DONE`;
+  - no other verdict or first mismatch changed (testbed-03 and 04 defect runs, the blind slots of
+    testbed-04, 05 and 06).
+
+  The rule was written after S15 and S19 were known.
+- **Tests:** `tests/test_device_order.py`, on simulator-made device logs. The existing first-mismatch test
+  gains `kind`.

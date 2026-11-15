@@ -77,7 +77,7 @@ def test_the_first_mismatch_says_when_in_what_state_on_what_input_device_and_mod
     c = conform(LIFT, log, complete=ALL)
     assert not c.conforms
     assert c.first == {
-        "t_us": 2050_000, "req_id": "r-0002",
+        "kind": "event", "t_us": 2050_000, "req_id": "r-0002",
         "model": {"t_us": 2050_000, "event": "send ERROR r-0002 reason=illegal", "fidelity": RECONSTRUCTED},
         "device": {"t_us": 2050_000, "event": "effect motor_start r-0002 dir=down", "fidelity": OBSERVED_DEVICE},
         "model_state": "MOVING_UP",
