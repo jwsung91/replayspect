@@ -1,8 +1,9 @@
 # Note: the lift protocol's sentences and the contracts that cover them
 
-Operator note, as of the rev2 contracts (`contracts/lift.v0.rev2.yaml`). It is not given to planners. It
+Operator note, as of the rev3 contracts (`contracts/lift.v0.rev3.yaml`). It is not given to planners. It
 lists every normative sentence of [docs/protocol-lift.md](../protocol-lift.md), the contract that covers
-it, and whether the contract language can state it. It also records how each rev2 contract was found.
+it, and whether the contract language can state it. It also records how each rev2 and rev3 contract was
+found.
 The contract file itself names no defect, experiment slot or discovery route, and does not point at this
 note: planners are shown all of it.
 
@@ -10,8 +11,10 @@ note: planners are shown all of it.
   - C1–C8 are `contracts/lift.v0.yaml`, the default file and the reference of past experiments.
   - C9–C13 are new in `contracts/lift.v0.rev2.yaml`, which also holds C1–C8 unchanged. It is used by
     giving its path.
-- **"The contract language can state it"** means with the nine contract kinds (eight, plus
-  `only_after`) and a condition of one comparison ([design-v0.md](../design-v0.md), "계약 DSL").
+  - C14 is new in `contracts/lift.v0.rev3.yaml`, which also holds C1–C13 unchanged. It is used by giving
+    its path.
+- **"The contract language can state it"** means with the ten contract kinds (eight, plus
+  `only_after` and `never_after`) and a condition of one comparison ([design-v0.md](../design-v0.md), "계약 DSL").
 - **Line numbers** are those of `docs/protocol-lift.md` when this note was written.
 
 ## Device
@@ -20,10 +23,10 @@ note: planners are shown all of it.
 | --- | --- | --- | --- |
 | 28, 49 | `STATUS_REPLY` carries the state when it is sent | C5 | yes |
 | 35 | four states, starting in `DOWN` | C3 | yes |
-| 37–39 | a known id is answered with its stored result again (`ACK` while in progress) | none | no: nothing ties a repeated receive to its reply |
+| 37–39 | a known id is answered with its stored result again (`ACK` while in progress) | **C14**, in part | in part: C14 (`never_after`) catches an `ACK` after the final answer; a missing reply (not covered, gap 5 below) and a wrong final answer other than `ACK` are not covered |
 | 38–39 | a finished id's result does not change (`DONE` or `ERROR`) | C8 | yes |
 | 39–40 | nothing else happens for a known id | C1 (no second motor start), C9 (no second stop), in part | in part |
-| 40 | a new id is answered with `ACK` | none | no: a repeat in progress is answered `ACK` too, which breaks `exactly_once` |
+| 40 | a new id is answered with `ACK` | none | no: a repeat in progress is answered `ACK` too, which breaks `exactly_once` (gap 5) |
 | 40–41 | it is executed after its `ACK` | none | yes, with `only_after` (`motor_start` after `ACK`); not added |
 | 41 | it is executed 50 ms later | none | no: the execution is a motor start or an `ERROR`, two kinds one pattern cannot hold |
 | 42–44 | `MOVE_UP` only in `DOWN`, `MOVE_DOWN` only in `UP` | C3 (no undeclared transition) | yes |
@@ -36,7 +39,7 @@ note: planners are shown all of it.
 | 47 | the result table survives disconnects | C1, C8, indirectly | no: the device has no reconnect event |
 | 47–48 | after a reconnect the device sends nothing on its own: `DONE`/`ERROR`, `ACK` | C7, **C12**, in part | in part: an upper bound per id; an unsolicited send hides under a repeat that was answered with the other message |
 | 47–49 | after a reconnect the device sends nothing on its own: `STATUS_REPLY` | **C13** | yes: each poll has one reply |
-| 49 | `STATUS` is answered immediately | none | no: a copy of a poll is answered too, which breaks `exactly_once` |
+| 49 | `STATUS` is answered immediately | none | no: a copy of a poll is answered too, which breaks `exactly_once` (gap 5) |
 
 ## Client
 
@@ -69,24 +72,29 @@ Lines 69–75 (link and timing) describe the environment, not behaviour, and are
 
 ## What the contract language cannot say
 
-Four gaps come back in the tables above. They are recorded, not planned:
+Five gaps come back in the tables above. They are recorded, not planned:
 1. **Two conditions at once** (and). Example: a `DONE` or `ERROR` with another command's id, but not a
    timeout.
 2. **At most N times.** Example: a command resent at most twice.
 3. **A time between two different keys.** Example: the think time between one command's close and the
    next one's send.
 4. **One pattern over two event kinds.** Example: the execution, which is a motor start or an `ERROR`.
+5. **A reply to each receive, within a time.** Example: a repeat that gets no reply at all (testbed-05
+   S04, **not covered**); lines 40 and 49 too. It would take a kind requiring, after every `start`, an
+   `event` of its key within a time. Not added (operator, 2026-11-15): such a rule is met by a reply
+   meant for something else, such as the request's own `ERROR` or `DONE`, and the protocol gives no time.
 
-## How the rev2 contracts were found
+## How the rev2 and rev3 contracts were found
 
 | Contract | Found by | Evidence |
 | --- | --- | --- |
 | C9 | testbed-04 blind change A: a repeat of the request being executed, arriving during its move, starts the move timer again | Slots B03 (`ACK` lost, retry during the move) and B05 (a copy during the move). The lift contracts caught neither, and the device model's first mismatch did ([testbed-04](../experiments/testbed-04.md)). |
 | C10 | testbed-04 blind change B: at rest, a command to move where the lift already is answered `DONE`, not `ERROR`, with no motor | Slots B01 and B06. No contract tied `DONE` to a move, and stating it needed a new kind (`only_after`). |
 | C11, C12, C13 | Document check: going through this table, sentences the eight kinds could already state and no contract did | None from an experiment. |
+| C14 | testbed-05 blind (development data after scoring): a repeat that arrives after the final answer is answered `ACK` | Slots S03, S06 (after `ERROR`), S10 and S16 (after `DONE`), which rev2 missed. The candidate was checked with `claim check` and confirmed by the operator ([contract-candidates-rev3.md](contract-candidates-rev3.md)). **On hardware, the `DONE` half was never tried:** in the 213 real no-defect logs, 0 of the 1255 requests with a `DONE` reached the device again; the `ERROR` half was tried 5 times. A copy after `DONE` on an unchanged build belongs in the testbed-06 plan pool. |
 
-The rev2 contracts are checked here only on development data. They will be measured with a new blind
-change.
+The rev2 and rev3 contracts are checked here only on development data. rev2 was measured in testbed-05;
+rev3 will be measured with a new blind group (testbed-06).
 
 **Development check** (no measurement):
 
@@ -108,3 +116,19 @@ change.
   of the model's first mismatch:
   - B01 and B06 at the same event;
   - B03 and B05 at the late stop, after the first mismatch's time.
+
+**C14, development check** (no measurement):
+
+| | C14 |
+| --- | --- |
+| Real device logs, no defect (213: the 211 above and testbed-05 S08, S14) | 0 violations; exercised in 5 (testbed-03 R005, R017, R020, R035, R065, all after `ERROR`) |
+| Real device logs, M2 (22), M4 (16), M10 (16) | 0 |
+| testbed-04 blind slots (8) | 0 |
+| testbed-05 slots (16, development data) | S03, S06, S10, S16, each on the request and time of the model's first mismatch; S02 on the wrong reply's id at the first mismatch's time, as C12 already did. Not S04. |
+| Simulator, seeds 0–999, correct lift | 0; exercised in 917 |
+| Simulator, seeds 0–999, the 11 mutants | M1: 891, M11: 22, always together with C8 |
+
+- **testbed-05 with rev3:** 11 of the 12 slots where a change acted would be caught (rev2's 7, plus S03,
+  S06, S10 and S16), and S04 would not. This is a development check: the four slots were drafted from.
+- **"Exercised"** is the conservative measure of `docs/claims.md`: a request heard of again by the device
+  after its final answer.
