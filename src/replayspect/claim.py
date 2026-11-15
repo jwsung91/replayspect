@@ -16,8 +16,8 @@ Per candidate:
 
 "Exercised" means a status that judged something: violated, ok, or no violation in the slice or in the
 keys judged. For ``never_after`` it means more (an ``event`` anywhere would be too weak): a key that has
-an ``after`` and anything later with the same key, any actor, any kind. The count is reported, with a
-narrower one beside it: something later by the actor of the ``event`` pattern.
+an ``after`` and something later with the same key by the actor of the ``event`` pattern. A wider count
+is reported beside it: anything later with the same key, any actor, any kind.
 
 Same inputs, same bytes: inputs are named as given and read in order, a directory in name order.
 """
@@ -31,9 +31,8 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from replayspect.contract import ContractSet, judge_report, load_contracts
-from replayspect.contract.checkers import contract_patterns
 from replayspect.contract.spec import Contract
-from replayspect.devicelog import Completeness, read_device_log
+from replayspect.devicelog import Completeness, needs_complete, read_device_log
 from replayspect.rewind import IN_JUDGED_KEYS, IN_JUDGED_KEYS_IN_SLICE, IN_SLICE, contract_status, fmt_t, judge_setup
 from replayspect.trace import Event
 from replayspect.tracefile import core_trace, file_sha256, read_trace_file
@@ -123,9 +122,9 @@ def judge_one(c: Contract, cs: ContractSet, inp: Input) -> dict[str, Any]:
     if inp.invalid:
         return {"status": "not judged", "why_not_judged": "invalid log (an error line)", "violations": []}
     if inp.device_kinds is not None:
-        missing = sorted({p.kind for p in contract_patterns(one) if p.actor == "device"} - inp.device_kinds)
+        missing = needs_complete(c, inp.device_kinds)
         if missing:
-            return {"status": "not judged", "needs_complete": [f"device {k}" for k in missing], "violations": []}
+            return {"status": "not judged", "needs_complete": missing, "violations": []}
     st = contract_status(inp.events, one, inp.end_us, inp.end_why, inp.cut_start_us)
     status = st.to_dict()[c.id]
     out: dict[str, Any] = {"status": status, "violations": []}
@@ -161,7 +160,7 @@ def tried_keys(c: Contract, events: Sequence[Event], unjudged: set) -> dict[str,
 def _exercised(r: dict[str, Any]) -> bool:
     if r["status"] not in EXERCISED:
         return False
-    return r["status"] == "violated" or "tried" not in r or r["tried"]["after_then_anything"] > 0
+    return r["status"] == "violated" or "tried" not in r or r["tried"]["after_then_event_actor"] > 0
 
 
 # -- the check ----------------------------------------------------------------------------------------
@@ -277,20 +276,34 @@ def _result(c: Contract, inc_rows: list[dict[str, Any]], normal_rows: list[tuple
         for _, r in normal_rows:
             for k in tried:
                 tried[k] += r.get("tried", {}).get(k, 0)
-        by_actor = sum(r.get("tried", {}).get("after_then_event_actor", 0) > 0 for _, r in normal_rows)
-        normal["tried"] = {**tried, "event_actor": c.params["event"].actor,
-                           "inputs_with_a_key_tried": exercised, "inputs_with_a_key_tried_by_event_actor": by_actor}
+        normal["tried"] = {**tried, "event_actor": c.params["event"].actor, "measure": "after_then_event_actor",
+                           **{f"inputs_{k}": sum(r.get("tried", {}).get(k, 0) > 0 for _, r in normal_rows)
+                              for k in ("after_then_anything", "after_then_event_actor")}}
     reasons = [f"not caught on incident {r['input']} ({r['status']})" for r in inc_rows if r["status"] != "violated"]
     if violated_inputs:
         reasons.append(f"violated on {violated_inputs} of {n} normal inputs")
     if reasons:
         verdict = "fails"
     elif exercised == 0:
-        verdict, reasons = "untested", [f"never exercised on the normal corpus ({n} inputs)"]
+        verdict, reasons = "untested", [_untested_reason(normal_rows)]
     else:
         verdict = "passes"
     return {"id": c.id, "kind": c.kind, "desc": c.desc, "grade": c.grade, "source": dict(c.source or {}),
             "verdict": verdict, "reasons": reasons, "incidents": inc_rows, "normal": normal}
+
+
+def _untested_reason(normal_rows: list[tuple[str, dict[str, Any]]]) -> str:
+    n = len(normal_rows)
+    unjudged = [r for _, r in normal_rows if r["status"] == "not judged"]
+    if unjudged and len(unjudged) == n:  # the remedy is a declaration or other inputs, not more of the same
+        why = sorted({x for r in unjudged for x in r.get("needs_complete", ())})
+        bad = any("why_not_judged" in r for r in unjudged)
+        detail = "; ".join(([f"needs {', '.join(why)} declared complete"] if why else [])
+                           + (["invalid logs"] if bad else []))
+        return f"not judged on any of the {n} normal inputs" + (f" ({detail})" if detail else "")
+    if unjudged:
+        return f"never exercised on the normal corpus ({n} inputs, {len(unjudged)} of them not judged)"
+    return f"never exercised on the normal corpus ({n} inputs)"
 
 
 # -- text -----------------------------------------------------------------------------------------------
@@ -334,10 +347,10 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
                      + ", ".join(f"{k} {v}" for k, v in rn["statuses"].items()))
         if "tried" in rn:
             t = rn["tried"]
-            lines.append(f"    never_after: keys with an after {t['keys_with_after']}, of which with anything later "
-                         f"with the same key {t['after_then_anything']} (the measure used), with something later by "
-                         f"{t['event_actor']} {t['after_then_event_actor']} (in "
-                         f"{t['inputs_with_a_key_tried_by_event_actor']} of {rn['inputs']} inputs)")
+            lines.append(f"    never_after: keys with an after {t['keys_with_after']}, of which with something later "
+                         f"by {t['event_actor']} {t['after_then_event_actor']} in {t['inputs_after_then_event_actor']} "
+                         f"input(s) (the measure used), with anything later {t['after_then_anything']} in "
+                         f"{t['inputs_after_then_anything']}")
         vs = rn["violations"]
         if vs:
             lines.append(f"    violations: {len(vs)} in {len({v['input'] for v in vs})} input(s)")

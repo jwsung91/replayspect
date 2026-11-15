@@ -70,7 +70,9 @@ For each candidate:
     - violated on any normal input.
 
     A candidate not judged on an incident did not catch it.
-  - **`untested`:** it caught every incident, but it was never exercised on the normal corpus. It could
+  - **`untested`:** it caught every incident, but it was never exercised on the normal corpus. The
+    reason says which: never exercised, or not judged on any normal input (with what was missing, such
+    as a device kind not declared complete). The remedies differ. It could
     not have failed there. That is not the same as holding.
 - **Every input is named with its sha256:** the candidate file, each incident, each model result and
   each normal file. For the normal files, it also gives the sha256 of the list itself: one line per file,
@@ -85,20 +87,28 @@ occurred.
 For `never_after`, a trigger event anywhere is too weak. The contract can only fail on an `event` that
 comes after an `after` of its key. A corpus where every key has its `event` before its `after` exercises
 the trigger without ever trying the rule. So for `never_after`, an input counts as exercised only if a
-key that has an `after` also has **anything later with the same key**, of any actor and any kind. The
-report gives the counts summed over the normal corpus:
+key that has an `after` also has **something later with the same key done by the actor of the `event`
+pattern**: that actor was active on the request again, so the forbidden `event` had a chance to appear.
+The report gives the counts summed over the normal corpus:
 - `keys_with_after`;
-- `after_then_anything`: the measure used for the verdict;
-- `after_then_event_actor`: narrower. It counts only keys with something later done by the actor of the
-  `event` pattern. It is reported beside the other count and not used for the verdict.
+- `after_then_event_actor`: the measure used for the verdict (`measure` in the report);
+- `after_then_anything`: wider, reported beside it and not used for the verdict. It counts keys with
+  anything later with the same key, of any actor and any kind.
 
-For each of the two counts, the report also gives the number of inputs where it is above zero.
+For each of the two counts, the report also gives the number of inputs where it is above zero
+(`inputs_after_then_event_actor`, `inputs_after_then_anything`).
 
 On a device log, which holds only device events, the two counts coincide when the `event` is a device
-event. On a simulator trace they do not. On seeds 0–19 of the lift, with the `event` `device.send(ACK)`
-and the `after` `device.send(DONE|ERROR)`, every one of the 119 keys with an `after` has something later
-(the client receiving and handling the `DONE`). Only 39 have something later by the device (it heard
-of the request again).
+event. On a simulator trace they do not. On seeds 0–99 of the lift, with the `event` `device.send(ACK)`
+and the `after` `device.send(DONE|ERROR)`:
+- every one of the 596 keys with an `after` has something later, because the client receives and
+  handles the `DONE`. The wider count can never say `untested` on such a trace;
+- 215 keys have something later by the device, in 94 of the 100 inputs. For each of them, the device's
+  first later event is a `recv` of the request again: the situation where an `ACK` could wrongly appear.
+
+**This measure is conservative.** An `event` nobody asked for needs no trigger. So an input where the
+actor did nothing more on a request still showed that nothing unsolicited came, and that input is not
+counted. `untested` therefore understates a little what the corpus showed, which is the safe direction.
 
 ## What the check proves, and what it does not
 
@@ -111,8 +121,9 @@ of the request again).
   fail.
 - **`same_request: yes` connects the candidate to the model's first mismatch on that incident.** It does
   not show that the candidate explains the defect.
-- **Not judged is not caught.** On a device log, a candidate needs its device kinds declared complete. A
-  log with an `error` line is not judged at all.
+- **Not judged is not caught.** On a device log, a candidate needs its device kinds declared complete:
+  the same rule as `replayspect device --contracts`, in one function. A log with an `error` line is not
+  judged at all.
 - **Reordered log lines.** Keys whose order a log adapter could not settle are not judged, as in `rewind`.
   A candidate that is not judged on an incident fails on it.
 - **The check reads only the trace or the log.** What the device did but did not log is not seen.

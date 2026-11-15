@@ -205,13 +205,13 @@ def test_never_after_reports_the_keys_that_were_tried(tmp_path):
                        seeds=range(10), system=LIFT)
     (r,) = rep["results"]
     tried = r["normal"]["tried"]
-    # keys with an after and anything later with the same key; the client's own receipt of the DONE counts
-    assert tried["keys_with_after"] == tried["after_then_anything"] > 0
-    # proposed, shown alongside: something later by the event's own actor (here: the device heard of it again)
+    # the measure used: something later with the key by the event's own actor (the device heard of it again)
+    assert tried["measure"] == "after_then_event_actor" and tried["event_actor"] == "device"
     assert 0 < tried["after_then_event_actor"] < tried["after_then_anything"]
-    assert tried["event_actor"] == "device" and r["verdict"] == "passes"
-    assert tried["inputs_with_a_key_tried"] == r["normal"]["exercised"] == 10
-    assert 0 < tried["inputs_with_a_key_tried_by_event_actor"] <= 10
+    assert r["normal"]["exercised"] == tried["inputs_after_then_event_actor"] and 0 < r["normal"]["exercised"] <= 10
+    # shown beside it: anything later with the key; the client's own receipt of the DONE counts, so every key
+    assert tried["keys_with_after"] == tried["after_then_anything"] and tried["inputs_after_then_anything"] == 10
+    assert r["verdict"] == "passes"
 
 
 def test_never_after_with_no_key_tried_is_untested_even_if_its_event_occurs(tmp_path):
@@ -222,6 +222,47 @@ def test_never_after_with_no_key_tried_is_untested_even_if_its_event_occurs(tmp_
     assert r["normal"]["statuses"] == {"ok": 1}  # the ACK occurred, so the status is ok...
     assert r["normal"]["tried"]["after_then_anything"] == 0  # ...but nothing came after the DONE
     assert r["verdict"] == "untested" and r["normal"]["exercised"] == 0
+
+
+def test_never_after_with_only_another_actor_after_the_end_is_untested(tmp_path):
+    p = tmp_path / "normal.jsonl"
+    ev = {"source": "adapter:x", "req_id": "r-0001"}
+    p.write_text("".join(json.dumps(x) + "\n" for x in [
+        {"type": "header", "schema": "replayspect.trace/1", "source": "adapter:x"},
+        {**ev, "seq": 0, "t_us": 10, "actor": "device", "kind": "send", "name": "ACK"},
+        {**ev, "seq": 1, "t_us": 20, "actor": "device", "kind": "send", "name": "DONE"},
+        {**ev, "seq": 2, "t_us": 30, "actor": "client", "kind": "recv", "name": "DONE"}]), encoding="utf-8")
+    rep = check_claims(candidates(tmp_path, N1), [(sim_trace(tmp_path, 0, ["M1"]), None)], normal=[p], seeds=(),
+                       system=LIFT)
+    tried = rep["results"][0]["normal"]["tried"]
+    assert tried["after_then_anything"] == 1 and tried["after_then_event_actor"] == 0  # the client heard the DONE
+    assert rep["results"][0]["verdict"] == "untested"
+
+
+def test_a_normal_corpus_not_judged_anywhere_says_so(tmp_path):
+    d = tmp_path / "normal"
+    d.mkdir()
+    dlog(d / "a-device.log", UNMOVED[:9] + UNMOVED[11:])
+    dlog(d / "b-device.log", UNMOVED[:9] + UNMOVED[11:])
+    inc = sim_trace(tmp_path, 36, ["M10"])
+    rep = check_claims(candidates(tmp_path, C10), [(inc, None)], normal=[d], seeds=(), system=LIFT)  # no --complete
+    (r,) = rep["results"]
+    assert r["verdict"] == "untested"
+    assert r["reasons"] == ["not judged on any of the 2 normal inputs (needs device effect, device send "
+                            "declared complete)"]
+    # partly not judged, nothing exercised: both are said
+    rep = check_claims(candidates(tmp_path, X1), [(adapter_trace(tmp_path / "brake.jsonl", [
+        (10, "BRAKE", "r-0001"), (20, "BRAKE", "r-0001")]), None)], normal=[d], seeds=range(1), system=LIFT)
+    assert rep["results"][0]["reasons"] == ["never exercised on the normal corpus (3 inputs, 2 of them not judged)"]
+
+
+def test_claim_check_and_device_contracts_share_the_completeness_rule():
+    from replayspect.contract import load_contracts
+    from replayspect.devicelog import needs_complete
+    c = load_contracts("contracts:\n" + "  - {id: K, kind: only_after, per: req_id, event: device.send(DONE), "
+                       "after: device.effect(motor_stop)}").contracts[0]
+    assert needs_complete(c, frozenset({"recv", "send", "state"})) == ["device effect"]
+    assert needs_complete(c, frozenset({"send", "effect"})) == []
 
 
 # -- inputs, output and the command line ------------------------------------------------------------------

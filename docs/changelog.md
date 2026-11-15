@@ -636,11 +636,17 @@ and `source`) and says whether each deserves a person's time. No model runs in i
   - `untested`: never exercised on the normal corpus.
 - **Output:** text, and JSON with `--out`; same inputs, same bytes. Every input is named with its sha256,
   and the normal files also by the sha256 of their list.
-- **`never_after`, "exercised":** a key with an `after` and anything later with the same key, as the
-  advisor proposed in the #52 review. This is the measure used for the verdict. A narrower count is
-  reported beside it, not used: something later by the actor of the `event` pattern. On seeds 0–19 of the
-  lift, with `device.send(ACK)` after `device.send(DONE|ERROR)`, the first count is 119 of 119 keys with
-  an `after`, because the client's receipt of the `DONE` counts. The second is 39.
+- **`never_after`, "exercised":** a key with an `after` and something later with the same key by the actor
+  of the `event` pattern. This is the measure used for the verdict, chosen in the #53 review. The measure
+  first proposed in the #52 review (anything later with the same key) is reported beside it. On seeds
+  0–99 of the lift, with `device.send(ACK)` after `device.send(DONE|ERROR)`:
+  - the wider count is 596 of 596 keys with an `after`, because the client's receipt of the `DONE` counts;
+  - the measure used is 215, in 94 of 100 inputs, each a repeat received after the end.
+
+  `docs/claims.md` states that this measure is conservative.
+- **Untested reasons:** when every normal input is not judged, the reason says so, with what was missing,
+  instead of "never exercised".
+- **One completeness rule:** `devicelog.needs_complete` serves both `device --contracts` and `claim check`.
 - **Tests** use simulator data only:
   - C10 against an M10 incident passes;
   - the `count_le` form of "DONE only after the stop" fails on the correct lift;

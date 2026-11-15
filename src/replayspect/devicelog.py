@@ -334,19 +334,30 @@ def count_check(client: Sequence[Event], log: DeviceLog, complete: Completeness,
                              for k in ("send", "recv") if k not in ks]}
 
 
+def needs_complete(contract, device_kinds) -> list[str]:
+    """The device kinds ``contract`` refers to that are not declared complete (``["device effect", ...]``).
+
+    A contract with any is not judged on a device log: an unlogged kind would read as absent. The one rule
+    for ``device --contracts`` and ``claim check``.
+    """
+    from replayspect.contract.checkers import contract_patterns
+    from replayspect.contract.spec import ContractSet
+
+    pats = contract_patterns(ContractSet("", frozenset(), (contract,)))
+    return [f"device {k}" for k in sorted({p.kind for p in pats if p.actor == "device"} - set(device_kinds))]
+
+
 def contract_report(log: DeviceLog, contracts, complete: Completeness = Completeness()) -> dict[str, Any]:
     """The contracts judged on the device log's events alone (module doc), no model."""
-    from replayspect.contract.checkers import contract_patterns
     from replayspect.contract.spec import ContractSet
     from replayspect.rewind import contract_status
 
     events = list(log.events)
     judged, not_judged = [], []
     for c in contracts.contracts:
-        pats = contract_patterns(ContractSet(contracts.protocol, contracts.transitions, (c,)))
-        missing = sorted({p.kind for p in pats if p.actor == "device"} - complete.device)
+        missing = needs_complete(c, complete.device)
         if missing:
-            not_judged.append({"contract": c.id, "needs_complete": [f"device {k}" for k in missing]})
+            not_judged.append({"contract": c.id, "needs_complete": missing})
         else:
             judged.append(c)
     st = contract_status(events, ContractSet(contracts.protocol, contracts.transitions, tuple(judged)),
