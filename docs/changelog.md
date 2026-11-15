@@ -672,3 +672,31 @@ the slots' logs. The candidates are in `docs/notes/contract-candidates-rev3/`.
 - **Not done yet:** nothing enters a contract file before the operator confirms.
 - **Done in this stage:** the whole-file word scan now covers every file in `contracts/`, and looks for slot
   names and "operator" too.
+
+## WP6/7a stage 3: the rev3 contracts
+
+After the operator's decision on the candidates (#54):
+- **N1 is adopted** as C14 in `contracts/lift.v0.rev3.yaml`: "the device sends no `ACK` for a req_id after
+  it sent `DONE` or `ERROR` for that req_id" (`never_after`, protocol lines 37–39). rev3 is rev2 unchanged
+  plus C14. `lift.v0.yaml` and `lift.v0.rev2.yaml` do not change. N1E and N1D are rejected.
+- **S04 is not covered.** No new kind is added. The coverage note records the gap ("a reply to each
+  receive, within a time") and why.
+- **Oracle:** `tests/lift_oracle.py` writes C14 by hand (`check_rev3`). The judge matches it on seeds 0–99
+  for every implementation, with C14 read from the rev3 file.
+- **Per-mutant table on seeds 0–999** (`docs/design-v0.md`, pinned on 100 seeds by
+  `tests/test_contracts_rev3.py`). The correct lift breaks nothing. C14 fires for M1 (891 seeds) and M11
+  (22), always together with C8. No mutant is caught by C14 alone.
+- **Coverage note:**
+  - lines 37–39 become "in part": C14 catches an `ACK` after the final answer; a missing reply and a
+    wrong final answer other than `ACK` are not covered;
+  - C14's row says that on hardware the `DONE` half was never tried;
+  - "can state it" now means ten kinds;
+  - a fifth language gap, with lines 40 and 49 pointing at it;
+  - a development-check table for C14.
+- **Development check** (all rev3 numbers are):
+  - testbed-05 with rev3 would catch 11 of the 12 acting slots, all but S04;
+  - C14 also fires on S02, where rev2's C12 already did;
+  - no violation on 213 real no-defect logs, 54 real logs with public defects, or the testbed-04 blind.
+
+  rev3 is measured only on testbed-06.
+- **The candidate note's quoted tool output** no longer carries a local path.

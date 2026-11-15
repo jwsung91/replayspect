@@ -441,38 +441,37 @@ def test_the_rev2_oracle_catches_what_each_addition_is_for():
     assert lift_oracle.first_violations_rev2(unmoved, END) == first_violations(judge(unmoved, REV2, END)) == {"C10": 0}
 
 
-#: The first never_after contract, in the tests only (lift_oracle.NEVER_AFTER_CONTRACTS writes it out by hand).
-NEVER_AFTER = load_contracts(
-    "protocol: lift.v0\ncontracts:\n"
-    "  - {id: N1, kind: never_after, per: req_id, event: device.send(ACK), after: device.send(DONE|ERROR),\n"
-    "     desc: the device sends no ACK for a req_id after it sent DONE or ERROR for that req_id}")
+#: C14 from contracts/lift.v0.rev3.yaml, the contract the rev3 oracle writes out by hand (the kind's first use).
+_REV3_FILE = load_contracts(LIFT.parent / "lift.v0.rev3.yaml")
+REV3 = ContractSet(_REV3_FILE.protocol, _REV3_FILE.transitions,
+                   tuple(c for c in _REV3_FILE.contracts if c.id in lift_oracle.REV3_CONTRACTS))
 
 
 @pytest.mark.parametrize("n", [10, pytest.param(100, marks=pytest.mark.slow)])
 @pytest.mark.parametrize("mutant", [None] + sorted(MUTANTS))
-def test_judge_matches_oracle_on_never_after(mutant, n):
+def test_judge_matches_oracle_on_the_rev3_addition(mutant, n):
     for seed in range(n):
         tr = run_lift(seed, mutants=[mutant] if mutant else [])
-        assert first_violations(judge(tr, NEVER_AFTER, END)) == lift_oracle.first_violations_never_after(tr, END), seed
+        assert first_violations(judge(tr, REV3, END)) == lift_oracle.first_violations_rev3(tr, END), seed
 
 
 @pytest.mark.slow
-def test_never_after_comparison_is_not_empty_against_empty():
-    """On how many of seeds 0-99 each implementation violates N1. The correct lift must not."""
+def test_the_rev3_comparison_is_not_empty_against_empty():
+    """On how many of seeds 0-99 each implementation violates C14. The correct lift must not."""
     hits = {}
     for mutant in [None] + sorted(MUTANTS):
-        n = sum(bool(first_violations(judge(run_lift(s, mutants=[mutant] if mutant else []), NEVER_AFTER, END)))
+        n = sum(bool(first_violations(judge(run_lift(s, mutants=[mutant] if mutant else []), REV3, END)))
                 for s in range(100))
         if n:
             hits[mutant] = n
     assert hits == {"M1": 89, "M11": 2}
 
 
-def test_the_never_after_oracle_catches_an_ack_after_done():
+def test_the_rev3_oracle_catches_an_ack_after_done():
     late_ack = trace_of((0, "device", "send", "ACK", "r-1", None), (1, "device", "send", "DONE", "r-1", None),
                         (2, "device", "send", "ACK", "r-1", None))
-    assert lift_oracle.first_violations_never_after(late_ack, END) == first_violations(
-        judge(late_ack, NEVER_AFTER, END)) == {"N1": 2}
+    assert lift_oracle.first_violations_rev3(late_ack, END) == first_violations(judge(late_ack, REV3, END)) == {
+        "C14": 2}
 
 
 # -- judge API details -------------------------------------------------------------------

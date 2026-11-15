@@ -1,7 +1,15 @@
 # Contract candidates for rev3 (operator note)
 
-2026-11-15. WP6/7a stage 3 (`docs/work-order-wp67a.md`). For the operator's decision: confirm or drop
-each candidate. Nothing here is in a contract file yet.
+2026-11-15. WP6/7a stage 3 (`docs/work-order-wp67a.md`).
+
+**The operator's decision** (2026-11-15, after #54):
+- **N1 is adopted** as C14 in `contracts/lift.v0.rev3.yaml`, with a planner-neutral id and wording.
+- **N1E and N1D are rejected:** N1 includes them.
+- **S04 is not covered.** No `answered_within` kind is added. The reasons are in the #54 review: such a
+  rule is met by a reply meant for something else, and the protocol gives no time. The coverage note
+  records the gap and the kind it would take.
+
+The rest of this note is the record as it was written for that decision.
 
 testbed-05's slots are development data from now on. Every "catches" below is a **development check**,
 like the rev2 checks before testbed-05, not a measurement. rev3 is measured only on a new blind group.
@@ -150,11 +158,12 @@ only. The simulator part can be reproduced from the repository alone (below).
 
 Every candidate's status was `ok` on every normal input. No input was not judged.
 
-The text output of the official N1 run:
+The text output of the official N1 run (rerun after #54 from the same folder, which links `docs` to the
+repository's, with the candidate file's relative path, so no local path is quoted; the candidate's sha256 and every other line are unchanged):
 
 ```text
 claim check: 1 candidate(s), 4 incident(s), normal corpus 1213 input(s) (213 file(s), seeds 0-999 of lift.v0, implementation with no defect)
-candidates: /home/rain/workspace/replayspect/replayspect/docs/notes/contract-candidates-rev3/N1.yaml sha256 84c1d85a32ac9b563551912b1319b7654f3c089c3a6f1d36771a3818571626db
+candidates: docs/notes/contract-candidates-rev3/N1.yaml sha256 84c1d85a32ac9b563551912b1319b7654f3c089c3a6f1d36771a3818571626db
 device logs declared complete for: device effect, device recv, device send, device state
 incident 1: incidents/S03-device.log (device log) sha256 4fc76d60ff2ae849762e1f75e2162fdec10f34fd381827449bb429fbb228549b
   model result: models/S03-device-report.json sha256 c4faf72c5e9dfb10c8a41fff9bc56a8ec487e1f71521df8721e1b778eac7c427

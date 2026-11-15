@@ -47,7 +47,9 @@ Implemented:
   one with the same key has occurred), and optional provenance keys (`grade`,
   `source`).
   `contracts/lift.v0.yaml` is the default; `contracts/lift.v0.rev2.yaml` adds
-  five contracts taken from the protocol document, used by giving its path
+  five contracts taken from the protocol document, and `contracts/lift.v0.rev3.yaml`
+  adds one more to rev2 (no `ACK` after a request's final answer), each used by
+  giving its path
   ([docs/notes/protocol-contract-coverage.md](docs/notes/protocol-contract-coverage.md))
 - Search, shrink and replay, with repro files; random and Hypothesis baselines
 - `rewind`: a viewer for trace files (`replay --trace-out`)
