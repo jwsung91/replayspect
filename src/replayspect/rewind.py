@@ -241,7 +241,7 @@ class ContractStatus:
         out = {v.contract: "violated" for v in self.violated}
         out.update({c: "ok" for c in self.ok})
         out.update({c: IN_SLICE for c in self.in_slice})
-        out.update({c: IN_JUDGED_KEYS for c in self.in_judged_keys})
+        out.update({c: IN_JUDGED_KEYS_IN_SLICE if c in self.in_slice else IN_JUDGED_KEYS for c in self.in_judged_keys})
         out.update({c: "not judged" for c in self.reordered})
         out.update({c: "not exercised" for c in self.not_exercised})
         out.update({c: "not judged" for c in self.not_judged})
@@ -250,6 +250,7 @@ class ContractStatus:
 
 IN_SLICE = "no violation in the slice"
 IN_JUDGED_KEYS = "no violation in the keys judged"
+IN_JUDGED_KEYS_IN_SLICE = "no violation in the keys judged, in the slice"  # both: some keys unjudged, start cut
 
 
 def trigger_patterns(c: Contract) -> set[EventPattern]:
@@ -292,6 +293,8 @@ def contract_status(events: Sequence[Event], cs: ContractSet, end_us: int, end_w
         if skipped:  # only_after, never_after: a key whose order is not known was not judged
             judged_keys = {e.req_id for e in events for p in pats if p.matches(e)} - skipped
             (st.in_judged_keys if judged_keys else st.reordered).append(c.id)
+            if judged_keys and cut_start_us is not None and misses_without_earlier_events(c):
+                st.in_slice.append(c.id)  # the judged keys may still miss a violation: say both
         elif not exercised:
             st.not_exercised.append(c.id)
         elif cut_start_us is not None and misses_without_earlier_events(c):
