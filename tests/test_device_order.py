@@ -161,3 +161,32 @@ def test_the_report_tells_the_two_kinds_apart():
     rep = device_report(LIFT, missing, complete=ALL)
     assert rep["models"][0]["first"]["kind"] == "event"
     assert "order difference" not in "\n".join(report_lines(rep))
+
+
+def repeat_of(lines, rid, ms):
+    """A repeat of request ``rid`` arriving in millisecond ``ms`` and the DONE it is answered with."""
+    cmd = next(x.split()[2] for x in lines if x.split()[1:2] == ["recv"] and x.split()[3:4] == [rid])
+    return [f"{ms} recv {cmd} {rid}", f"{ms} send DONE {rid}"]
+
+
+def test_a_repeat_in_the_arrival_millisecond_logged_after_the_arrival_conforms():
+    # The firmware runs the arrival (a timer) before the input of the same millisecond: the repeat finds the
+    # request finished and is answered DONE, after the arrival's own DONE.
+    lines = sim_lines()
+    i, rid = arrival(lines)
+    ms = lines[i].split()[0]
+    changed = lines[:i + 3] + repeat_of(lines, rid, ms) + lines[i + 3:]
+    c = conform(LIFT, read_device_log(text(changed)), complete=ALL)
+    assert c.conforms and c.order_differences == 0
+
+
+def test_a_repeat_in_the_arrival_millisecond_logged_before_the_motor_stop_is_an_order_difference():
+    lines = sim_lines()
+    i, rid = arrival(lines)
+    ms = lines[i].split()[0]
+    changed = lines[:i] + repeat_of(lines, rid, ms) + lines[i:]
+    c = conform(LIFT, read_device_log(text(changed)), complete=ALL)
+    assert c.status == "differs" and c.mismatches == 0
+    f = c.first
+    assert (f["kind"], f["t_us"], f["req_id"]) == ("order", int(ms) * 1000, rid)
+    assert f["model"]["event"] == f"effect motor_stop {rid}" and f["device"]["event"] == f"send DONE {rid}"
