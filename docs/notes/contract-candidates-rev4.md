@@ -2,8 +2,16 @@
 
 2026-11-15. WP6/7b stage 2 (`docs/work-order-wp67b.md`).
 
-**The operator's decision: pending.** The operator confirms or drops the candidate. No contract file is
-written before that decision.
+**The operator's decision** (2026-11-15, after the #60 review): **A1 is confirmed.** The operator reads
+`docs/protocol-lift.md` lines 45–46 as stating the order motor stop → state change → `DONE`.
+- **`grade: stated` rests on the operator's reading.** The sentence has no word of order ("then",
+  "after"); it lists the three steps in that order.
+- **A1 was written after the changes behind S15 and S19 were known.** That it catches the two incidents is
+  a development check.
+- **A1 is unmeasured until a new blind group.**
+- No contract file is written in this PR (below, "After the operator's decision").
+
+The rest of this note is the record as it was written for that decision.
 
 testbed-06's slots are development data from now on. Every "catches" below is a **development check**, not
 a measurement. The candidate comes from testbed-06's "Proposals", written after scoring: the changes behind
@@ -47,6 +55,10 @@ firmware does them. It does not say "then" or "after". C10 already reads the sam
 
 **The motor's direction (S06) stays a recorded gap** (coverage note, lines 44–45). No expression is built
 for it.
+
+**A gap A1 leaves:** the order motor stop → state change is covered by neither A1 nor C10. A state change
+before the motor stop, with `DONE` after both, breaks neither. The coverage note's row is updated in the
+rev4 PR.
 
 ## The check
 
@@ -175,8 +187,21 @@ not.
 
 ## After the operator's decision (not done here)
 
-In its own PR, after confirmation only:
+**When:** the rev4 PR opens after the operator's decision on stage 3 (the generic rules).
+- If stage 3 gives a generic rule that holds the order of the state change, A1 is folded into it, or the
+  two go into one file.
+- rev4 is merged before testbed-07 is registered.
+
+**What the rev4 PR holds:**
 - `contracts/lift.v0.rev4.yaml`: rev3 unchanged, plus the contract, with a planner-neutral id and wording;
 - the oracle in `tests/lift_oracle.py`;
 - the per-mutant table on seeds 0–999;
-- the coverage note's row (lines 45–46, "on arrival `DONE` comes after the state change").
+- the coverage note's rows: lines 45–46, "on arrival `DONE` comes after the state change", and the gap
+  above (motor stop → state change).
+
+**Tests for the rev4 PR:**
+- (a) **Hand-written traces that tell A1 and C10 apart:**
+  - motor stop → `DONE` → state change: A1 is violated, C10 is not;
+  - state change → `DONE` → motor stop: C10 is violated, A1 is not.
+- (b) **Not judged, not violated:** on a device log whose state lines are not declared complete, and on a
+  key with a reorder mark, A1 is not judged.
