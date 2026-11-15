@@ -654,3 +654,21 @@ and `source`) and says whether each deserves a person's time. No model runs in i
 - **Documented** in `docs/claims.md`, including what a pass does not prove.
 - **Fix from the #52 review:** a slice with a cut start and keys not judged now reads "no violation in the
   keys judged, in the slice" instead of dropping the slice caveat.
+
+## WP6/7a stage 3: candidates for the five missed slots (operator note)
+
+`docs/notes/contract-candidates-rev3.md` drafts a claim and a candidate for each of testbed-05's S03,
+S04, S06, S10 and S16 (development data). The drafts come from the device model's first mismatch and
+the slots' logs. The candidates are in `docs/notes/contract-candidates-rev3/`.
+- **The check:** `claim check` ran each candidate with only the incidents it claims. The normal corpus was
+  213 real no-defect device logs, identified by count and list sha256, plus seeds 0–999 of the correct lift.
+- **Result:**
+  - one `never_after` contract, N1 "no `ACK` for a request after its `DONE` or `ERROR` was sent", catches
+    S03, S06, S10 and S16, each on the request of the model's first mismatch;
+  - no violation on the 1213 normal inputs, so it passes;
+  - on the real logs, the `DONE` half was never tried, and the `ERROR` half was tried 5 times.
+- **S04 (no reply to a repeat)** cannot be stated in the language. The note gives the kind it would take
+  and stops for the operator's decision.
+- **Not done yet:** nothing enters a contract file before the operator confirms.
+- **Done in this stage:** the whole-file word scan now covers every file in `contracts/`, and looks for slot
+  names and "operator" too.

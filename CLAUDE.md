@@ -94,6 +94,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 - [x] testbed-05 블라인드(기계적 뮤턴트, 조언자가 규칙으로 생성하고 기록된 시드로 추첨, 16칸, rev2 계약 첫 측정): 변경이 작동한 12칸에서 모델 판정 12/12, 요청·내용 12/12, 결함 없는 2칸 거짓 불일치 0. rev2 계약은 7/12를 잡고 거짓 위반 0(C1~C8만이면 4/12). 놓친 5칸은 모두 반복 요청에 대한 틀리거나 없는 답(대조표 37–39행, C12의 일부). 등록 예측 5개 모두 맞음, 개수 대조는 16칸 모두 진실과 같음. S05 무효(호스트 쪽 중단, 중단의 원인은 기록 없음). `docs/experiments/testbed-05.md`
 - [x] WP6/7a 1단계 `never_after`(`docs/work-order-wp67a.md`): `only_after`의 거울(`after` 뒤의 첫 `event`, 키당 한 번), 재정렬 표시는 두 종류가 모두 있는 키만 판정 안 함, 잘린 시작은 "no violation in the slice", 장치 로그는 두 종류 모두 완전 선언일 때만. 로더가 `event`와 `after`가 같은 패턴인 `only_after`·`never_after`를 거부. 오라클 N1(테스트 안에만, "DONE·ERROR를 보낸 요청에 ACK 없음"), 시드 0–99에서 맞는 리프트 0, M1 89, M11 2. 계약 파일은 바꾸지 않음
 - [x] WP6/7a 2단계 `claim check`(`src/replayspect/claim.py`, `docs/claims.md`): 후보(`grade`·`source` 필수)를 사건(트레이스·장치 로그, 선택 `--model`로 `device --out` 보고서)과 정상 묶음(`--normal` 파일·디렉터리, `--normal-seeds` 결함 없는 구현)에서 판정, passes/fails/untested. 사건에서 판정 안 됨은 잡은 것이 아님, 모델 결과가 없으면 "not given", 입력마다 sha256, 같은 입력이면 같은 바이트. `never_after`의 "시험됨"은 `after` 뒤에 `event` 패턴의 행위자가 같은 키로 무언가 더 한 키(판정에 씀, 보수적), 같은 키로 무엇이든 더 온 키는 옆에 보고. 정상 묶음 전부 not judged면 이유를 따로 씀. 장치 로그 완전 선언 규칙은 `devicelog.needs_complete` 하나. 잘린 시작 조각에서 판정 못 한 키가 있으면 "no violation in the keys judged, in the slice"
+- [ ] WP6/7a 3단계 후보(`docs/notes/contract-candidates-rev3.md`, 개발 점검): S03·S06·S10·S16은 N1("DONE·ERROR를 보낸 요청에 ACK 없음") 하나로 잡힘(첫 위반이 모델의 첫 불일치와 같은 요청 4/4), 정상 묶음 1213개(실물 213, 시드 0–999) 위반 0, passes. 실물에서는 DONE 쪽이 한 번도 시험되지 않음(ERROR 쪽 5회). S04(반복에 응답 없음)는 계약 언어로 쓸 수 없어 운영자 결정 대기. rev3 파일·오라클·뮤턴트 표·대조표 행은 확정 뒤
 - [ ] 다음: `docs/work-order-v3.md`의 다음 WP (지시 후 시작)
 
 ## 실행기와 축소 요약 (구현 완료)
@@ -109,7 +110,7 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q -m ""    # 전체 (작업지시서 �
 
 ## 계약과 판정기 요약 (구현 완료)
 - 계약 종류 10개(8개와 `only_after`·`never_after`)의 의미와 보고 시점은 `docs/design-v0.md` "계약 DSL" 절이 기준이다.
-- 기본 계약 파일은 `contracts/lift.v0.yaml`(과거 실험의 기준)이다. rev2 묶음 `contracts/lift.v0.rev2.yaml`(C1~C13)은 경로를 지정해 쓴다. 계획기에게는 주석까지 파일 전체가 보이므로, 파일 어디에도 결함·뮤턴트·블라인드 칸 이름이나 `docs/notes` 경로를 쓰지 않는다. `source`에는 `found`를 넣지 않고, 발견 경로는 `docs/notes/protocol-contract-coverage.md`에만 쓴다(`tests/test_contracts_rev2.py`가 파일 전체 글을 검사).
+- 기본 계약 파일은 `contracts/lift.v0.yaml`(과거 실험의 기준)이다. rev2 묶음 `contracts/lift.v0.rev2.yaml`(C1~C13)은 경로를 지정해 쓴다. 계획기에게는 주석까지 파일 전체가 보이므로, 파일 어디에도 결함·뮤턴트·블라인드 칸 이름이나 `docs/notes` 경로를 쓰지 않는다. `source`에는 `found`를 넣지 않고, 발견 경로는 `docs/notes/protocol-contract-coverage.md`에만 쓴다(`tests/test_contracts_rev2.py`가 `contracts/`의 모든 파일 전체 글을 검사, 블라인드 칸 이름과 operator도 찾음).
 - 모든 위반은 그것을 증명하는 가장 이른 이벤트에서 보고하고, 실행 끝에서만 알 수 있는
   위반은 `seq = len(trace)`로 보고한다. 실행 종료 시각 `end_us`는 판정기에 명시적으로 넘긴다.
 - 판정기는 (실행, 계약)마다 첫 위반의 seq가 `tests/lift_oracle.py`와 같아야 한다.

@@ -1,0 +1,13 @@
+protocol: lift.v0
+contracts:
+  - id: N1D
+    desc: the device sends no ACK for a req_id after it sent DONE for that req_id
+    kind: never_after
+    per: req_id
+    event: device.send(ACK)
+    after: device.send(DONE)
+    grade: stated
+    source:
+      doc: docs/protocol-lift.md
+      lines: "37-39"
+      quote: "On a move request the device first looks the `req_id` up in its result table. A known id is answered with the stored result again (`ACK` while the move is in progress, `DONE` or `ERROR` once it has finished)"
