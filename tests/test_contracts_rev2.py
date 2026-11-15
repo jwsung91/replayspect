@@ -58,10 +58,13 @@ def test_each_new_contract_quotes_its_lines(c):
         assert piece in text, (c.id, piece)
 
 
-def test_the_file_names_no_defect_and_points_at_no_operator_note():
-    # Planners are shown the whole file, comments included (Session.describe returns its text).
-    text = (ROOT / "contracts" / "lift.v0.rev2.yaml").read_text(encoding="utf-8")
-    hits = re.findall(r"\bM\d+\b|\bB\d\d\b|blind|defect|mutant|testbed|docs/notes|found", text, re.IGNORECASE)
+@pytest.mark.parametrize("path", sorted((ROOT / "contracts").iterdir()), ids=lambda p: p.name)
+def test_no_contract_file_names_a_defect_or_points_at_an_operator_note(path):
+    # Planners are shown the whole file, comments included (Session.describe returns its text). Every file in
+    # contracts/ is scanned: a new one is planner-visible as soon as it is there.
+    text = path.read_text(encoding="utf-8")
+    hits = re.findall(r"\bM\d+\b|\bB\d\d\b|\bS\d\d\b|blind|defect|mutant|testbed|operator|docs/notes|found", text,
+                      re.IGNORECASE)
     assert hits == []
 
 
