@@ -277,8 +277,9 @@ def _result(c: Contract, inc_rows: list[dict[str, Any]], normal_rows: list[tuple
         for _, r in normal_rows:
             for k in tried:
                 tried[k] += r.get("tried", {}).get(k, 0)
+        by_actor = sum(r.get("tried", {}).get("after_then_event_actor", 0) > 0 for _, r in normal_rows)
         normal["tried"] = {**tried, "event_actor": c.params["event"].actor,
-                           "inputs_with_a_key_tried": exercised}
+                           "inputs_with_a_key_tried": exercised, "inputs_with_a_key_tried_by_event_actor": by_actor}
     reasons = [f"not caught on incident {r['input']} ({r['status']})" for r in inc_rows if r["status"] != "violated"]
     if violated_inputs:
         reasons.append(f"violated on {violated_inputs} of {n} normal inputs")
@@ -335,7 +336,8 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
             t = rn["tried"]
             lines.append(f"    never_after: keys with an after {t['keys_with_after']}, of which with anything later "
                          f"with the same key {t['after_then_anything']} (the measure used), with something later by "
-                         f"{t['event_actor']} {t['after_then_event_actor']}")
+                         f"{t['event_actor']} {t['after_then_event_actor']} (in "
+                         f"{t['inputs_with_a_key_tried_by_event_actor']} of {rn['inputs']} inputs)")
         vs = rn["violations"]
         if vs:
             lines.append(f"    violations: {len(vs)} in {len({v['input'] for v in vs})} input(s)")

@@ -92,6 +92,8 @@ report gives the counts summed over the normal corpus:
 - `after_then_event_actor`: narrower. It counts only keys with something later done by the actor of the
   `event` pattern. It is reported beside the other count and not used for the verdict.
 
+For each of the two counts, the report also gives the number of inputs where it is above zero.
+
 On a device log, which holds only device events, the two counts coincide when the `event` is a device
 event. On a simulator trace they do not. On seeds 0–19 of the lift, with the `event` `device.send(ACK)`
 and the `after` `device.send(DONE|ERROR)`, every one of the 119 keys with an `after` has something later

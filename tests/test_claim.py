@@ -210,6 +210,8 @@ def test_never_after_reports_the_keys_that_were_tried(tmp_path):
     # proposed, shown alongside: something later by the event's own actor (here: the device heard of it again)
     assert 0 < tried["after_then_event_actor"] < tried["after_then_anything"]
     assert tried["event_actor"] == "device" and r["verdict"] == "passes"
+    assert tried["inputs_with_a_key_tried"] == r["normal"]["exercised"] == 10
+    assert 0 < tried["inputs_with_a_key_tried_by_event_actor"] <= 10
 
 
 def test_never_after_with_no_key_tried_is_untested_even_if_its_event_occurs(tmp_path):
