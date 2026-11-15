@@ -407,6 +407,27 @@ def test_bad_provenance_is_rejected(extra, match):
         one("  - {id: K, kind: at_most_once, per: req_id, event: d.send(X), " + extra + "}")
 
 
+GENERIC = ("  - {id: K, kind: at_most_once, per: req_id, event: d.effect(motor_start), grade: generic, "
+           "source: {rule: G1, quote: 'at most one effect of each name per request id'}}")
+
+
+def test_a_generic_contract_names_its_rule():
+    c = one(GENERIC).contracts[0]
+    assert c.grade == "generic" and c.source == {"rule": "G1", "quote": "at most one effect of each name per request id"}
+
+
+@pytest.mark.parametrize("extra, match", [
+    ("grade: generic", "a generic contract needs a source with its rule"),
+    ("grade: generic, source: {quote: q}", "a generic contract needs a source with its rule"),
+    ("grade: generic, source: {rule: G1, doc: x}", r"unexpected \['doc'\] in source; a generic source has rule, quote"),
+    ("grade: stated, source: {rule: G1}", r"unexpected \['rule'\] in source; use doc, lines, quote, found"),
+    ("source: {rule: G1}", r"unexpected \['rule'\] in source; use doc, lines, quote, found"),
+])
+def test_a_generic_source_names_the_rule_and_nothing_else(extra, match):
+    with pytest.raises(ContractError, match=match):
+        one("  - {id: K, kind: at_most_once, per: req_id, event: d.send(X), " + extra + "}")
+
+
 # -- equivalence with the reference oracle -----------------------------------------------
 
 

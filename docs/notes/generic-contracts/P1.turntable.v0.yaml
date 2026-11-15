@@ -1,0 +1,14 @@
+# Proposal P1 (not one of G1-G7): the state change that ends the action only after the effect that ends it.
+protocol: turntable.v0
+
+contracts:
+  - id: P1
+    desc: the state becomes LEFT or RIGHT or INITIAL for a req_id only after its motor_stop
+    kind: only_after
+    per: req_id
+    event: device.state(LEFT|RIGHT|INITIAL)
+    after: device.effect(motor_stop)
+    grade: generic
+    source:
+      rule: P1
+      quote: "the state change that ends the action only after the effect that ends it"

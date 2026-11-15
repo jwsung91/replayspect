@@ -33,7 +33,9 @@ recent earlier event matching the pattern (``null`` if there is none).
 :data:`GRADES`; ``stated``: the protocol document says it) and ``source``, a
 mapping of ``doc`` (the document), ``lines`` (its line numbers), ``quote``
 (the sentence) and ``found`` (how the rule was found), each a non-empty
-string.
+string. A ``generic`` contract (a rule that does not depend on the protocol,
+written for it) must have a source, and its source holds ``rule`` (the rule's
+id, such as ``G1``) and optionally ``quote`` (the rule in words), nothing else.
 """
 
 from __future__ import annotations
@@ -59,8 +61,11 @@ KINDS = (
     "only_after",
     "never_after",
 )
-GRADES = ("stated",)  # stated: the protocol document says it
+#: stated: the protocol document says it; generic: a rule that does not depend on the protocol, written for it
+GRADES = ("stated", "generic")
 SOURCE_KEYS = ("doc", "lines", "quote", "found")
+#: A generic contract's source names its rule (an id such as G1) and may quote the rule in words, nothing else.
+GENERIC_SOURCE_KEYS = ("rule", "quote")
 
 
 class ContractError(ValueError):
@@ -266,12 +271,17 @@ def _provenance(cid: str, raw: Mapping[str, Any]) -> tuple[str | None, Mapping[s
     grade, source = raw.get("grade"), raw.get("source")
     if "grade" in raw and grade not in GRADES:
         raise ContractError(f"{cid}: grade must be one of {GRADES}, got {grade!r}")
+    generic = grade == "generic"
+    if generic and not (isinstance(source, Mapping) and "rule" in source):
+        raise ContractError(f"{cid}: a generic contract needs a source with its rule ({', '.join(GENERIC_SOURCE_KEYS)})")
     if "source" in raw:
         if not isinstance(source, Mapping) or not source:
             raise ContractError(f"{cid}: source must be a non-empty mapping of {', '.join(SOURCE_KEYS)}")
-        extra = set(source) - set(SOURCE_KEYS)
+        allowed = GENERIC_SOURCE_KEYS if generic else SOURCE_KEYS
+        extra = set(source) - set(allowed)
         if extra:
-            raise ContractError(f"{cid}: unexpected {sorted(map(str, extra))} in source; use {', '.join(SOURCE_KEYS)}")
+            raise ContractError(f"{cid}: unexpected {sorted(map(str, extra))} in source; "
+                                + (f"a generic source has {', '.join(allowed)}" if generic else f"use {', '.join(allowed)}"))
         bad = [k for k, v in source.items() if type(v) is not str or not v.strip()]
         if bad:
             raise ContractError(f"{cid}: source {', '.join(bad)} must be a non-empty string (quote line ranges)")

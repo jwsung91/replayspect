@@ -14,6 +14,8 @@ Per candidate:
   there), ``fails`` (with the reasons) or ``untested`` (never exercised on the normal corpus: it could
   not have failed there, which is not the same as holding).
 
+With no incident, only the normal corpus is judged (a false-positive check).
+
 "Exercised" means a status that judged something: violated, ok, or no violation in the slice or in the
 keys judged. For ``never_after`` it means more (an ``event`` anywhere would be too weak): a key that has
 an ``after`` and something later with the same key by the actor of the ``event`` pattern. A wider count
@@ -187,8 +189,6 @@ def check_claims(candidates: Path, incidents: Sequence[tuple[Path, Path | None]]
     bare = [c.id for c in cs.contracts if c.grade is None or c.source is None]
     if bare:
         raise ClaimError(f"{', '.join(bare)}: a candidate needs grade and source")
-    if not incidents:
-        raise ClaimError("give at least one --incident")
     seeds = list(seeds)
     files = _files([Path(p) for p in normal])
     if not files and not seeds:

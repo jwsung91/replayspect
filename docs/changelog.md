@@ -767,3 +767,26 @@ and S15 (development data), each with the device model's report remade after sta
   A1 adds one case to rev3: a `DONE` between the motor stop and the state change.
 - **Not done yet:** nothing enters a contract file before the operator confirms or drops A1. Whether the
   sentence states an order is the operator's reading. The motor's direction (S06) stays a recorded gap.
+
+## WP6/7b stage 3: the generic rules, as plain contracts (operator note)
+
+`docs/notes/generic-contracts.md` checks rules G1–G8 of the work order, plus the operator's G6b, written by hand
+for the lift and the turntable in `docs/notes/generic-contracts/` (nothing under `contracts/`).
+- **Loader:** a new grade, `generic`. Its `source` must name the rule (`rule`, with an optional `quote`) and
+  holds nothing else, so it passes the word scan of `contracts/`.
+- **`claim check`:** runs with no `--incident`, judging the normal corpus alone (a false-positive check). The
+  turntable has no incident.
+- **No false positive:** G1–G6b, and G7 in its declared form, pass on the 218 real no-defect lift logs and on
+  seeds 0–999 of both correct systems.
+- **Mutants (lift, seeds 0–999):** some rule catches each of the eight device mutants except M5. M4 is caught
+  only by G7's declared form. No client mutant is caught: the list has no client rule.
+- **Blind slots (development check, not a measurement; the rules came after the slots):**
+  - the generic set alone (G1–G6b) catches 21 of the 34 acting slots of testbed-04, 05 and 06, and 23 with G7
+    declared;
+  - beside it, 18 for the groups' own lift contracts and 26 for rev3;
+  - it misses the C9 (timer) slots and catches testbed-06 S19, by G6b.
+- **G7 and G8** are not stated as the work order words them: G7 needs a miner, and G8 needs a client effect
+  kind and a field condition on `after`.
+- **A proposal, P1** (the state change that ends an action only after the effect that ends it), fails as
+  written. It is violated on every input, always by the initial state line, which has no request id.
+- **Stopped for the operator's decision** on which rules go on and on the roles form.

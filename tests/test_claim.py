@@ -312,6 +312,19 @@ def test_cli_exit_zero_when_every_candidate_passes(tmp_path, capsys):
     assert code == 0 and "C10 (only_after): passes" in out
 
 
+def test_with_no_incident_only_the_normal_corpus_is_judged(tmp_path, capsys):
+    # A false-positive check: no incident to catch, so the verdict rests on the normal corpus alone.
+    code, out, _ = out_of(capsys, ["claim", "check", str(candidates(tmp_path, C10)), "--normal-seeds", "0-2",
+                                   "--out", str(tmp_path / "rep.json")])
+    assert code == 0 and "0 incident(s)" in out and "C10 (only_after): passes" in out
+    rep = json.loads((tmp_path / "rep.json").read_text())
+    assert rep["incidents"] == [] and rep["results"][0]["incidents"] == []
+    assert rep["results"][0]["verdict"] == "passes"
+    code, out, _ = out_of(capsys, ["claim", "check", str(candidates(tmp_path, D1, name="bad.yaml")),
+                                   "--normal-seeds", "0-9"])
+    assert code == 1 and "fails" in out
+
+
 @pytest.mark.parametrize("extra, edit, message", [
     ([], lambda c: {k: v for k, v in c.items() if k != "source"}, "C10: a candidate needs grade and source"),
     (["--model", "x.json"], None, "--model must follow an --incident"),
