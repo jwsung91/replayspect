@@ -62,7 +62,7 @@ Before any mechanism, find out which rules survive. Write each rule by hand for 
 | Rule | In words | Lift contract it generalizes |
 | --- | --- | --- |
 | G1 | at most one effect of each name per request id | C1 |
-| G2 | per request id and reply name, the device sends no more replies than it received requests | C7, C12, C13 |
+| G2 | per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests | C7, C12, C13 |
 | G3 | the two final answers exclude each other, per request id | C8 |
 | G4 | the device sends nothing for a request id it has not received | none |
 | G5 | no acknowledgement for a request id after its final answer | C14 |
@@ -71,7 +71,7 @@ Before any mechanism, find out which rules survive. Write each rule by hand for 
 | G8 | no effect from a reply that arrives after the client gave up | none |
 
 - **G7 and G8:** say in the note whether the language can state them and what it would take. Do not build a miner or a new kind.
-- **Candidate files** go under `docs/notes/generic-contracts/`, not under `contracts/`: one file per system. They need a grade: add `generic` to the loader's grades, with a `source` that names the rule. Decide the `source` form in the PR and document it.
+- **Candidate files** go under `docs/notes/generic-contracts/`, not under `contracts/`: one file per system. They need a grade: add `generic` to the loader's grades, with a `source` that names the rule. Decide the `source` form in the PR and document it. It must still pass the word scan of `contracts/` when the rule moves there in stage 4: that scan forbids `found`, the notes path and any experiment, defect or operator word, so the source names the rule and nothing else.
 - **Checks,** with `claim check` (`--system` for the turntable):
   - **no false positive:** simulator seeds 0–999 of the correct lift and of the correct turntable, and the 218 real no-defect lift logs. One violation there fails the rule as written; report it and do not bend the rule to pass;
   - **what each rule catches:** for the lift's simulator mutants M1–M11 on seeds 0–999, a table of rule by mutant;
@@ -91,7 +91,7 @@ After the operator's decision, and only for the rules kept.
 - `contracts/generic/`: the rules written once, against roles. Each system binds the roles. The loader expands them into contracts of the existing kinds, with `grade: generic`.
 - **The judge does not change.** The proof is a test: on seeds 0–99, for the correct systems and every lift mutant, the expanded contracts give the same first violations as the hand-written instances of stage 3.
 - **No false positive** on seeds 0–999 of both correct systems, as a slow test.
-- The whole-file word scan of `contracts/` covers `contracts/generic/`. The files name no defect, mutant, experiment slot or operator note.
+- The whole-file word scan of `contracts/` is extended to cover `contracts/generic/`. Today it reads each entry of `contracts/` as a file and would fail on a folder. The files name no defect, mutant, experiment slot or operator note.
 - The existing contract files and the documents shown to planners are not changed. A session that does not ask for the generic set sees exactly what it saw before.
 - Documents: `docs/design-v0.md` (the contract section), a short `contracts/generic/README.md`, the changelog, `CLAUDE.md` and the README status.
 
