@@ -83,6 +83,9 @@ client, device and truth logs; the assignment file; the advisor's scoring; the f
      15:19:49, so the scoring script ran after the hash.
    - The scoring notes were fixed in the assignment file before any run.
    - The analyst then checked prediction 3 on the truth files and made the C14 count below.
+   - After the analyst's results draft, the advisor corrected four statements in `scoring.md`, with no
+     score, count or total changed (sha256 `e2b240b6…8d0636`, then `90bca9c8…1299df`). This document
+     follows the corrected file.
 
 ### Slots and builds
 
@@ -120,7 +123,7 @@ Line numbers are those of `lift_device.h` at `d5757b6`. The builds' file hashes 
 | Build | Change | Line | Operator | What it does | In testbed-05's list |
 | --- | --- | --- | --- | --- | --- |
 | b01 | Q005 | 48 | CONST | A new move starts 47 ms after its `ACK` instead of 50 ms. | no |
-| b02 | Q050 | 155 | ROR | A repeat of a request still in progress is answered `ERROR reason=illegal` instead of `ACK`. | yes, K043 |
+| b02 | Q050 | 155 | ROR | A repeat of a request still in progress is answered `ERROR reason=illegal` instead of `ACK`, and a repeat of a finished or refused request `ACK`. | yes, K043 |
 | b03 | Q047 | 155 | ENUM | A repeat of a request still in progress is answered `ERROR reason=illegal` instead of `ACK` (and a repeat of a refused one `ACK`). | yes, K040 |
 | b04 | Q011 | 49 | CONST | A move takes 6,000 ms instead of 3,000 ms. | yes, K008 |
 | b05 | Q114 | 258 | VAR | The motor-start effect is logged with the travelling request's id from before this move (empty on the first move), not the command's id. | no |
@@ -137,8 +140,11 @@ Line numbers are those of `lift_device.h` at `d5757b6`. The builds' file hashes 
 | b16 | Q070 | 167 | SDL | A new request gets no `ACK`. | yes, K063 |
 | b17 | Q110 | 255 | SDL | A refused command gets no `ERROR` at all. | yes, K103 |
 | b18 | Q059 | 156 | VAR | The `DONE` repeated for a finished request carries the travelling (or last travelled) request's id, not the request's own. | yes, K052 |
-| b19 | Q053 | 156 | ENUM | A repeat of a finished request is answered `ERROR reason=illegal` instead of `DONE` (and a repeat in progress `DONE`). | yes, K046 |
+| b19 | Q053 | 156 | ENUM | A repeat of a finished request is answered `ERROR reason=illegal` instead of `DONE`. | yes, K046 |
 | b20 | Q046 | 155 | ENUM | A repeat of a request still in progress is answered `ERROR reason=illegal` instead of `ACK` (and a repeat of a finished one `ACK`). | yes, K039 |
+
+The descriptions of b02 and b19 differ from the assignment file's wording; the advisor corrected them after
+scoring.
 
 The firmware's motor effect lines are log lines: the Uno drives no motor. So b05 (Q114) and b11 (Q115)
 change only what the device logs.
@@ -181,6 +187,9 @@ first difference.
 - **The conforming set** was empty in all 16 slots that differ: no published device defect model (M1–M11)
   matched them.
 - **The descriptions** are in the submission file. The S2 column quotes them.
+- **S06's description** says the motor starts "the opposite way to the command"; the change logs the
+  direction of the previous move's command. On this run the moves alternate, so the two say the same. S2
+  stays yes.
 
 ## Totals
 
@@ -225,7 +234,7 @@ first difference.
 | 6 | The 2 ms comparison window | S18 moved an output 3 ms earlier and gave a mismatch at that output, as predicted. No slot fell inside the 2 ms window. |
 | 7 | Timer events carry their scheduled times | S11 showed at the first event whose time moved and violated C9. S18 broke no contract. As predicted. |
 | 8 | Same-millisecond order of a timer and an input | No such slot occurred. |
-| 9 | The allow list | No such slot occurred. |
+| 9 | The allow list | The third item (a device that does one thing and logs another is seen only as what it logged) applies to S06 and S23, whose changes alter only the motor-start log line. It held as written: the model saw both as what was logged. No slot occurred for the first two items. |
 | 10 | The contracts' documented gaps | S04, S10, S07 and S12 were caught by no contract while the model saw them, as predicted. S09 and S16, a wrong final answer that also breaks C8, were caught, as the exception says. No slot sent an `ACK` after a final answer, so the C14 clause was not tried on a changed build. |
 
 - **Prediction 5 and S15, S19.** Both changes alter only the order of outputs in one millisecond. Whether
@@ -233,14 +242,19 @@ first difference.
   differences, so they are counted as misses.
 - **A predicted miss is still a miss.** S04, S07, S10, S12 and S18 are in the totals above: missed by the
   contracts, and listed under predictions 6, 7 and 10.
+- **Prediction 9 and the registration's Limits.** The registration's Limits words the same case as "is not
+  seen … predicted missed". That wording does not fit S06 and S23: the changed line is itself a compared
+  line, so the model saw the change.
 
 ## The seven slots the contracts missed
 
-- **No answer:**
-  - S04: no `ERROR` for a refused command;
-  - S10: no `ACK` for a new request.
+- **A reply missing:**
+  - S04: r-0003 got its `ACK` but never its `ERROR`. This is also the coverage note's row for lines 43–44
+    ("that an `ERROR` comes at all, no").
+  - S10: r-0001 got no `ACK` on its first delivery. The retry was answered `ACK`, and `DONE` followed.
 
-  Predicted (prediction 10; coverage note, gap 5).
+  Read as "a reply missing", both fall under prediction 10's first item (coverage note, gap 5). The totals
+  are the same on either reading.
 - **A wrong answer to a repeat that is not an `ACK` and breaks no other rule:** S07 and S12, an `ERROR` for
   a repeat still in progress. Predicted (prediction 10).
 - **A timer moved 3 ms earlier:** S18. Predicted (prediction 7: a schedule within 3,002 ms breaks no
@@ -314,7 +328,8 @@ device heard of the request again after its final answer. Counted with `tried_ke
 - **The two it missed reorder outputs inside one millisecond.** The comparison matches events by time
   within a 2 ms window and does not compare order. A contract caught one of the two (S15, C10).
 - **The rev3 contracts caught 11 of 18,** with no false violation. That is the same as rev2 here: C14
-  fired nowhere, because no drawn change sends an `ACK` after a final answer.
+  fired nowhere, because no run sent an `ACK` after a final answer. Three drawn builds can send one, but
+  each was paired with a plan whose copy arrives while the request is still in progress (Limits).
 - **What the contracts missed:**
   - five slots where predicted gaps apply (S04, S07, S10, S12, S18);
   - two slots the predictions did not foresee: the motor's direction (S06) and the order of `DONE` and the
@@ -335,10 +350,29 @@ Recorded for the operator to decide. Nothing here is in a contract file.
   that maps one value to another, or two conditions at once (gap 1). The protocol document would also have
   to state the direction.
 
+## Departures from the registration
+
+1. **Steps 3 and 4 ran in the other order.** The analyst received the final assignment hash before it copied
+   the testbed folder to the Orin; the registered order has the copy first. Both came before any session.
+2. **The final assignment hash was recorded under the name of the pre-build hash.** The analyst held the
+   final hash (`fd7f073d…`) before any session, as registered, but recorded it as the hash before the
+   build. The advisor checked it against the file, and the record was corrected before scoring.
+3. **The operator started the run script once before the testbed folder was on the Orin.** It stopped at
+   once with a message and ran nothing.
+
+No other departure.
+
 ## Limits
 
-- **C14 was not tried on a changed build.** No drawn change sends an `ACK` after a final answer. This group
-  says nothing for or against C14's power to catch. It does say that rev3 caught no more than rev2 here:
+- **C14 was not tried on a changed build.** No run sent an `ACK` after a final answer.
+  - Three drawn builds can send one: b20 (Q046) for a repeat of a finished request, b03 (Q047) for a
+    repeat of a refused one, b02 (Q050) for either.
+  - The draw put them on plans whose copy arrives while the request is still in progress: S12 and S07
+    (`copy-refused-early`) and S17 (`copy-moving`). There they answer `ERROR`.
+  - So C14 went untried because of how builds and plans were paired, not because no drawn change could
+    break it.
+
+  This group says nothing for or against C14's power to catch. It does say that rev3 caught no more than rev2 here:
   11 of 18 for both.
 - **A predicted miss is still a miss.** S04, S07, S10, S12 and S18 were predicted missed by the contracts
   and are counted as missed.
@@ -351,13 +385,7 @@ Recorded for the operator to decide. Nothing here is in a contract file.
     248, 255–256).
 - **The four candidate ids printed to the analyst while it prepared this group were all drawn:** K043
   (S17), K049 (S16), K103 (S04), K105 (S08). Only the ids were printed.
-- **The final assignment hash was recorded under the name of the pre-build hash** and corrected before
-  scoring. The analyst held the final hash before any session, as registered. It received it before it
-  copied the testbed folder to the Orin, so steps 3 and 4 of the registered order ran in the other order.
-  Both came before any session.
 - **The scoring script ran after the submission hash** (15:21:58 KST, as `scores.txt` records).
-- **The operator started the run script once before the testbed folder was on the Orin.** It stopped at
-  once with a message and ran nothing.
 - **The device log is the suspect's statement.** The motor effect lines are log lines. S06 and S23 changed
   only them, and were seen as what was logged.
 - **Scheduled-time logs.** As in testbed-04 and 05, the device log's timer events carry their scheduled

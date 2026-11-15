@@ -711,9 +711,11 @@ registered harness, and the scoring script ran after the submission hash.
   reorder two outputs inside one millisecond: the comparison matches events by time within its 2 ms window
   and does not compare their order. The tool was not changed.
 - **rev3 contracts:** caught 11 of 18 with no false violation. C14 fired nowhere, so rev2 alone gives the
-  same 11 of 18; no drawn change sent an `ACK` after a final answer. Of the 7 missed, 5 were predicted
+  same 11 of 18. No run sent an `ACK` after a final answer: the three drawn builds that can were paired
+  with plans whose copy arrives while the request is in progress. Of the 7 missed, 5 were predicted
   (S04, S07, S10, S12, S18) and 2 were not: the motor's direction (S06) and the order of `DONE` and the
-  state change (S19). The coverage note gains a row for each; the contract file is unchanged.
+  state change (S19). The coverage note gains a row for each, and its rev3 sentences now give
+  the measurement; the contract file is unchanged.
 - **Predictions:** 1–4 held; the count check equals the truth file on all 24 slots. Prediction 5 did not
   hold on S15 and S19.
 - **C14 on unchanged builds,** counted after scoring: its `DONE` side was tried on hardware for the first
