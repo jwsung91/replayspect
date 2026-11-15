@@ -316,13 +316,23 @@ def test_with_no_incident_only_the_normal_corpus_is_judged(tmp_path, capsys):
     # A false-positive check: no incident to catch, so the verdict rests on the normal corpus alone.
     code, out, _ = out_of(capsys, ["claim", "check", str(candidates(tmp_path, C10)), "--normal-seeds", "0-2",
                                    "--out", str(tmp_path / "rep.json")])
-    assert code == 0 and "0 incident(s)" in out and "C10 (only_after): passes" in out
+    assert code == 0 and "0 incident(s)" in out
+    # the verdict's own line says so, and so does the JSON beside the verdict
+    assert "C10 (only_after): passes (no incident: normal corpus only)" in out
     rep = json.loads((tmp_path / "rep.json").read_text())
     assert rep["incidents"] == [] and rep["results"][0]["incidents"] == []
-    assert rep["results"][0]["verdict"] == "passes"
+    assert rep["results"][0]["verdict"] == "passes" and rep["results"][0]["no_incident"] is True
     code, out, _ = out_of(capsys, ["claim", "check", str(candidates(tmp_path, D1, name="bad.yaml")),
                                    "--normal-seeds", "0-9"])
-    assert code == 1 and "fails" in out
+    assert code == 1 and "D1 (count_le): fails (no incident: normal corpus only): violated on" in out
+
+
+def test_with_an_incident_the_verdict_line_is_unchanged(tmp_path, capsys):
+    inc = str(sim_trace(tmp_path, 36, ["M10"]))
+    code, out, _ = out_of(capsys, ["claim", "check", str(candidates(tmp_path, C10)), "--incident", inc,
+                                   "--normal-seeds", "0-2", "--out", str(tmp_path / "rep.json")])
+    assert "no incident" not in out
+    assert json.loads((tmp_path / "rep.json").read_text())["results"][0]["no_incident"] is False
 
 
 @pytest.mark.parametrize("extra, edit, message", [

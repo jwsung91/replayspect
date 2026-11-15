@@ -790,3 +790,16 @@ for the lift and the turntable in `docs/notes/generic-contracts/` (nothing under
 - **A proposal, P1** (the state change that ends an action only after the effect that ends it), fails as
   written. It is violated on every input, always by the initial state line, which has no request id.
 - **Stopped for the operator's decision** on which rules go on and on the roles form.
+- **After the #61 review (the operator's decision):**
+  - **To stage 4:** G1, G2 (three roles), G3, G4, G5, G6, G6b and P1. G7 and G8 do not go on; G7's
+    declared form is the protocol's own contract (C3). The poll-reply and client proposals stay a record,
+    so the generic set misses M5 and M6–M8.
+  - **P1 rewritten as `never_after`** (no motor stop for a request after its rest state): no false positive
+    on the 218 real logs or on seeds 0–999 of either system; violated by no mutant and on no blind slot;
+    violated on a hand-made log with the state change before the stop, where no G rule and no rev3 contract
+    is. It does not catch a missing stop. The failed `only_after` form is kept in the note.
+  - **`claim check` with no incident** says so on each verdict line ("no incident: normal corpus only") and
+    in the JSON (`no_incident`).
+  - **A1 is folded into G6b;** no rev4 file. The form (`grade: generic`, `source` with `rule` and an
+    optional `quote`, the `roles` section) is approved.
+  - The note's count of slots rev3 catches and the generic set misses is corrected to 6 (4 with G7).

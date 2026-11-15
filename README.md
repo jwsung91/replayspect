@@ -89,8 +89,18 @@ Implemented:
 - Claims: `claim check` judges candidate contracts (with `grade` and `source`)
   on incidents and on a normal corpus (trace files, device logs, simulator seeds
   with no defect), and says per candidate passes, fails or untested, with the
-  device model's first mismatch compared when its report is given
-  ([docs/claims.md](docs/claims.md))
+  device model's first mismatch compared when its report is given; incidents are
+  optional, and with none each verdict says "no incident: normal corpus only"
+  (a false-positive check) ([docs/claims.md](docs/claims.md))
+- Contract grades: `stated` (from the protocol document) and `generic` (a rule
+  that does not depend on one system, whose `source` names the rule). A rev4
+  candidate for the lift ("`DONE` only after the arrival state",
+  [docs/notes/contract-candidates-rev4.md](docs/notes/contract-candidates-rev4.md))
+  was confirmed, then folded into the generic rule G6b. The generic rules are
+  written by hand for the lift and the turntable and checked with no false
+  positive on real and simulated runs; the operator chose G1–G6b and P1 for a
+  generic contract library
+  ([docs/notes/generic-contracts.md](docs/notes/generic-contracts.md))
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with
@@ -104,7 +114,7 @@ Not yet:
 - Reproducing a device-side log alone, or merging two logs with their clocks
 - Recorder for real code: a library that emits trace events from a running system
 - Symptom judge: matching a run against a stated symptom instead of a fixed check
-- Contract grades and a generic contract library
+- The generic contract library itself: roles per system, expanded into contracts (`contracts/generic/`)
 - Provider interface: one LLM interface for MCP and API clients
 
 Experiments so far:

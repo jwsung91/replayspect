@@ -14,7 +14,8 @@ Per candidate:
   there), ``fails`` (with the reasons) or ``untested`` (never exercised on the normal corpus: it could
   not have failed there, which is not the same as holding).
 
-With no incident, only the normal corpus is judged (a false-positive check).
+With no incident, only the normal corpus is judged (a false-positive check); each result then says
+so (``no_incident``, and "no incident: normal corpus only" on its verdict line).
 
 "Exercised" means a status that judged something: violated, ok, or no violation in the slice or in the
 keys judged. For ``never_after`` it means more (an ``event`` anywhere would be too weak): a key that has
@@ -289,7 +290,8 @@ def _result(c: Contract, inc_rows: list[dict[str, Any]], normal_rows: list[tuple
     else:
         verdict = "passes"
     return {"id": c.id, "kind": c.kind, "desc": c.desc, "grade": c.grade, "source": dict(c.source or {}),
-            "verdict": verdict, "reasons": reasons, "incidents": inc_rows, "normal": normal}
+            "verdict": verdict, "no_incident": not inc_rows, "reasons": reasons, "incidents": inc_rows,
+            "normal": normal}
 
 
 def _untested_reason(normal_rows: list[tuple[str, dict[str, Any]]]) -> str:
@@ -329,7 +331,8 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
     for r in rep["results"]:
         lines.append("")
         reasons = f": {'; '.join(r['reasons'])}" if r["reasons"] else ""
-        lines.append(f"{r['id']} ({r['kind']}): {r['verdict']}{reasons}")
+        scope = " (no incident: normal corpus only)" if r["no_incident"] else ""
+        lines.append(f"{r['id']} ({r['kind']}): {r['verdict']}{scope}{reasons}")
         for n, inc in enumerate(r["incidents"], 1):
             fv = inc["first_violation"]
             if fv is None:

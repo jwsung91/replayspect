@@ -2,8 +2,27 @@
 
 2026-11-15. WP6/7b stage 3 (`docs/work-order-wp67b.md`).
 
-**The operator's decision: pending.** The operator decides which rules go on and approves the form.
-Nothing is written under `contracts/` before that.
+**The operator's decision** (2026-11-15, after the #61 review):
+- **To stage 4:** G1, G2 (three roles), G3, G4, G5, G6 and G6b.
+- **P1:** rewritten as `never_after` (`event: device.effect(motor_stop)`, `after: device.state(<rest
+  states>)`, `per: req_id`) and checked like the others. With no false positive it goes to stage 4; with
+  one it is reported and stays. **Result: no false positive, so P1 goes to stage 4** (below, "G6b, and the
+  order motor stop → state change"). The `only_after` form that failed is kept in this note.
+- **G7 and G8 do not go on.** G7's declared form needs the protocol's own transition table, so it is that
+  protocol's contract (C3 on the lift), not a generic one. G8 cannot be stated (below).
+- **The proposals outside the list** (a poll reply carries the state; the client rules) are not added this
+  time. They stay here as a record, so the generic set's limits include M5 and M6–M8 (below, "Limits").
+- **The form is approved:** `grade: generic` with `source` (`rule`, optional `quote`), and the shape of the
+  `roles` section. Where the roles file lives and how a session asks for the generic set are proposed in
+  the stage 4 PR.
+- **A1 is folded into G6b.** No rev4 file is written. The tests the rev4 note asks for (the two traces
+  that tell A1 and C10 apart; not judged where the state lines are not declared complete or a key carries
+  a reorder mark) go into stage 4, for G6 and G6b.
+
+Nothing is written under `contracts/` in this PR.
+
+The record below was written for that decision; the P1 section, the limits and the stage 4 list were
+updated after it.
 
 This note checks which rules that do not depend on the lift survive when written by hand, in the existing
 language, for the lift and for the turntable. No mechanism is built: no roles section, no expansion, no
@@ -15,7 +34,7 @@ the slots of testbed-04, 05 and 06 were known.
 ## The rules and their instances
 
 The list G1–G8 is fixed by the work order. G6b was added by the operator's decision (2026-11-15) and is
-checked like the others. P1 is a proposal of this note (below).
+checked like the others. P1 is a proposal of this note (below), rewritten after the review.
 
 | Rule | In words | Lift and turntable instance | Kind | Lift contract it generalizes |
 | --- | --- | --- | --- | --- |
@@ -64,6 +83,10 @@ asks for its check with `claim check --system`.
 - **The change:** that one refusal is removed. With no incident, only the normal corpus is judged: a
   false-positive check, where `passes` says only that the candidate was exercised and never violated there.
 - **Covered by** a test (`tests/test_claim.py`), `docs/claims.md` and the module documentation.
+- **After the review,** each verdict says so: its line reads `<id> (<kind>): <verdict> (no incident: normal
+  corpus only)`, and each result in the JSON has `"no_incident": true` beside the verdict (`false` with
+  incidents). Tests first. The outputs of the checks below were remade with it; apart from that key they
+  are byte for byte the first run's (kept in `out/01c43d5/`).
 - Nothing else in `claim check` changed.
 
 ## The checks
@@ -140,7 +163,7 @@ contract. G7 is shown apart, because in its declared form it is C3.
 | testbed-06 | 18 | 9 | 10 (+S03) | 11 (rev3) | 11 |
 | **All** | **34** | **21** | **23** | 18 | 26 |
 
-- **What the generic set misses that rev3 catches** (5 slots without G7, 3 with it):
+- **What the generic set misses that rev3 catches** (6 slots without G7, 4 with it):
   - C9 (the move timer, a lift constant): testbed-04 B03 and B05, testbed-06 S11 and S23;
   - C3 (the declared transitions): testbed-05 S07, testbed-06 S03. G7's declared form catches both.
 - **What it catches that rev3 does not:** testbed-06 S19, by G6b.
@@ -177,22 +200,83 @@ contract. G7 is shown apart, because in its declared form it is C3.
 
 - **G6b passes everywhere** (above). On the lift it is A1. It catches M10 exactly where G6 does, and on the
   blind slots it adds testbed-06 S19 to G6.
-- **P1, proposed:** "the state change that ends the action only after the effect that ends it". On the lift:
-  `only_after`, `event: device.state(UP|DOWN)`, `after: device.effect(motor_stop)`. The files are
-  [P1.lift.v0.yaml](generic-contracts/P1.lift.v0.yaml) and
-  [P1.turntable.v0.yaml](generic-contracts/P1.turntable.v0.yaml). It would cover the gap A1 and C10 leave
-  (rev4 note).
-- **As written, it fails:** violated on 1218 of 1218 lift inputs and 1000 of 1000 turntable seeds.
-  - **Every violation is one line:** the initial state at 0 ms (`state DOWN from=- on=init`, or `INITIAL`).
-    It has no request id and no motor stop before it.
-  - Leaving that line aside, P1 is violated nowhere: not on the normal corpus, and not for any mutant on
-    seeds 0–999.
-  - **Reported as it failed, not bent to pass.**
-- **What it would take:** skipping events with no request id in `only_after`, or a field condition on the
-  `event` pattern (`on != init`). Neither exists. A rest state that names its request (an `on` of `arrived`)
-  is what P1 means.
-- **Recommendation:** keep P1 as a proposal that needs something the language lacks. If the operator wants
-  the order covered now, the lift-specific way is a C3-like transition check, which does not see effects.
+- **P1 covers the gap A1 and C10 leave** (rev4 note): the state change that ends the action before the
+  effect that ends it.
+
+### P1 as `only_after` (the first form, failed)
+
+Written for the first review, at `01c43d5`:
+
+```yaml
+kind: only_after
+per: req_id
+event: device.state(UP|DOWN)        # turntable: LEFT|RIGHT|INITIAL
+after: device.effect(motor_stop)
+```
+
+"The state change that ends the action only after the effect that ends it."
+- **It failed:** violated on 1218 of 1218 lift inputs and 1000 of 1000 turntable seeds.
+- **Every violation is one line:** the initial state at 0 ms (`state DOWN from=- on=init`, or `INITIAL`).
+  It has no request id and no motor stop before it.
+- Leaving that line aside, it is violated nowhere: not on the normal corpus, and not for any mutant on
+  seeds 0–999.
+- **Reported as it failed, not bent to pass.** The outputs are kept as
+  `~/rs-control/wp67b-stage3/out/01c43d5/P1-only-after-*`.
+
+### P1 as `never_after` (after the review)
+
+The advisor's suggestion, the operator's order: the same order, stated as its mirror.
+
+```yaml
+kind: never_after
+per: req_id
+event: device.effect(motor_stop)
+after: device.state(UP|DOWN)        # turntable: LEFT|RIGHT|INITIAL
+```
+
+"No stop of the action's effect after the state change that ends it." The files are
+[P1.lift.v0.yaml](generic-contracts/P1.lift.v0.yaml) (sha256 `90d02904…bcf9`) and
+[P1.turntable.v0.yaml](generic-contracts/P1.turntable.v0.yaml) (`65a35693…8c52`). The initial state has no
+request id, and no motor stop follows it under that key.
+
+**No false positive.** `claim check` with the device's four kinds declared complete:
+
+| Corpus | Verdict | Exercised | Keys tried (conservative measure) | Violations |
+| --- | --- | --- | --- | --- |
+| lift, 218 real logs | passes | 218 of 218 | 1285 of 1503 | 0 |
+| lift, seeds 0–999 | passes | 1000 of 1000 | 5902 of 6902 | 0 |
+| lift, both | passes | 1218 of 1218 | 7187 of 8405 | 0 |
+| turntable, seeds 0–999 | passes | 1000 of 1000 | 5916 of 6916 | 0 |
+
+- **The measure is wide and says little.** A request is "tried" when the device does anything for it
+  after its rest state, and the device always sends `DONE` there. The keys never tried are one per input:
+  the initial state's, which has no request id.
+- **By the operator's rule, P1 goes to stage 4.**
+
+**Development check** (`~/rs-control/wp67b-stage3/dev_check_p1.py`, output `dev-p1.json`):
+- **Mutants M1–M11, seeds 0–999:** P1 is violated on no seed of any mutant. No fault in the simulator
+  stops the motor after the rest state.
+- **Blind slots** (the 34 acting slots of testbed-04, 05 and 06): violated on none, `ok` on all 34. It adds
+  no slot to the generic set or to rev3.
+- **Hand-made logs** (seed 0 of the correct lift, written in the device-log format, the first arrival's
+  three lines at 4003 ms, `r-0001`, changed by hand; files in `~/rs-control/wp67b-stage3/hand/`):
+
+  | The arrival's lines | P1 | G6 | G6b | rev3 |
+  | --- | --- | --- | --- | --- |
+  | stop, state, `DONE` (unchanged) | ok | – | – | none |
+  | state, stop, `DONE` | violated, `r-0001` at 4003 ms | – | – | none |
+  | state, `DONE`, stop | violated, `r-0001` at 4003 ms | violated | – | C10 |
+  | stop, `DONE`, state | ok | – | violated | none |
+  | `DONE`, stop, state | ok | violated | violated | C10 |
+  | state, `DONE`, no stop | ok | violated | – | C9, C10 |
+
+  The second row is the gap: no G rule and no rev3 contract is violated there; P1 is. (The stage 1 device
+  model also shows it, as an order difference.)
+
+**What P1 does not say: that a stop comes at all.** A state change with no motor stop for that request
+breaks no `never_after` (last row: P1 is `ok`). That is a rule about presence, not order. On the lift C9
+(the move timer) holds it, and G6 catches the `DONE` with no stop before it; a
+generic rule for it is not in this set.
 
 ## Recommendations, rule by rule
 
@@ -208,12 +292,28 @@ contract. G7 is shown apart, because in its declared form it is C3.
 | G7 | needs something the language lacks (a miner) | its declared form is C3 and caught M4 and two blind slots |
 | G8 | needs something the language and the systems lack | a client effect kind and a field condition on `after` |
 
-**Proposals, not added** (the list is fixed):
-- **P1** (above).
+The operator's decision (top) follows this table for G1–G6b; G7 and G8 do not go on, and P1 goes on after
+its `never_after` check.
+
+**Proposals outside the list, kept as a record** (not added, by the operator's decision):
 - **A poll reply carries the state at that moment** (C5's form, `consistent`). It is the only rule here
   that catches M5. It needs the poll reply's state field and the state events declared.
 - **Client rules:** each command closed exactly once within a time (C2), at most one open (C6), and closed
   only by a reply with its own id (C4). They catch M6–M8 in the lift's contracts.
+
+## Limits of the generic set
+
+What the set going to stage 4 (G1–G6b and P1) does not catch, in these checks:
+- **M5** (`STATUS` reports the old state): only the poll-reply rule above catches it, and it is not added.
+- **The client mutants M6–M8:** the set has no client rule.
+- **M4** (the opposite move taken): only G7's declared form caught it, and G7 does not go on. On the lift
+  C3 still does.
+- **On the blind slots,** the C9 slots (testbed-04 B03 and B05, testbed-06 S11 and S23) and the C3 slots
+  (testbed-05 S07, testbed-06 S03). P1 adds none.
+- **A missing motor stop:** P1 states an order, not a presence (above).
+
+The protocol's own contracts are what cover these. The generic set is meant to go beside them, not to
+replace them.
 
 ## What a system must declare
 
@@ -238,7 +338,8 @@ The expansion is mechanical:
 - G3 gives a `mutually_exclusive` of the two final answers;
 - G4 gives an `only_after` with name-less patterns, so it needs no role;
 - G5 gives a `never_after`;
-- G6 and G6b give an `only_after` each.
+- G6 and G6b give an `only_after` each;
+- P1 gives a `never_after` (`action.ends` after `rest_states`).
 
 The instances in this note are exactly what such an expansion would produce for the two systems. Stage 4's
 test (same first violations as these hand-written files) would hold them to it.
@@ -284,13 +385,17 @@ for name in ("lift.v0", "turntable.v0"):
     print(name, bad)  # expected: every count 0
 ```
 
-## After the operator's decision (not done here)
+## Stage 4 (after this PR is merged, not done here)
 
-Stage 4, only for the rules kept:
+For G1, G2 (three roles), G3, G4, G5, G6, G6b and P1:
 - `contracts/generic/`, with the roles bound per system;
 - the expansion into existing kinds in the loader;
 - the equivalence test against these files on seeds 0–99;
 - the slow no-false-positive test on seeds 0–999;
-- the word scan extended to `contracts/generic/`.
+- the word scan extended to `contracts/generic/`;
+- the tests the rev4 note asked for A1, for G6 and G6b: the two hand traces that tell G6b (A1) and G6
+  (C10) apart, and not judged where the state lines are not declared complete or the key carries a reorder
+  mark;
+- proposed in its PR: where the roles file lives, and how a session asks for the generic set.
 
-The rev4 PR (A1) follows the decision on G6b.
+No rev4 file: A1 is folded into G6b.
