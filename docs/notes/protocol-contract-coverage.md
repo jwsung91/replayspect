@@ -33,9 +33,11 @@ note: planners are shown all of it.
 | 43–44 | an illegal command is answered with `ERROR`, not `DONE` | **C10**, in part | in part: C10 (`only_after`) catches a `DONE` with no move; that an `ERROR` comes at all, no |
 | 44 | the `ERROR` reason is `illegal` | **C11** | yes |
 | 44–45 | a legal command starts the motor and the state becomes `MOVING_*` | C3 (the state) | the state yes; tying the motor start to it, no |
+| 44–45 | the motor starts in the command's direction (the effect's `dir`; the document does not write the direction) | none | no with one comparison: `dir` holds `up`/`down`, the command `MOVE_UP`/`MOVE_DOWN`, the state `UP`/`DOWN`; tying them needs a value map or two conditions (gap 1). testbed-06 S06 |
 | 45 | 3 s later the motor stops | **C9** | yes (an upper bound; a stop that comes early is not seen) |
 | 45–46 | on arrival the state becomes `UP` or `DOWN` | C3 | yes |
 | 46 | on arrival `DONE` is sent | **C10** (no `DONE` without a stop) | that a `DONE` comes at all, no: the `DONE` repeated for a copy breaks `exactly_once` |
+| 45–46 | on arrival `DONE` comes after the state change | none | yes, with `only_after` (`device.send(DONE)` after `device.state(UP\|DOWN)`, per `req_id`); not added. testbed-06 S19 |
 | 47 | the result table survives disconnects | C1, C8, indirectly | no: the device has no reconnect event |
 | 47–48 | after a reconnect the device sends nothing on its own: `DONE`/`ERROR`, `ACK` | C7, **C12**, in part | in part: an upper bound per id; an unsolicited send hides under a repeat that was answered with the other message |
 | 47–49 | after a reconnect the device sends nothing on its own: `STATUS_REPLY` | **C13** | yes: each poll has one reply |
@@ -91,10 +93,11 @@ Five gaps come back in the tables above. They are recorded, not planned:
 | C9 | testbed-04 blind change A: a repeat of the request being executed, arriving during its move, starts the move timer again | Slots B03 (`ACK` lost, retry during the move) and B05 (a copy during the move). The lift contracts caught neither, and the device model's first mismatch did ([testbed-04](../experiments/testbed-04.md)). |
 | C10 | testbed-04 blind change B: at rest, a command to move where the lift already is answered `DONE`, not `ERROR`, with no motor | Slots B01 and B06. No contract tied `DONE` to a move, and stating it needed a new kind (`only_after`). |
 | C11, C12, C13 | Document check: going through this table, sentences the eight kinds could already state and no contract did | None from an experiment. |
-| C14 | testbed-05 blind (development data after scoring): a repeat that arrives after the final answer is answered `ACK` | Slots S03, S06 (after `ERROR`), S10 and S16 (after `DONE`), which rev2 missed. The candidate was checked with `claim check` and confirmed by the operator ([contract-candidates-rev3.md](contract-candidates-rev3.md)). **On hardware, the `DONE` half was never tried:** in the 213 real no-defect logs, 0 of the 1255 requests with a `DONE` reached the device again; the `ERROR` half was tried 5 times. A copy after `DONE` on an unchanged build belongs in the testbed-06 plan pool. |
+| C14 | testbed-05 blind (development data after scoring): a repeat that arrives after the final answer is answered `ACK` | Slots S03, S06 (after `ERROR`), S10 and S16 (after `DONE`), which rev2 missed. The candidate was checked with `claim check` and confirmed by the operator ([contract-candidates-rev3.md](contract-candidates-rev3.md)). **On hardware before testbed-06, the `DONE` half was never tried:** in the 213 real no-defect logs, 0 of the 1255 requests with a `DONE` reached the device again; the `ERROR` half was tried 5 times. In testbed-06 the `DONE` half was tried 3 times on unchanged builds, with no violation. |
 
-The rev2 and rev3 contracts are checked here only on development data. rev2 was measured in testbed-05;
-rev3 will be measured with a new blind group (testbed-06).
+The tables below check the rev2 and rev3 contracts on development data only. rev2 was measured in testbed-05.
+rev3 was measured in testbed-06 ([testbed-06.md](../experiments/testbed-06.md)): it caught 11 of 18 acting
+changes. C14 fired nowhere and was never tried on a changed build.
 
 **Development check** (no measurement):
 

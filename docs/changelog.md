@@ -700,3 +700,26 @@ After the operator's decision on the candidates (#54):
 
   rev3 is measured only on testbed-06.
 - **The candidate note's quoted tool output** no longer carries a local path.
+
+## Testbed: testbed-06 results, the rev3 contracts on new blind slots
+
+24 blind slots on firmware changed by mechanical mutants the agent did not know, made by wider rules than
+testbed-05's. This was the first measurement of the rev3 contracts. The registered analysis ran once, at the
+registered harness, and the scoring script ran after the submission hash.
+- **Device model:** in the 18 slots where a change acted, `differs` 16 of 18, with the request (S1) and the
+  content (S2) right in 16 of 18. No false mismatch on the 5 unchanged slots. The two misses (S15, S19) only
+  reorder two outputs inside one millisecond: the comparison matches events by time within its 2 ms window
+  and does not compare their order. The tool was not changed.
+- **rev3 contracts:** caught 11 of 18 with no false violation. C14 fired nowhere, so rev2 alone gives the
+  same 11 of 18. No run sent an `ACK` after a final answer: the three drawn builds that can were paired
+  with plans whose copy arrives while the request is in progress. Of the 7 missed, 5 were predicted
+  (S04, S07, S10, S12, S18) and 2 were not: the motor's direction (S06) and the order of `DONE` and the
+  state change (S19). The coverage note gains a row for each, and its rev3 sentences now give
+  the measurement; the contract file is unchanged.
+- **Predictions:** 1–4 held; the count check equals the truth file on all 24 slots. Prediction 5 did not
+  hold on S15 and S19.
+- **C14 on unchanged builds,** counted after scoring: its `DONE` side was tried on hardware for the first
+  time, 3 times, with no violation.
+- **Overlap:** 14 of the 19 drawn changes are in testbed-05's candidate list.
+
+Results and limits are in `docs/experiments/testbed-06.md`; no code change.
