@@ -242,7 +242,7 @@ run. Here they are written as general rules, without naming any change.
     `req_id` holds.
 - **A missing reply.** Sometimes the first difference is a reference line with no changed line. Its request
   is the reference line's id.
-- **An extra line** (new in this draft, for the operator to accept or strike). Sometimes the first
+- **An extra line** (new in this registration). Sometimes the first
   difference is a changed line with no reference line. Its request is the changed line's id. testbed-05 had
   no such case.
 
@@ -280,6 +280,16 @@ The count with rev2 alone (C1–C13) is given beside the rev3 count.
 - **on another request.**
 
 For each violation, the time from the first difference is also given (same millisecond, or how much later).
+
+**How often C14 was tried on unchanged builds.** This is a count reported after scoring, not a prediction.
+It covers the valid slots of unchanged builds:
+- **the requests the device heard of again after their final answer.** This is the conservative measure of
+  [claims.md](../claims.md), "Exercised": a request with something later from the device after its final
+  answer. They are counted apart by the final answer, `DONE` or `ERROR`;
+- **C14's violations among them.**
+
+The coverage note records that C14's `DONE` side was never tried on hardware. This count says how often it
+was tried here, whatever the draw gives.
 
 ### Slots outside the scores
 
@@ -331,6 +341,10 @@ not occur. Each is scored only if such a slot occurs.
       example, C8 is broken when both `DONE` and `ERROR` go out for one id.
 
     An `ACK` sent for an id after its `DONE` or `ERROR` violates C14 at that `ACK`, on that `ACK`'s id.
+
+**A predicted miss is still a miss.** A slot missed in the way one of predictions 6–10 says still counts as
+missed in the totals, for the model result and for the contract result. It is also listed under its
+prediction. Nothing is taken out of the totals because it was predicted.
 
 There is **no prediction** of how many slots differ, or of which contracts catch a change. The analyst does
 not know the changes.
@@ -401,9 +415,10 @@ not know the changes.
     hash.
 - **Scoring:**
   - the wrong-id and missing-reply rules are registered in advance;
-  - the extra-line rule is proposed;
+  - the extra-line rule is added;
   - a violation's request is counted in three classes;
-  - C14 is listed apart.
+  - C14 is listed apart;
+  - C14's tries on unchanged builds are counted after scoring.
 
 ## Files
 
