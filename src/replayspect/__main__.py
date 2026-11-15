@@ -379,6 +379,53 @@ def _device(args: argparse.Namespace) -> int:
     return 0 if rep["valid"] and rep["models"][0]["conforms"] else 1
 
 
+class _Incident(argparse.Action):
+    """--incident PATH, and --model REPORT for the --incident just before it."""
+
+    def __call__(self, parser, ns, value, option_string=None):
+        items = getattr(ns, "incidents", None) or []
+        if option_string == "--incident":
+            items.append([value, None])
+        elif not items or items[-1][1] is not None:
+            ns.incident_error = "--model must follow an --incident (one model result per incident)"
+        else:
+            items[-1][1] = value
+        ns.incidents = items
+
+
+def _seed_range(text: str) -> range:
+    a, sep, b = text.partition("-")
+    try:
+        first, last = int(a), int(b) if sep else int(a)
+    except ValueError:
+        raise ValueError(f"--normal-seeds: expected N or N-M, got {text!r}") from None
+    if first < 0 or last < first:
+        raise ValueError(f"--normal-seeds: expected 0 <= N <= M, got {text!r}")
+    return range(first, last + 1)
+
+
+def _claim(args: argparse.Namespace) -> int:
+    from replayspect.claim import ClaimError, check_claims, report_lines, to_json
+    from replayspect.devicelog import DeviceLogError
+
+    try:
+        if getattr(args, "incident_error", None):
+            raise ValueError(args.incident_error)
+        system = get_system(args.system)
+        seeds = _seed_range(args.normal_seeds) if args.normal_seeds else range(0)
+        incidents = [(Path(p), Path(m) if m else None) for p, m in (args.incidents or [])]
+        rep = check_claims(Path(args.candidates), incidents, [Path(p) for p in args.normal], seeds, system,
+                           args.complete)
+        if args.out:
+            with Path(args.out).open("x", encoding="utf-8") as fh:
+                fh.write(to_json(rep))
+    except (ClaimError, DeviceLogError, TraceFileError, ContractError, ValueError, OSError) as exc:
+        print(f"claim: {exc}", file=sys.stderr)
+        return 2
+    print("\n".join(report_lines(rep)))
+    return 0 if all(r["verdict"] == "passes" for r in rep["results"]) else 1
+
+
 def _rewind(args: argparse.Namespace) -> int:
     try:
         tf = read_trace_file(args.trace)
@@ -739,6 +786,32 @@ def main(argv: list[str] | None = None) -> int:
                     help="how much later than the model a logged event may be (default 2ms)")
     dv.add_argument("--out", metavar="PATH", help="the report as JSON (a new file)")
     dv.set_defaults(fn=_device)
+    cl = sub.add_parser(
+        "claim", help="check a candidate contract against incidents and a normal corpus",
+        description="check: judge each candidate (a contract with grade and source) on each --incident and on "
+                    "the normal corpus (--normal files or directories, --normal-seeds of the system's "
+                    "implementation with no defect). Verdict per candidate: passes (violated on every incident, "
+                    "exercised on the normal corpus, no violation there), fails (with the reasons) or untested "
+                    "(never exercised on the normal corpus). A candidate not judged on an incident did not catch "
+                    "it. No model runs: --model gives a 'replayspect device --out' report for the incident before "
+                    "it, read for the first mismatch's request. Every input is named with its sha256. Exit "
+                    "status 0 when every candidate passes, 1 otherwise, 2 bad input. See docs/claims.md.")
+    cl.add_argument("action", choices=["check"])
+    cl.add_argument("candidates", help="contract file of candidates (each with grade and source)")
+    cl.add_argument("--incident", action=_Incident, dest="incidents", metavar="PATH",
+                    help="an incident: a trace file or a device log (repeatable)")
+    cl.add_argument("--model", action=_Incident, dest="incidents", metavar="REPORT",
+                    help="the 'replayspect device --out' report for the --incident just before it")
+    cl.add_argument("--normal", action="extend", nargs="+", default=[], metavar="PATH",
+                    help="normal corpus: trace files, device logs, or directories of them (read in name order)")
+    cl.add_argument("--normal-seeds", metavar="N-M",
+                    help="normal corpus: these simulator seeds of the system's implementation with no defect")
+    cl.add_argument("--system", default="lift.v0")
+    cl.add_argument("--complete", action="append", default=[], metavar="SOURCE:KINDS",
+                    help="device logs: kinds logged completely, as for 'device' (default: partial; a candidate "
+                         "that refers to a device kind not declared is not judged on a device log)")
+    cl.add_argument("--out", metavar="PATH", help="the report as JSON (a new file)")
+    cl.set_defaults(fn=_claim)
     b = sub.add_parser("baseline", help="random search over a session's seeds")
     b.add_argument("--system", default="lift.v0")
     b.add_argument("--mutant", action="append", default=[])
