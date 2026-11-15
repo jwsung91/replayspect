@@ -120,11 +120,11 @@ data`. The header, `fidelity`, `source` and `log` are not part of it.
   - **Every other kind** is judged on the events kept. A cut can hide one of
     its violations but never make one, so the verdict is not symmetric:
     - a violation found in the slice is reported as a violation;
-    - `at_most_once`, `exactly_once`, `at_most_one_open` and
-      `mutually_exclusive` carry state from earlier events. On a slice with a
-      cut start they can miss a violation whose proof is in the slice: the
-      first occurrence, the first `start`, an earlier open or the other
-      pattern was cut. When they find none, the status is *no violation in
+    - `at_most_once`, `exactly_once`, `at_most_one_open`,
+      `mutually_exclusive` and `never_after` carry state from earlier events.
+      On a slice with a cut start they can miss a violation whose proof is in
+      the slice: the first occurrence, the first `start`, an earlier open, the
+      other pattern or the `after` was cut. When they find none, the status is *no violation in
       the slice (earlier events not seen)*, not *ok*;
     - `forbid` and `consistent` without `last(...)` look at one event at a
       time, so *ok* means no event in the slice breaks them.

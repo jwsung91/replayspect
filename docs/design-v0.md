@@ -89,8 +89,9 @@ contracts:
 | count_le | `event`, `bound` | 매 `event` 시점에 키별 누적 `event` 수 ≤ 누적 `bound` 수 | 초과한 `event` |
 | mutually_exclusive | `events` | 키별로 나열한 패턴 중 둘 이상 일치 금지 | 두 번째 패턴이 처음 일치한 이벤트(키당 한 번) |
 | only_after | `event`, `after` | 매 `event`보다 앞서(트레이스 순서) 같은 키의 `after`가 한 번이라도 있었다. 로그 수집기가 재정렬 표시(`out_of_order`, `out_of_tolerance`)를 붙인 사건이 `event`나 `after`에 걸린 키는 판정하지 않는다(순서를 모름) | 앞선 `after`가 없는 첫 `event`(키당 한 번) |
+| never_after | `event`, `after` | 같은 키의 `after`가 한 번이라도 있은 뒤로(트레이스 순서) 그 키의 `event`가 없다. `only_after`의 거울. `event`이면서 `after`인 사건은 자기 뒤가 아니다. `event`와 `after`가 모두 있고 그중 재정렬 표시가 붙은 사건이 있는 키는 판정하지 않는다(순서를 모름). 둘 중 하나만 있는 키는 어떤 순서로도 어길 수 없으므로 판정한다 | `after` 뒤에 온 첫 `event`(키당 한 번) |
 
-**출처 키(선택, 판정에 쓰지 않음).** 계약마다 `grade`와 `source`를 적을 수 있다. `grade`는 `stated`(프로토콜 문서가 그렇게 말함) 하나다. `source`는 `doc`(문서), `lines`(행 번호), `quote`(인용 문장), `found`(발견 경로)의 매핑이고 값은 빈칸이 아닌 문자열이다. 다른 키나 값은 로더가 거부한다.
+**출처 키(선택, 판정에 쓰지 않음).** 계약마다 `grade`와 `source`를 적을 수 있다. `grade`는 `stated`(프로토콜 문서가 그렇게 말함) 하나다. `source`는 `doc`(문서), `lines`(행 번호), `quote`(인용 문장), `found`(발견 경로)의 매핑이고 값은 빈칸이 아닌 문자열이다. 다른 키나 값은 로더가 거부한다. `only_after`와 `never_after`에서 `event`와 `after`가 같은 패턴(이름 순서만 다른 것 포함)이면 로더가 거부한다. 겹치기만 하는 패턴은 받는다.
 
 `exactly_once`의 `start`와 `at_most_one_open`의 `opens`는 일부러 다른 키워드다. 앞의 것은 키마다 **첫** 이벤트만 기준 시각으로 쓰고, 뒤의 것은 **매** 이벤트가 키를 연다. M8이 닫은 명령을 재전송해 다시 여는 경로를 C6이 잡는 것은 뒤의 의미 덕분이다.
 

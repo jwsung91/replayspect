@@ -591,3 +591,23 @@ rev2 contracts. The registered analysis ran once, at the registered harness.
 - **Predictions:** all five held. The count check equals the truth file on all 16 slots.
 
 Results and limits are in `docs/experiments/testbed-05.md`; no code change.
+
+## WP6/7a stage 1: the contract kind `never_after`
+
+A tenth contract kind, the mirror of `only_after`: once an `after` with a key has occurred, no `event`
+with that key may follow (`event`, `after`, `per: req_id`; trace order decides).
+- **Reported** at the first `event` that follows an `after` of its key, once per key. An event that matches
+  both patterns does not follow itself.
+- **Reordered log lines:** a key that has an `event` and an `after`, one of them flagged by the log adapter
+  (`out_of_order`, `out_of_tolerance`), is not judged. A key with only one of the two cannot be broken by
+  any order and is judged. The statuses are those of `only_after`: no violation in the keys judged, or not
+  judged when no key was judged.
+- **Cut start:** a cut can only hide a violation (the `after` may be before the cut), so a slice with a cut
+  start reads "no violation in the slice", not "not judged".
+- **Device log:** judged only with the kinds of both patterns declared complete.
+- **Loader:** a contract of either kind whose `event` and `after` are the same pattern is rejected (names in
+  another order count as the same). Patterns that only overlap are accepted.
+- **Oracle:** the kind's first use, N1 "the device sends no ACK for a req_id after it sent DONE or ERROR
+  for that req_id", is written by hand in `tests/lift_oracle.py` and lives in the tests only; no contract
+  file changes. The judge matches it on seeds 0–99 for the correct lift and every mutant. On those seeds
+  N1 is violated by M1 on 89 and M11 on 2, and by no other implementation, the correct lift included.
