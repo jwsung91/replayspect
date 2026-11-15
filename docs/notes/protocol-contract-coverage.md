@@ -33,9 +33,11 @@ note: planners are shown all of it.
 | 43–44 | an illegal command is answered with `ERROR`, not `DONE` | **C10**, in part | in part: C10 (`only_after`) catches a `DONE` with no move; that an `ERROR` comes at all, no |
 | 44 | the `ERROR` reason is `illegal` | **C11** | yes |
 | 44–45 | a legal command starts the motor and the state becomes `MOVING_*` | C3 (the state) | the state yes; tying the motor start to it, no |
+| 44–45 | the motor starts in the command's direction (the effect's `dir`; the document does not write the direction) | none | no with one comparison: `dir` holds `up`/`down`, the command `MOVE_UP`/`MOVE_DOWN`, the state `UP`/`DOWN`; tying them needs a value map or two conditions (gap 1). testbed-06 S06 |
 | 45 | 3 s later the motor stops | **C9** | yes (an upper bound; a stop that comes early is not seen) |
 | 45–46 | on arrival the state becomes `UP` or `DOWN` | C3 | yes |
 | 46 | on arrival `DONE` is sent | **C10** (no `DONE` without a stop) | that a `DONE` comes at all, no: the `DONE` repeated for a copy breaks `exactly_once` |
+| 45–46 | on arrival `DONE` comes after the state change | none | yes, with `only_after` (`device.send(DONE)` after `device.state(UP\|DOWN)`, per `req_id`); not added. testbed-06 S19 |
 | 47 | the result table survives disconnects | C1, C8, indirectly | no: the device has no reconnect event |
 | 47–48 | after a reconnect the device sends nothing on its own: `DONE`/`ERROR`, `ACK` | C7, **C12**, in part | in part: an upper bound per id; an unsolicited send hides under a repeat that was answered with the other message |
 | 47–49 | after a reconnect the device sends nothing on its own: `STATUS_REPLY` | **C13** | yes: each poll has one reply |
