@@ -41,6 +41,19 @@ then compared with the log.
   2 ms).
   - The firmware's timers run on `millis()` and can end late.
   - On the 182 real logs, every match fell in the same millisecond.
+- **The order of one request's outputs:** for one request id, the logged events that matched model
+  events must keep the model's order. Order is compared only among events with the same request id,
+  never across ids: two inputs in one millisecond may be taken in either order. Events with no request
+  id are not compared for order.
+  - An order difference is a mismatch at the time of the first logged line out of place, on that
+    request. The report shows both orders, from the first position that differs to the last.
+  - Only matched events are compared, so nothing new is inferred from absence under a partial
+    declaration.
+  - The order is a switch (`order="ignore"` in `conform`; the tool compares order), so an analysis can
+    show what the rule changes. Defect models use the same rule.
+  - Before this rule, the comparison matched by time alone and never compared order. testbed-06 S15
+    and S19 reorder one request's arrival lines inside one millisecond, and both conformed
+    ([testbed-06](experiments/testbed-06.md)).
 - **Same-millisecond order:** when an input and a timer fall in the same millisecond, the timer runs
   first, as in the firmware (testbed-uno README, difference 3). Without this rule, 6 of the 155
   no-defect logs gave a false mismatch: a poll answered in the millisecond the move ended.
@@ -59,7 +72,8 @@ then compared with the log.
     "conforms".
 - **The end of the log:** what the model does after the log ends, minus `--late`, is not compared.
 - **The result** for each model is "conforms", "not checked" (with the reason), or the first
-  mismatch:
+  mismatch, the earlier of an unmatched event and an order difference (an unmatched event at the same
+  time). The JSON's `kind` says which (`event` or `order`):
   - the time and the request;
   - what the model does there and what the device did (either may be nothing);
   - the model's state just before;
@@ -142,6 +156,7 @@ Without a device log, nothing changes. `drive` and `drive --fit` are untouched.
 | The three runs the client log could not show (R074, R076, R087) | the correct model does not conform in 3 of 3 |
 | M1 against M2 | not separated: both conform in all 7 M2 runs (no repeat after `DONE` happened). M9 conforms too in 2 |
 | Count check against the truth files (losses, losses in disconnects, extra copies) | 95 of 95 (testbed-03), 39 of 39 (testbed-01), 47 of 48 (testbed-02; R03 below) |
+| Per-request order (WP6/7b stage 1), every model on every log, against `order="ignore"` | no mismatch on the 218 no-defect logs (the 213 of the rev3 note and testbed-06's five unchanged slots); S15 and S19 now differ, on r-0001 at 3054 and 3055 ms, the first line out of place being `DONE`; no other verdict or first mismatch changed (testbed-03 and 04 defect runs, 27 each; the blind slots of testbed-04, 05 and 06) |
 | Native firmware (`tests/test_testbed_conformance.py`) | every script conforms with no defect; with each defect switch, the correct model's first mismatch is on the request where the defect fired, at the same time or 50 ms later (M1, M2 and M9 on a repeat while queued), and the defect's own model conforms |
 
 ## Limits
@@ -165,6 +180,10 @@ Without a device log, nothing changes. `drive` and `drive --fit` are untouched.
   - Without a declared complete side, nothing is inferred from absence.
 - **The comparison window allows only the firmware's documented timing differences.** A defect whose
   only effect is a delay of a millisecond or two would pass.
+- **Order is compared within one request only.** A defect that changes the order of two requests'
+  outputs inside one millisecond, and nothing else, passes: the rule cannot tell it from two inputs
+  taken in either order. The order rule was set after testbed-06's S15 and S19 were known; that it
+  sees them is a development check.
 - **Timer events carry their scheduled time, not the time they happened.** The testbed firmware logs a
   move's arrival at the time it was due (`arrive(travel_due_)`), and an execution at its due time
   (`execute(..., p.due)`). That is why every completed move on the real logs took exactly 3,000 ms.

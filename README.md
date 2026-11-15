@@ -77,7 +77,8 @@ Implemented:
   log under each device defect model too and names the defects that need fewer
   faults than the correct model ([docs/driven-replay.md](docs/driven-replay.md))
 - Device logs: `device` checks the device's own log against the device model
-  (each model conforms, or where it first differs) with no link and no fit, and
+  (each model conforms, or where it first differs, by time and by the order of
+  each request's outputs) with no link and no fit, and
   with the client's log counts the messages lost on the link or copied; lines
   outside an allow list never reach a result ([docs/device-log.md](docs/device-log.md));
   run on hardware with public defects and a blind group of firmware changes the

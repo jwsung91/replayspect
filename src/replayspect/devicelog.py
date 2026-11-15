@@ -21,12 +21,18 @@ compared with what the device logged. No link is involved: no delay, loss or dup
   ``early`` before and ``late`` after the model's time. The firmware's timers run on ``millis()`` and
   end up to a few milliseconds late, and inputs in the same millisecond may be taken in another order;
   ``late`` allows for that, nothing else.
+- **The order of one request's outputs.** For one request id, the logged events that matched keep the
+  model's order; otherwise the first logged line out of place is a mismatch there, of kind ``order``.
+  Order is not compared across request ids (two inputs in one millisecond may be taken in either
+  order), nor for events with no request id. Only matched events are compared. ``order="ignore"`` turns
+  the rule off.
 - What the model does after the log ends minus ``late`` is not compared.
 - **The declaration decides what counts** (:class:`Completeness`, default partial). The model is fed
   only when the device's receives are declared complete (otherwise "not checked"). A model event
   missing from the log is a mismatch only for an output kind declared complete; a logged event the
   model does not make always is. With nothing that can count, the result is "not checked".
-- The result is "conforms", or the **first mismatch**: the time, what the model does and what the
+- The result is "conforms", or the **first mismatch** (an unmatched event or an order difference,
+  whichever is earlier; ``kind`` says which): the time, what the model does and what the
   device did there (either may be nothing), the model's state just before and the last input the
   device received. With the correct model this says where the device first left the model, without
   any defect model. It is the first place the outputs differ, which can come after the defect's own
@@ -175,6 +181,7 @@ class Conformance:
     max_late_us: int | None  # the largest lateness among the matches
     absence_counts: tuple[str, ...] = ()  # the output kinds where a missing logged event is a mismatch
     reason: str | None = None  # why not checked
+    order_differences: int = 0  # request ids whose matched events are logged out of the model's order
 
     @property
     def conforms(self) -> bool:
@@ -183,12 +190,16 @@ class Conformance:
     def to_dict(self) -> dict[str, Any]:
         return {"model": self.model, "status": self.status, "conforms": self.conforms, "reason": self.reason,
                 "absence_counts": list(self.absence_counts), "compared": self.compared, "matched": self.matched,
-                "mismatches": self.mismatches, "first": self.first, "max_late_us": self.max_late_us}
+                "mismatches": self.mismatches, "order_differences": self.order_differences, "first": self.first,
+                "max_late_us": self.max_late_us}
 
 
 #: How an input and a timer in the same millisecond are ordered. "timers-first" is what the firmware
 #: does (testbed-uno README, difference 3); "input-first" exists to check what that rule changes.
 SAME_MS = ("timers-first", "input-first")
+#: Whether the matched events of one request id must keep the model's order. "per-request" is what the
+#: tool does; "ignore" exists to check what that rule changes. Order is never compared across request ids.
+ORDER = ("per-request", "ignore")
 
 
 def run_model(system, log: DeviceLog, mutants: Sequence[str] = (), until_us: int | None = None,
@@ -219,13 +230,16 @@ def run_model(system, log: DeviceLog, mutants: Sequence[str] = (), until_us: int
 
 def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = LATE_US,
             early_us: int = EARLY_US, complete: "Completeness | None" = None,
-            same_ms: str = "timers-first") -> Conformance:
+            same_ms: str = "timers-first", order: str = "per-request") -> Conformance:
     """Compare the device model's sends, state changes and effects with the device log (module doc).
 
     ``complete``: the device's declaration (default partial). The model is fed only when the
     receives are declared complete; a model event missing from the log counts only for a declared
     output kind; a logged event the model does not make always counts. With nothing that can count,
-    the result is "not checked", never "conforms"."""
+    the result is "not checked", never "conforms". ``order`` (:data:`ORDER`): whether the matched
+    events of one request id must keep the model's order."""
+    if order not in ORDER:
+        raise ValueError(f"order: one of {', '.join(ORDER)}")
     name = "+".join(sorted(mutants)) or "correct"
     declared = (complete or Completeness()).device
     outputs = ("send", "state", "effect")
@@ -244,18 +258,21 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
     for i, e in enumerate(device):
         free.setdefault(_sig(e), []).append(i)
     matched_dev: set[int] = set()
+    pairs: list[tuple[int, int]] = []  # (model index, device index) of each match
     unmatched_model: list[Event] = []
     lates: list[int] = []
-    for e in model:
+    for mi, e in enumerate(model):
         cands = [i for i in free.get(_sig(e), []) if i not in matched_dev
                  and -early_us <= device[i].t_us - e.t_us <= late_us]
         if cands:
             i = min(cands, key=lambda j: device[j].t_us)
             matched_dev.add(i)
+            pairs.append((mi, i))
             lates.append(device[i].t_us - e.t_us)
         elif e.t_us <= end - late_us and e.kind in absence:
             unmatched_model.append(e)
     unmatched_dev = [device[i] for i in range(len(device)) if i not in matched_dev]
+    disorders = _order_differences(model, device, pairs) if order == "per-request" else []
     first = None
     if unmatched_model or unmatched_dev:
         m0 = min(unmatched_model, key=lambda e: e.t_us, default=None)
@@ -270,13 +287,49 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
             else:
                 at_m = None
         req = (at_m or at_d).req_id
+        first = {"kind": "event", "t_us": t, "req_id": req, "model": _item(at_m, RECONSTRUCTED),
+                 "device": _item(at_d, OBSERVED_DEVICE)}
+    if disorders and (first is None or disorders[0]["t_us"] < first["t_us"]):
+        first = disorders[0]  # at the same time an unmatched event is reported, as before this rule
+    if first is not None:
+        t = first["t_us"]
         states = [e for e in model if e.kind == "state" and e.t_us < t]
         inputs = [e for e in log.events if e.kind == "recv" and e.t_us <= t]
-        first = {"t_us": t, "req_id": req, "model": _item(at_m, RECONSTRUCTED), "device": _item(at_d, OBSERVED_DEVICE),
-                 "model_state": states[-1].name if states else None,
-                 "last_input": _item(inputs[-1] if inputs else None, OBSERVED_DEVICE)}
+        first["model_state"] = states[-1].name if states else None
+        first["last_input"] = _item(inputs[-1] if inputs else None, OBSERVED_DEVICE)
     return Conformance(name, "conforms" if first is None else "differs", len(device), len(matched_dev),
-                       len(unmatched_model) + len(unmatched_dev), first, max(lates) if lates else None, absence)
+                       len(unmatched_model) + len(unmatched_dev), first, max(lates) if lates else None, absence,
+                       order_differences=len(disorders))
+
+
+def _order_differences(model: list[Event], device: list[Event],
+                       pairs: list[tuple[int, int]]) -> list[dict[str, Any]]:
+    """The matched logged events of each request id against the model's order (module doc).
+
+    One item per request id whose order differs, earliest first. Its time is that of the first logged
+    line out of place; it gives the model's event at that position and both orders, from the first
+    position that differs to the last. Events with no request id are not compared, and neither is the
+    order across request ids."""
+    by_req: dict[str, list[tuple[int, int]]] = {}
+    for mi, di in pairs:
+        if model[mi].req_id is not None:
+            by_req.setdefault(model[mi].req_id, []).append((mi, di))
+    found = []
+    for req, ps in by_req.items():
+        ps.sort()
+        in_model = [di for _, di in ps]
+        in_log = sorted(in_model)
+        if in_model == in_log:
+            continue
+        diff = [n for n in range(len(ps)) if in_model[n] != in_log[n]]
+        k, last = diff[0], diff[-1]
+        d = device[in_log[k]]
+        item = {"kind": "order", "t_us": d.t_us, "req_id": req,
+                "model": _item(model[ps[k][0]], RECONSTRUCTED), "device": _item(d, OBSERVED_DEVICE),
+                "model_order": [_item(model[mi], RECONSTRUCTED) for mi, _ in ps[k:last + 1]],
+                "device_order": [_item(device[di], OBSERVED_DEVICE) for di in in_log[k:last + 1]]}
+        found.append(((d.t_us, in_log[k]), item))
+    return [item for _, item in sorted(found, key=lambda x: x[0])]
 
 
 # -- the count check ----------------------------------------------------------------------------
@@ -373,10 +426,11 @@ def contract_report(log: DeviceLog, contracts, complete: Completeness = Complete
 
 def device_report(system, log: DeviceLog, models: Sequence[str] = (), client: Sequence[Event] | None = None,
                   complete: Completeness = Completeness(), late_us: int = LATE_US,
-                  same_ms: str = "timers-first", contracts=None) -> dict[str, Any]:
+                  same_ms: str = "timers-first", contracts=None, order: str = "per-request") -> dict[str, Any]:
     """Stage 1 on one device log: the correct model and each named defect model, the count check and,
     with ``contracts``, the contracts alone."""
-    rows = [conform(system, log, ms, late_us, complete=complete, same_ms=same_ms) for ms in [()] + [(m,) for m in models]]
+    rows = [conform(system, log, ms, late_us, complete=complete, same_ms=same_ms, order=order)
+            for ms in [()] + [(m,) for m in models]]
     out: dict[str, Any] = {
         "valid": log.valid, "errors": list(log.errors),
         "device_events": len(log.events), "fidelity": OBSERVED_DEVICE,
@@ -404,11 +458,21 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
                          f"latest {r['max_late_us'] / 1000 if r['max_late_us'] is not None else 0:g} ms after the model)")
             continue
         f = r["first"]
+        if f["kind"] == "order":
+            lines.append(f"  {r['model']}: first mismatch at {ts(f['t_us'])} ({f['req_id']}): order difference; "
+                         f"model order: {', '.join(x['event'] for x in f['model_order'])}; "
+                         f"device order: {', '.join(x['event'] for x in f['device_order'])}; "
+                         f"model state {f['model_state']}, last input "
+                         f"{f['last_input']['event'] if f['last_input'] else '-'} "
+                         f"({r['mismatches']} unmatched, {r['order_differences']} request(s) out of order in all)")
+            continue
         lines.append(f"  {r['model']}: first mismatch at {ts(f['t_us'])} ({f['req_id'] or '-'}): model "
                      f"{f['model']['event'] if f['model'] else 'nothing'}, device "
                      f"{f['device']['event'] if f['device'] else 'nothing'}; model state {f['model_state']}, "
                      f"last input {f['last_input']['event'] if f['last_input'] else '-'} "
-                     f"({r['mismatches']} unmatched in all)")
+                     f"({r['mismatches']} unmatched in all"
+                     + (f", {r['order_differences']} request(s) out of order" if r["order_differences"] else "")
+                     + ")")
     if any(r["status"] != "not checked" for r in rep["models"]):
         lines.append("conforming models: " + (", ".join(rep["conforming"]) or "none")
                      + ("" if rep["models"][0]["absence_counts"] == ["send", "state", "effect"] else
