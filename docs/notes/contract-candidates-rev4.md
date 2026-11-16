@@ -10,6 +10,9 @@
   a development check.
 - **A1 is unmeasured until a new blind group.**
 - No contract file is written in this PR (below, "After the operator's decision").
+- **Later decision** (2026-11-15, after the #61 review): **A1 is folded into the generic rule G6b**
+  (`docs/notes/generic-contracts.md`). No rev4 file is written; the tests below, (a) and (b), go into
+  WP6/7b stage 4 for G6 and G6b.
 
 The rest of this note is the record as it was written for that decision.
 

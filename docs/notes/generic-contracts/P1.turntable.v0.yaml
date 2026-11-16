@@ -1,0 +1,14 @@
+# Proposal P1 (not one of G1-G8): no stop of the action's effect after the state change that ends it.
+protocol: turntable.v0
+
+contracts:
+  - id: P1
+    desc: no motor_stop for a req_id after its state became LEFT, RIGHT or INITIAL
+    kind: never_after
+    per: req_id
+    event: device.effect(motor_stop)
+    after: device.state(LEFT|RIGHT|INITIAL)
+    grade: generic
+    source:
+      rule: P1
+      quote: "no stop of the action's effect after the state change that ends it"

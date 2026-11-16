@@ -1,0 +1,130 @@
+# Generic rules G1-G7, written by hand for the lift: candidates, not a contract file.
+# Requests: MOVE_UP, MOVE_DOWN. Acknowledgement: ACK. Final answers: DONE (success), ERROR (failure).
+# Polls: STATUS, answered by STATUS_REPLY. The action starts with motor_start and ends with motor_stop,
+# then the state UP or DOWN.
+protocol: lift.v0
+
+# [from, on, to], for G7 only.
+transitions:
+  - [null, init, DOWN]
+  - [DOWN, MOVE_UP, MOVING_UP]
+  - [MOVING_UP, arrived, UP]
+  - [UP, MOVE_DOWN, MOVING_DOWN]
+  - [MOVING_DOWN, arrived, DOWN]
+
+contracts:
+  - id: G1a
+    desc: at most one motor_start per req_id
+    kind: at_most_once
+    per: req_id
+    event: device.effect(motor_start)
+    grade: generic
+    source:
+      rule: G1
+      quote: "at most one effect of each name per request id"
+
+  - id: G1b
+    desc: at most one motor_stop per req_id
+    kind: at_most_once
+    per: req_id
+    event: device.effect(motor_stop)
+    grade: generic
+    source:
+      rule: G1
+      quote: "at most one effect of each name per request id"
+
+  - id: G2a
+    desc: no more ACK for a req_id than requests received with it
+    kind: count_le
+    per: req_id
+    event: device.send(ACK)
+    bound: device.recv(MOVE_UP|MOVE_DOWN)
+    grade: generic
+    source:
+      rule: G2
+      quote: "per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests"
+
+  - id: G2b
+    desc: no more DONE or ERROR for a req_id than requests received with it
+    kind: count_le
+    per: req_id
+    event: device.send(DONE|ERROR)
+    bound: device.recv(MOVE_UP|MOVE_DOWN)
+    grade: generic
+    source:
+      rule: G2
+      quote: "per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests"
+
+  - id: G2c
+    desc: no more STATUS_REPLY for a poll id than polls received with it
+    kind: count_le
+    per: req_id
+    event: device.send(STATUS_REPLY)
+    bound: device.recv(STATUS)
+    grade: generic
+    source:
+      rule: G2
+      quote: "per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests"
+
+  - id: G3
+    desc: never both DONE and ERROR for one req_id
+    kind: mutually_exclusive
+    per: req_id
+    events: [device.send(DONE), device.send(ERROR)]
+    grade: generic
+    source:
+      rule: G3
+      quote: "the two final answers exclude each other, per request id"
+
+  - id: G4
+    desc: the device sends for an id only after it received that id
+    kind: only_after
+    per: req_id
+    event: device.send
+    after: device.recv
+    grade: generic
+    source:
+      rule: G4
+      quote: "the device sends nothing for a request id it has not received"
+
+  - id: G5
+    desc: no ACK for a req_id after its DONE or ERROR
+    kind: never_after
+    per: req_id
+    event: device.send(ACK)
+    after: device.send(DONE|ERROR)
+    grade: generic
+    source:
+      rule: G5
+      quote: "no acknowledgement for a request id after its final answer"
+
+  - id: G6
+    desc: DONE for a req_id only after its motor_stop
+    kind: only_after
+    per: req_id
+    event: device.send(DONE)
+    after: device.effect(motor_stop)
+    grade: generic
+    source:
+      rule: G6
+      quote: "the final answer of success only after the effect that ends the action"
+
+  - id: G6b
+    desc: DONE for a req_id only after the state became UP or DOWN for it
+    kind: only_after
+    per: req_id
+    event: device.send(DONE)
+    after: device.state(UP|DOWN)
+    grade: generic
+    source:
+      rule: G6b
+      quote: "the final answer of success only after the state change that ends the action"
+
+  - id: G7
+    desc: device state changes only along the declared transitions (declared here, not taken from normal runs)
+    kind: state_machine
+    event: device.state
+    grade: generic
+    source:
+      rule: G7
+      quote: "the state changes only along transitions seen in normal runs"

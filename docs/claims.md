@@ -28,8 +28,11 @@ python3 -m replayspect claim check CANDIDATES.yaml \
   `protocol` is not the `--system` (default `lift.v0`) is refused.
 - **Incidents** (`--incident`, repeatable): trace files (JSON lines, for example from `ingest` or
   `replay --trace-out`) or device logs (the testbed firmware's `# <millis> ...` lines). A file whose
-  first non-empty line starts with `{` is read as a trace, anything else as a device log. At least one
-  is needed.
+  first non-empty line starts with `{` is read as a trace, anything else as a device log. None is
+  needed: with no incident, only the normal corpus is judged. That is a false-positive check, and
+  `passes` then says only that the candidate was exercised and never violated there. Each verdict line
+  then reads `<id> (<kind>): <verdict> (no incident: normal corpus only)`, and each result in the JSON
+  has `"no_incident": true` beside its verdict (`false` when incidents were given).
 - **Model result** (`--model`, optional, at most one per incident): the `replayspect device --out` report
   for the `--incident` just before it. Its correct model's first mismatch gives the request to compare
   with. No model runs inside `claim check`.

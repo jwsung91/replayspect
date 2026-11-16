@@ -1,0 +1,14 @@
+# Proposal P1 (not one of G1-G8): no stop of the action's effect after the state change that ends it.
+protocol: lift.v0
+
+contracts:
+  - id: P1
+    desc: no motor_stop for a req_id after its state became UP or DOWN
+    kind: never_after
+    per: req_id
+    event: device.effect(motor_stop)
+    after: device.state(UP|DOWN)
+    grade: generic
+    source:
+      rule: P1
+      quote: "no stop of the action's effect after the state change that ends it"
