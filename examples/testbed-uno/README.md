@@ -23,6 +23,13 @@ The Arduino build compiles only the sketch folder, so the header sits there, nex
 One USB cable from the Uno to the Orin. No motor: a move is a 3 s timer. The on-board LED (pin 13)
 is lit while the lift moves.
 
+With the travel sensor build (below), a servo and two end sensors as well: servo signal to pin 9,
+the down sensor to pin 2, the up sensor to pin 3. Each sensor pulls its pin to GND when active
+(a hall sensor such as the A3144 with a magnet on the servo horn, or a switch); the pins use the
+internal pull-ups. Power the servo from its own 5 V supply, with a 470 µF capacitor across it and
+its GND joined to the Uno's: a servo drawing current from the Uno's 5 V can reset the board, and a
+reset makes the run invalid.
+
 ## Wire format
 
 115200 baud. One ASCII line per message, ending in `\n`.
@@ -77,6 +84,44 @@ repeats after `DONE` and after a refusal, polls during a move, an opposite comma
 two new ids within 50 ms, repeats of older ids, unknown messages, and six commands with polls. It
 runs every script with no defect and with each defect switch against the model's mutant, and
 checks where each defect fired (`-DLIFT_FIRED_LOG=1`). It needs only a C++ compiler, not the board.
+
+## Travel sensor build (servo and end sensors)
+
+`-DLIFT_TRAVEL_SENSOR=1` ends a move when the sensor at its end reads active, not after 3 s: the
+up sensor for `MOVE_UP`, the down sensor for `MOVE_DOWN`, for `LIFT_SENSOR_HITS` (3) samples in a
+row, read every 5 ms, so a bouncing switch does not end it early. While the lift moves, the servo
+turns one degree toward the move's end every 3000 / 90 ms, so a free move takes about 3 s, as in
+the model. Hold the servo horn and the sensor never reads active: the move never ends and the
+device sends no `DONE` (the protocol has no stall error), so the client closes the command after
+15 s (`done_timeout`). The default build is unchanged.
+
+```bash
+arduino-cli compile --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno \
+  --build-property "compiler.cpp.extra_flags=-DLIFT_TRAVEL_SENSOR=1"
+```
+
+Calibrate on the rig: `DOWN_DEG` and `UP_DEG` in `lift_uno.ino` (servo angles at the two ends;
+the sensors must sit where the servo arrives) and `LIFT_SENSOR_HITS`. The device log records the
+setting after the build line (`# 0 config travel=sensor hits=3`) and each arrival after its
+`DONE` (`# 4015 sensor arrive r-0001`). Both lines are outside the device log allow list, so they
+never reach a result. The `config` line goes to the device log, not the truth file.
+
+What this build adds to the differences above:
+
+- **Travel time is real.** A move ends when its sensor reads active: near 3 s when free, earlier
+  or later depending on where the sensor sits, later or never when held. `device` and `drive`
+  report the move's end as a timing difference, and C9 in the rev2 and rev3 contracts (motor stop within 3002 ms of its
+  start) fails whenever a move takes longer. Both are expected here, not defects.
+- **A move that starts with its end sensor already active ends after about 15 ms** (three
+  samples): the device trusts the sensor, not the angle.
+- **The servo library uses Timer1 interrupts** (on the Uno), a few µs each, and turns off PWM on
+  pins 9 and 10. The firmware uses no PWM.
+- **`harness/fired_points.py` does not know when a move ended** in this build, so its points are
+  wrong after the first arrival. Use this build without a defect.
+
+The native harness takes a sensor sample as `T_MS @pos UP DOWN` (each 0 or 1). The conformance
+test checks the run of samples, a bounce, the wrong sensor, a move that never ends, and that the
+3 s timer is off.
 
 ## A run is invalid when
 

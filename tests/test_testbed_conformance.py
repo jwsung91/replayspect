@@ -205,6 +205,34 @@ def test_log_off_build_keeps_replies_and_errors(tmp_path):
     assert "3050 OUT DONE r-0001" in raw
 
 
+def test_travel_sensor_build_ends_a_move_at_its_end_sensor_not_on_the_timer(tmp_path):
+    exe = tmp_path / "harness_sensor"
+    subprocess.run([CXX, "-std=c++11", "-Wall", "-Wextra", "-Werror", "-DLIFT_TRAVEL_SENSOR=1", "-o", str(exe),
+                    str(FW / "harness" / "harness.cpp")], check=True)
+    script = ("0 MOVE_UP r-0001\n10 @pos 1 0\n"                      # before execution: ignored
+              "100 @pos 0 1\n105 @pos 1 0\n110 @pos 1 0\n115 @pos 0 0\n"  # wrong sensor, then a bounce
+              "4000 STATUS s-0001\n"                                 # no 3 s timer: still moving
+              "4005 @pos 1 0\n4010 @pos 1 0\n4015 @pos 1 0\n"        # three in a row: DONE at 4015
+              "4100 MOVE_DOWN r-0002\n4200 @pos 1 0\n4205 @pos 0 1\n4210 @pos 0 1\n4215 @pos 0 1\n"
+              "4220 @pos 0 1\nEND 9000\n")
+    raw = subprocess.run([str(exe)], input=script, capture_output=True, text=True, check=True).stdout.splitlines()
+    assert "0 LOG config travel=sensor hits=3" in raw
+    assert "4000 OUT STATUS_REPLY s-0001 state=MOVING_UP" in raw
+    assert [r for r in raw if " OUT DONE" in r] == ["4015 OUT DONE r-0001", "4215 OUT DONE r-0002"]
+    assert "4015 LOG sensor arrive r-0001" in raw and "4215 LOG sensor arrive r-0002" in raw
+    assert raw.index("4015 OUT DONE r-0001") < raw.index("4015 LOG sensor arrive r-0001")
+
+
+def test_travel_sensor_build_never_ends_a_move_whose_sensor_stays_off(tmp_path):
+    exe = tmp_path / "harness_sensor"
+    subprocess.run([CXX, "-std=c++11", "-DLIFT_TRAVEL_SENSOR=1", "-o", str(exe), str(FW / "harness" / "harness.cpp")],
+                   check=True)
+    script = "".join(f"{t} @pos 0 1\n" for t in range(100, 20000, 5))  # held: the up sensor never reads
+    raw = subprocess.run([str(exe)], input="0 MOVE_UP r-0001\n" + script + "END 20000\n", capture_output=True,
+                         text=True, check=True).stdout
+    assert "DONE" not in raw and "state UP" not in raw
+
+
 # -- the device log against the model (stage 1 of two sources, replayspect.devicelog) ------------
 
 from replayspect.devicelog import Completeness, conform, device_report, read_device_log  # noqa: E402

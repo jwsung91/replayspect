@@ -8,6 +8,13 @@
 // Defect switch (stage 3): -DLIFT_DEFECT=N builds the public device-side lift defect MN of the model
 // (sut/lift.py MUTANTS): 1, 2, 4, 5, 9, 10 or 11; 0 (the default) is none. M3 (resend the last DONE
 // after a reconnect) is not offered: on serial the device never sees a disconnect.
+// Position sensors: -DLIFT_TRAVEL_SENSOR=1 ends a move when the sensor at its end (the up sensor for
+// MOVE_UP, the down sensor for MOVE_DOWN) reads active LIFT_SENSOR_HITS samples in a row, instead of
+// after TRAVEL_MS; on_position() feeds the samples. Travel time is then real and varies, which the
+// model (fixed 3 s) does not know; a move whose sensor never reads active never ends (no DONE; the
+// protocol has no stall error). After begin() the device log gets "config travel=sensor hits=N" and
+// at each arrival "sensor arrive REQ_ID"; both are outside the device log allow list, and "config"
+// is not a build line for the link.
 // The build is named only on the device log channel ("build defect=..."), never in READY, so the
 // client log does not carry the answer; the testbed link files that line in the truth file, not in
 // the device log. With -DLIFT_FIRED_LOG=1 (the native harness only, never the Uno), each time the
@@ -39,6 +46,12 @@
 #if LIFT_DEFECT != 0 && LIFT_DEFECT != 1 && LIFT_DEFECT != 2 && LIFT_DEFECT != 4 && LIFT_DEFECT != 5 && \
     LIFT_DEFECT != 9 && LIFT_DEFECT != 10 && LIFT_DEFECT != 11
 #error "LIFT_DEFECT: 0 (none) or a public device-side lift defect 1, 2, 4, 5, 9, 10, 11 (not 3: no disconnects on serial)"
+#endif
+#ifndef LIFT_TRAVEL_SENSOR
+#define LIFT_TRAVEL_SENSOR 0
+#endif
+#ifndef LIFT_SENSOR_HITS
+#define LIFT_SENSOR_HITS 3  // calibration: samples in a row that count as arrived (switch bounce)
 #endif
 #define LIFT_STR2(x) #x
 #define LIFT_STR(x) LIFT_STR2(x)
@@ -92,6 +105,7 @@ class Device {
     moving_ = false;
     out_.line(LIFT_DEVICE_LOG ? "READY log=1" : "READY log=0");
     out_.log(now, LIFT_DEFECT == 0 ? "build defect=none" : "build defect=M" LIFT_STR(LIFT_DEFECT));
+    if (LIFT_TRAVEL_SENSOR) out_.log(now, "config travel=sensor hits=" LIFT_STR(LIFT_SENSOR_HITS));
     if (LIFT_DEVICE_LOG) out_.log(now, "state DOWN from=- on=init");
   }
 
@@ -100,7 +114,7 @@ class Device {
     bool any = false;
     for (uint8_t i = 0; i < n_queue_; i++)
       if (!any || before(queue_[i].due, at)) { at = queue_[i].due; any = true; }
-    if (moving_ && (!any || before(travel_due_, at))) { at = travel_due_; any = true; }
+    if (timed_travel() && (!any || before(travel_due_, at))) { at = travel_due_; any = true; }
     return any;
   }
 
@@ -110,7 +124,7 @@ class Device {
       int8_t qi = -1;
       for (uint8_t i = 0; i < n_queue_; i++)
         if (!before(now, queue_[i].due) && (qi < 0 || before(queue_[i].due, queue_[qi].due))) qi = (int8_t)i;
-      bool travel = moving_ && !before(now, travel_due_);
+      bool travel = timed_travel() && !before(now, travel_due_);
       if (qi < 0 && !travel) return;
       if (qi >= 0 && (!travel || !before(travel_due_, queue_[qi].due))) {
         Pending p = queue_[qi];
@@ -173,11 +187,24 @@ class Device {
     q.due = now + PROC_MS;
   }
 
+  // LIFT_TRAVEL_SENSOR: one sample of the two end sensors (true: active). Ignored when not moving.
+  void on_position(uint32_t now, bool at_up, bool at_down) {
+    if (!LIFT_TRAVEL_SENSOR || !moving_) return;
+    hits_ = (travel_cmd_ == MOVE_UP ? at_up : at_down) ? hits_ + 1 : 0;
+    if (hits_ < LIFT_SENSOR_HITS) return;
+    char id[MAX_ID + 1];
+    strncpy(id, travel_id_, sizeof id);
+    arrive(now);
+    if (LIFT_DEVICE_LOG) logf(now, "sensor arrive ", id, "", "");
+  }
+
   State state() const { return state_; }
 
  private:
   struct Entry { char id[MAX_ID + 1]; Result result; };
   struct Pending { Cmd cmd; char id[MAX_ID + 1]; uint32_t due; };
+
+  bool timed_travel() const { return moving_ && !LIFT_TRAVEL_SENSOR; }
 
   static bool before(uint32_t a, uint32_t b) { return (int32_t)(a - b) < 0; }  // wrap-safe
 
@@ -263,6 +290,7 @@ class Device {
     strncpy(travel_id_, id, MAX_ID + 1);
     travel_id_[MAX_ID] = 0;
     travel_due_ = now + TRAVEL_MS;
+    hits_ = 0;
   }
 
   void arrive(uint32_t now) {
@@ -330,6 +358,7 @@ class Device {
   Cmd travel_cmd_ = MOVE_UP;
   char travel_id_[MAX_ID + 1] = {0};
   uint32_t travel_due_ = 0;
+  uint8_t hits_ = 0;  // LIFT_TRAVEL_SENSOR: samples in a row with the move's end sensor active
 };
 
 }  // namespace lift
