@@ -225,7 +225,8 @@ listed in the results. A build that resets during a session stays: its run is in
 5. **Running,** on the Orin, by the operator. The advisor makes the operator's folder; the step script in it
    calls `blind_flash.sh`, `run_blind.sh` and `score.py` as they are, unchanged. A slot where `run_blind.sh`
    exits 1 (an end line, but invalid) is not run again: the script goes on to the next slot. If it exits 4,
-   the script stops. For each slot, in the drawn order:
+   the script stops. If it exits 2 or 3, the script also stops: the operator reports it, and a slot that
+   already has a log is not run again. For each slot, in the drawn order:
    - `bash blind_flash.sh flash bNN SHA`:
      - before the upload it checks the `.hex` against its hash, and that the port is `TURNTABLE_PORT` in
        `boards.env`, a by-id path that is present. It does not look at the firmware on the board;
