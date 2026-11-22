@@ -803,3 +803,23 @@ for the lift and the turntable in `docs/notes/generic-contracts/` (nothing under
   - **A1 is folded into G6b;** no rev4 file. The form (`grade: generic`, `source` with `rule` and an
     optional `quote`, the `roles` section) is approved.
   - The note's count of slots rev3 catches and the generic set misses is corrected to 6 (4 with G7).
+
+## WP6/7b stage 4: the generic contract library
+
+- **`contracts/generic/`:** `rules.yaml` writes G1, G2 (three roles), G3, G4, G5, G6, G6b and P1 once,
+  against roles. `lift.v0.yaml` and `turntable.v0.yaml` bind the roles (requests, acknowledgement, final
+  answers of success and failure, polls and their replies, effects, the action's start and end effects,
+  rest states) and name the rules file. A short `README.md` lists the rules.
+- **The loader expands a binding file** (`roles` instead of `contracts`) into contracts of the existing
+  kinds, with `grade: generic` and `source: {rule, quote}`. `{role}`, `{role.key}` and `each` are the only
+  template forms; an unknown role, a name that is not a plain name, a rule's contract with its own grade or
+  source, and a binding with contracts of its own are refused. A binding works wherever a contract file
+  path is taken (`claim check`, `device --contracts`).
+- **The judge does not change.** The expansion gives the same patterns as stage 3's hand-written files,
+  and the same first violations on seeds 0–99 for the correct lift and turntable and every lift mutant.
+  A slow test finds no violation on seeds 0–999 of either correct system.
+- **G6 and G6b:** the two hand traces that tell them apart (stop, DONE, state; state, DONE, stop), G6b not
+  judged on a device log without complete state lines, and not judged on a key with a reordered line.
+- **The word scan** of `contracts/` now reads every file in its folders too.
+- The existing contract files and the planner documents are unchanged; a session shows its protocol's own
+  contract file, as before.

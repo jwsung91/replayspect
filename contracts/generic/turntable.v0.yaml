@@ -1,0 +1,12 @@
+# The turntable's roles for the generic rules in rules.yaml (loading this file expands them).
+protocol: turntable.v0
+rules: rules.yaml
+roles:
+  requests: [TURN_LEFT, TURN_RIGHT]
+  acknowledgement: ACK
+  final_success: DONE
+  final_failure: ERROR
+  polls: {STATUS: STATUS_REPLY}       # poll -> its reply
+  effects: [motor_start, motor_stop]
+  action: {starts: motor_start, ends: motor_stop}
+  rest_states: [LEFT, RIGHT, INITIAL]
