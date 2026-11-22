@@ -833,3 +833,34 @@ for the lift and the turntable in `docs/notes/generic-contracts/` (nothing under
     file as the header's" holds while the rules file changed. Reported, not fixed (backlog).
   - `docs/backlog.md`: protocols with no acknowledgement or polls cannot be bound yet; the session option
     for the generic set is not built, with its conditions.
+
+## WP6/7c stage 1: the turntable testbed on its own board
+
+The turntable firmware now runs on a board of its own with the lift's host, and the tool is quiet on its
+real logs before anything is changed (`docs/work-order-wp67c.md`, with "Amendments after stage 0").
+
+- **Main fixed first:** the harness's end sensor input (`@pos`, #63) is compiled in the lift build only;
+  the turntable build did not compile.
+- **Host:**
+  - `client.py --sequence` takes the command list. Without it, the lift's client log is byte-for-byte
+    what it was (golden files written before the change).
+  - The truth file's first line records the board's `/dev/serial/by-id/` path, and the client warns on
+    any other kind of path.
+  - The turntable has its own ingest rules (`rules/testbed-client-turntable.yaml`).
+- **Scoring:** `fired_points.py --system turntable` compares a changed and an unchanged header
+  (`--reference` only).
+- **The wrong board is refused:**
+  - The turntable's build line names `system=turntable.v0`; the lift's output is unchanged and is read
+    as `lift.v0`.
+  - `fault_link.py` reads the field (`build_fields`), and its truth record is public (`record`). The
+    lift's truth file and device log are pinned by golden files.
+  - `client.py --expect-system` stops at once on another system (`wrong_system`, exit status 3).
+  - `host/board_check.py` checks system and build after an upload. Before one, only the port is checked
+    against `boards.env`.
+- **On the boards** (Orin, two Unos):
+  - one lift session conforms;
+  - 24 turntable development sessions with faults (testbed-06's twelve kinds, two plans each, seeds
+    7000–7023) are all valid; the correct model conforms with no event later than the model; neither
+    `contracts/turntable.v0.yaml` nor the generic binding is violated; every generic contract is
+    exercised; each plan's timing condition held.
+  - This is development data. The operator decided the testbed is fit for a blind group (testbed-07).

@@ -124,6 +124,9 @@ The native harness takes a sensor sample as `T_MS @pos UP DOWN` (each 0 or 1). T
 test checks the run of samples, a bounce, the wrong sensor, a move that never ends, and that the
 3 s timer is off.
 
+**This build has been through the harness tests only.** It has never run on a board with a servo
+and sensors attached; the calibration values above are untried.
+
 ## A run is invalid when
 
 - the device wrote any `# ... error` line, or
@@ -140,7 +143,7 @@ arduino-cli core update-index
 arduino-cli core install arduino:avr
 # device log on (the default)
 arduino-cli compile --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno
-arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno
+arduino-cli upload -p "$LIFT_PORT" --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno
 ```
 
 For the run with the device log off, compile with
@@ -151,10 +154,10 @@ On the Orin (copy `examples/testbed-uno/host/` there; `pip install pyserial`):
 
 ```bash
 # run 1: firmware with the device log OFF
-python3 host/client.py --port /dev/ttyACM0 --seed 0 \
+python3 host/client.py --port "$LIFT_PORT" --seed 0 \
   --log logoff-client.log --device-log logoff-device.log --truth logoff-truth.log
 # reflash with the device log ON, then run 2 with the same seed
-python3 host/client.py --port /dev/ttyACM0 --seed 0 \
+python3 host/client.py --port "$LIFT_PORT" --seed 0 \
   --log logon-client.log --device-log logon-device.log --truth logon-truth.log
 ```
 
@@ -321,7 +324,7 @@ cp -r firmware reference-firmware            # an unchanged copy, kept as it is
 arduino-cli compile --fqbn arduino:avr:uno --output-dir build-blind \
   --build-property "compiler.cpp.extra_flags=-DLIFT_DEFECT=0" firmware/lift_uno
 #   note "Sketch uses ..." and "Global variables use ...": keep RAM at about 1,000 B or less
-arduino-cli board list                       # the Uno's port: /dev/ttyACM0, /dev/cu.usbmodem..., COM3
+ls -l /dev/serial/by-id/                     # each board's fixed path (see "Two boards" below)
 arduino-cli upload -p PORT --fqbn arduino:avr:uno --input-dir build-blind firmware/lift_uno
 arduino-cli monitor -p PORT -c baudrate=115200
 #   expect "READY log=1", "# 0 build defect=none", "# 0 state DOWN from=- on=init"; close the monitor
@@ -338,7 +341,7 @@ sha256sum firmware/lift_uno/lift_device.h build-blind/lift_uno.ino.hex   # keep 
 `none`:
 
 ```bash
-python3 host/client.py --port /dev/ttyACM0 --seed SEED --plan PLAN.json --expect-build none \
+python3 host/client.py --port "$LIFT_PORT" --seed SEED --plan PLAN.json --expect-build none \
   --log blind/LABEL-client.log --device-log blind/LABEL-device.log --truth blind/LABEL-truth.log
 ```
 
@@ -369,16 +372,189 @@ assignment's hash until after the submission.
 mechanically mutated firmware, with the rev2 contracts). The builds, flashing and runs were on the Orin,
 with the scripts `blind_flash.sh` and `run_blind.sh` kept with the registration outside the repository.
 
+## Two boards
+
+Two Unos are plugged into the Orin: one runs the lift, one the turntable. Each is named by its
+`/dev/serial/by-id/` path, which stays with the board whichever USB port it is in; `/dev/ttyACM0`
+is not used in scripts or commands, since its number follows the order the boards were plugged in.
+On the Orin, a file `boards.env` (outside the repository) fixes them:
+
+```bash
+LIFT_PORT=/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_<serial>-if00
+TURNTABLE_PORT=/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_<serial>-if00
+```
+
+`client.py` records the path it was given, and what it resolves to, in the truth file's first line
+(`{"action": "port", ...}`), and warns when the path is not a by-id one. The past records above used
+`/dev/ttyACM0` with one board.
+
+**The wrong board is refused.**
+- **A session:** `client.py --expect-system lift.v0|turntable.v0` (default `lift.v0`). When the
+  build line names another system, the client stops sending at once. The run is invalid
+  (`reasons=wrong_system`) and the exit status is 3.
+- **A flash:** before the upload, the script checks only that the port is that system's path in
+  `boards.env`. It does not look at the firmware on the board: on its first flash, the turntable
+  board does not carry the turntable firmware yet.
+- **After the upload:** `host/board_check.py --port PORT --expect-system SYSTEM` reads the boot
+  lines and checks the system and the build. Exit status 0 on a match, 3 when the line names
+  another system or build, 4 when no build line comes.
+
 ## Turntable firmware
 
 `firmware/turntable_uno/` is the `turntable.v0` device (docs/protocol-turntable.md) in the same
 shape as the lift: `turntable_device.h` is plain C++, `turntable_uno.ino` the same serial loop.
 Wire format, device log lines, timer order, limits and error lines are the lift's. The model has
-no defects, so there is no defect switch and the build line is always `build defect=none`.
-`tests/test_testbed_turntable.py` compiles the harness with `-DHARNESS_TURNTABLE=1` and compares
-replies, state changes and motor effects with the Python model. `host/client.py` and the ingest
-rules are still lift-only, so no hardware run has been made.
+no defects, so there is no defect switch and the build line is always
+`build system=turntable.v0 defect=none`. The lift's build line has no `system=` field and is read as
+`lift.v0`; its output is unchanged.
+The turntable uses the timer build only: a turn lasts 3 s and lights the LED; no motor or sensor.
 
+- **Conformance:** `tests/test_testbed_turntable.py` compiles the harness with `-DHARNESS_TURNTABLE=1`
+  and compares replies, state changes and motor effects with the Python model.
+- **Host:** the lift's `host/client.py` with the turntable's commands
+  (`--sequence TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT`); `host/fault_link.py`
+  unchanged. Without `--sequence` the client log is byte-for-byte the lift's from before
+  (`tests/test_testbed_host.py`, two golden files).
+- **Ingest rules:** `rules/testbed-client-turntable.yaml` (`system: turntable.v0`), the lift's file
+  with the turntable's system and name.
+- **Device log:** `replayspect device --system turntable.v0` reads the harness's turntable logs: the
+  correct model conforms, neither `contracts/turntable.v0.yaml` nor `contracts/generic/turntable.v0.yaml`
+  is violated, and over the test scripts every generic contract and C1, C3, C5, C7, C8 are exercised
+  (C2, C4, C6 are the client's).
+- **Scoring:** `harness/fired_points.py DEVICE_LOG --system turntable --reference DIR` (no defect switch,
+  so `--reference` only).
+
+```bash
+arduino-cli compile --fqbn arduino:avr:uno examples/testbed-uno/firmware/turntable_uno
+arduino-cli upload -p "$TURNTABLE_PORT" --fqbn arduino:avr:uno examples/testbed-uno/firmware/turntable_uno
+python3 host/board_check.py --port "$TURNTABLE_PORT" --expect-system turntable.v0
+python3 host/client.py --port "$TURNTABLE_PORT" --seed SEED --plan PLAN.json --expect-build none \
+  --expect-system turntable.v0 --sequence TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT \
+  --log client.log --device-log device.log --truth truth.jsonl
+```
+
+### WP6/7c stage 1: development sessions on the unchanged firmware
+
+About 24 sessions on the turntable board, testbed-06's twelve plan kinds carried over, two plans each,
+seeds 7000–7023 (the range 7000–7099 is kept for development; no blind pool takes it). The plans,
+the plan maker, the Orin run script and the checks live outside the repository
+(`testbed-turntable-dev/`: `make_plans.py`, `flash.sh`, `run_dev.sh`, `check_dev.py`, `dry_run.py`).
+Carried over:
+
+- `refused-repeated` and `copy-refused-early` are adapted: in the turntable's order losing the command
+  just before a target never makes it refused, so the command two before is lost
+  (r-0001 for r-0003, r-0003 for r-0005);
+- `copy-status` has one plan for each of two placements (both during a turn; standing, then during a turn).
+
+**Result (2026-11-22, development data):** the boards were flashed at `54a6553` (this branch), on the Orin.
+The lift board is `…B101`, the turntable board `…B182` (Arduino UNO Mini); the sessions ran from 19:28 to 20:06.
+
+- **Boards:** `flash.sh` refused the turntable firmware on the lift board's port (exit 3). After each
+  upload, `board_check.py` printed `ok: lift.v0 defect=none` and `ok: turntable.v0 defect=none`. A lift
+  session aimed at the turntable board stopped with `wrong_system` (exit 3) about 4 ms after `READY`,
+  after one `MOVE_UP`, which the turntable ignores (the start order was left unchanged in review).
+- **D11, one lift session** (seed 0, no plan) after the client change: valid; `replayspect device`:
+  `correct: conforms` (126 of 126 device events).
+- **D12, 24 turntable sessions** (D01–D24, seeds 7000–7023):
+  - All 24 are valid, and the link applied every planned fault. The board path is recorded in each
+    truth file.
+  - Each plan's timing condition held on the board, computed from its device log (24 of 24).
+  - `replayspect device --system turntable.v0 --complete device:recv,send,state,effect`: the correct
+    model conforms in **24 of 24**, with every device event at most 0 ms after the model. The 2 ms
+    window was never used.
+  - **No violation** of `contracts/turntable.v0.yaml` or `contracts/generic/turntable.v0.yaml` in any
+    session, and nothing went unjudged.
+  - Exercised in all 24 sessions: every generic contract (G1.motor_start, G1.motor_stop, G2.ack,
+    G2.final, G2.poll.STATUS, G3, G4, G5, G6, G6b, P1), and C1, C3, C5, C7, C8. C2, C4 and C6 are client
+    contracts and are never exercised on a device log.
+  - **No false mismatch and no false violation.** This is a development check, not a measurement: the
+    turntable has the lift's timing, and these plans were made by the analyst.
+
+The logs stay outside the repository; by sha256:
+
+<details><summary>75 files</summary>
+
+```
+be27b37124c9ac8cec478ec18db1c13c95b96cb95ec365db2a26ac69f6bdb1cb  lift-client.log
+18fbf1697fce4d43ffe7bf14a68c36e1d5fd36c030cb4cecef7e853edd9aa83d  lift-device.log
+6cfb6f6fd72e4581a2c66f9f9d3bb3aac45b761b528452a0a5c44acff26688b0  lift-truth.jsonl
+9034aed59fcf1fb9714b94873a0238c4fe086c2be9ce61d491a47c9c0a1b3e3a  D01/client.log
+e7b008bf0a4fb6b38d35771367298188495de99827494c80da8e2c62ed619260  D01/device.log
+026679737cfdb9b052f546fba74e6ae6ff6d298a1cb741217818344644b1a7cb  D01/truth.jsonl
+b6d9ab89ce9924dee4b2c8046985c704a55b9965f3ddbb4af787191c50ee069e  D02/client.log
+693e77932e9c35737deefe2a2aa2f74d608f2c406e72c628d6416ee128cd5d71  D02/device.log
+085739449bd455488781e9f9a3c9b5f406cd25b0b1d0c793260f449c7ba330f5  D02/truth.jsonl
+e575ee90055bafcf16912046331e33baba61d831e1b1edf554ef799a5e822d59  D03/client.log
+e129a3c29ec2272dc8151f9aaccaeaf7801f2862be31ec7558cda97ba7cd8a98  D03/device.log
+92e34bb0a130b83158a01ab95877f27c997c2ebebf46975e067f8e33edbef734  D03/truth.jsonl
+cd0190cdb6e8a5d6fd27f84cec533e3f56f65e7f29207b4d27d83c93b10374c4  D04/client.log
+747a25cfa1463a0c568233ed073d783eddc20f051e0a5300fb595ab69d4e86fd  D04/device.log
+7cd4f770f722e6098c17b50352334eedd4174e52231200682e5c2ae09c2c46f2  D04/truth.jsonl
+c97877098d4a264a35be842f1ea042d3ecd30ec45866ffac0f065706d2739770  D05/client.log
+878da8fb3d406c895bbf83bcfd3037c90c16ef170e5ceb16c7f06461899dafaf  D05/device.log
+586bd1342474aadc029c35642812119514a2db708597b351982fcaf64bb91d8e  D05/truth.jsonl
+9a3b4384a65cc95924a0e383162b396b8ee713326d9828677222f28d196c6d90  D06/client.log
+b8b138d1c0ebd899de7cb8509220b7a141a086ef92eff07b252b49f5d5a081d2  D06/device.log
+d5b149de25090e23a9531460fcf4fdaee86955c1471a2f4bf3d6edef447a18bb  D06/truth.jsonl
+49d8eaee9cee9b16be2f4b6c2df3bb571d8babf61066d040e953889657198680  D07/client.log
+1f1a37051ce3c93c0d4830d16335deebd3662fad0260e9904abe236f73784ad2  D07/device.log
+bbacfbebba07b86441e5fbd0b623885de599c33a448021103e37fa05dbb33e22  D07/truth.jsonl
+f5c1a4b81bc4fb90222aaabb2f31b5bf4a7c83f1d91213e20c2130e3461ce3ac  D08/client.log
+fbfbf25ab8937984f9b3b82224ef33cc884bfb5a06d41c7860227be6e5705ced  D08/device.log
+d407c3ca76e19944a40a43aba8a4fb728f07694f3f2a5955e00063787a55032a  D08/truth.jsonl
+d0906e2ed8a17e27c649ac91596b1cdc4424a101b8602f2e6d2f4c42db4154d7  D09/client.log
+287ba2eedf90176cc79cd43b49fa06a52879867c411538ad4349b0c65dc54aea  D09/device.log
+0403b9d50a83c53b8f7bcb9c4fd201b9234cc541e860e4ce73442822a0c6ec5e  D09/truth.jsonl
+feabff30ad1eb3c5e5027385b84979560fca1af74764aa578128737895f90aa4  D10/client.log
+844f23dadbb329a8124d453e6c132c0f41828704b62485e244c1cfcb26087c86  D10/device.log
+cd41e32976528c448375a591c41a93a7c8b42e17afca430239f7e0855e11814f  D10/truth.jsonl
+f4374f83a1fb7119ba045330facf4cd1e4f266930911250595ccae29d1834c44  D11/client.log
+d1c302ada523f25a83b54fe431996945c848314d36caa61ef54d302d47e9839c  D11/device.log
+ed0e9a3f02b2c557c67930780052104e7f82b0d2470f65f17c307158d7734086  D11/truth.jsonl
+07d1daa8c02af4aadcc13c265f14c7bb7123faf9f50f29277437773c6f67bb1f  D12/client.log
+73ae2d5c1c1127fdd050d079c5fa3aa381703683ef595504917592165232b754  D12/device.log
+727fec52ffbfa5bb385b0f6accea1eaf153a77eada433f07bd4d306c8d6743dc  D12/truth.jsonl
+e329ca67e792962e8df0165efbf22face54f02aa6fcdda6c185eb599dcf14efb  D13/client.log
+42cd441e04018c6cde601ac5c893a453abac5cb660aad66f3e615e8fa0fbf86e  D13/device.log
+989a6ddf910cededbb66c5a3734aeab122e5f05a5a0411be73413bab74ecbd8f  D13/truth.jsonl
+0f5d408d1cea40fc59194b90e54b102a8abd1be86f0d770366b5a49415e675ed  D14/client.log
+a01327e89e5f271701e6b918fd04a2391aec3de53c751744cb5c058fb4b435c8  D14/device.log
+0bd836b627902ffde441aec2b0bc05f2326f59ec5f00cf37721bf2b6d3e36bbd  D14/truth.jsonl
+5940d78eafec3d9e12986c474acbadbabbbb69eb6f8ce9bd64cf204f4f9ea0d4  D15/client.log
+da6a295e75114b45d5c23a49418aa383201f6f62c363065afdaa20c3fe6f896b  D15/device.log
+ea8aff62fb329b478c1b3fa546a20be718bc8d12d819b916f63c9df2251157e6  D15/truth.jsonl
+af70d5056315d576cfce7c699104bcb96392039c91fb9e763fa5647a452d1287  D16/client.log
+a07bfd4d9e3d17bd1672e10e16ea460b1f88a0e665957e6bd825509244848834  D16/device.log
+9ecbe65e1b7c3da322bdda857d4ba34155039747176df75f2a5cc281fc85af5f  D16/truth.jsonl
+89ba6e350b91038993d91a15b0bbdfc48e5f8a620b40d92b714300d7a41320e4  D17/client.log
+0b54a2b3583a2c4ae6d1d4500bfd10f307e5c1a205c66629c620444ba343f456  D17/device.log
+f863b64ee4bb0e24311def4d2dde52b4d4a98bb2a7b76da52d0c8403f4a721db  D17/truth.jsonl
+232d2c9d20b2f726066fb7eb3cf40fb97b90e6bb8fd5f7ef04fcb68f7abd204c  D18/client.log
+6401a8215c992c13dd55dd42519bf83e4c2cf057e416791ae3e6919a243ee607  D18/device.log
+157a0a9ef79951d2373fae469fa6c280cd2de8dc23ad8e5d6810298c79999b64  D18/truth.jsonl
+54c63b58ff2de25e50bd60a0aef98d5aeabba041f60fd860e5e885d97f7da17e  D19/client.log
+353197909bba9751b4a0e9ff722899287d4ccb08bbdb2cc36b9f66d7a5c8780c  D19/device.log
+0e866382489f7f8f3804eca1fb2593cf21b9f2fcce61bc029ff3043e30fa0bad  D19/truth.jsonl
+f36f14a92d0c4b5970dfafa45f1f41fb8d5ffcfc7482e0d45bdd6989d0b46b98  D20/client.log
+5d8ef42f404fff632c9f7104b388fe187bd8b3461f3ccf2ca7991437f8df3c00  D20/device.log
+9b544b4a4529939a799aa6c52ca1c23a31cac2c7b66b930a32bc5a222b778fca  D20/truth.jsonl
+d29aaf6dcfe1b0ed91c5721a1d25991442a98be369571cd881aa103f5c0c7bdd  D21/client.log
+17f5524c347c10812cdf55bf7c116d65172d44d577b8ee6517ba87aa16e2ac0f  D21/device.log
+e2c0cf3483edaff9ac99ec385a052d1c68c5d2a48f2343e94115ededfdd46934  D21/truth.jsonl
+37f8cb93042a148c308a102473677ddbbbecf6e3e84d4333b244834afad14533  D22/client.log
+f38f872518a22ce1a670b8a0bdc309f508ac9f27990f9cab98794a0c23e35e60  D22/device.log
+836ed953f4572d31d5997d183c03bac19fa3454733a09bd844683604709c3ae8  D22/truth.jsonl
+b8ec2f42401386d03d026d549908805ef2f53b9b1d8fca93186b576c6cf1aaf4  D23/client.log
+ba6add36c54826a2430ebef3cd1395151cfcf65e27f009e49b4020e1610d0c03  D23/device.log
+15a2ab0895db936de791dad05b0908d635d8417486acc8ad11dd582d54bfa802  D23/truth.jsonl
+ecb9af5c6d6892ad9954351c41d8e10662899994e5639ebf9cdb797a15c6b498  D24/client.log
+3d3e0fe2f203e73bcead5404279de320912e10e2621ddf026953ce02c481f8a1  D24/device.log
+31b2d59b3b719a9578d58ae2907ecfbd797af1b61c7da978aed05f2369c19073  D24/truth.jsonl
+```
+
+</details>
+
+## Not yet
 ## Not yet
 
 - **Two sources:** the client log and the device log together, with the clock between them estimated.

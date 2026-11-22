@@ -1,6 +1,6 @@
 // Native conformance harness for lift_device.h, or turntable_device.h with -DHARNESS_TURNTABLE=1 (no Arduino).
 // stdin: one input per line, "T_MS LINE" (times non-decreasing); a final line "END T_MS" runs timers until then.
-// "T_MS @pos UP DOWN" (each 0 or 1) is an end sensor sample for a -DLIFT_TRAVEL_SENSOR=1 build.
+// "T_MS @pos UP DOWN" (each 0 or 1) is an end sensor sample for a -DLIFT_TRAVEL_SENSOR=1 build (lift only).
 // stdout: "T_MS OUT LINE" for protocol lines and "T_MS LOG BODY" for device log lines.
 #include <cstdio>
 #include <cstdlib>
@@ -45,9 +45,14 @@ int main() {
     uint32_t t = (uint32_t)std::strtoul(buf, &rest, 10);
     while (*rest == ' ') rest++;
     run_until(dev, out, t);  // timers first, then the input (the firmware loop's order)
+#if !HARNESS_TURNTABLE
     int up = 0, down = 0;
-    if (std::sscanf(rest, "@pos %d %d", &up, &down) == 2) dev.on_position(t, up != 0, down != 0);
-    else dev.on_line(rest, t);
+    if (std::sscanf(rest, "@pos %d %d", &up, &down) == 2) {
+      dev.on_position(t, up != 0, down != 0);
+      continue;
+    }
+#endif
+    dev.on_line(rest, t);
   }
   return 0;
 }

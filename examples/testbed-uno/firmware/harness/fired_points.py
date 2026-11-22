@@ -12,9 +12,14 @@ the firmware this script sits in (``../lift_uno/lift_device.h``, changed) and th
 after checking that the changed one reproduces the log, and the first output line where they differ
 is where the change first acted. No defect switch or "defect fired" line is needed.
 
+With ``--system turntable`` the same comparison runs on ``../turntable_uno/turntable_device.h``
+(the harness built with ``-DHARNESS_TURNTABLE=1``). The turntable has no defect switch, so only
+``--reference`` is offered there.
+
 Usage (development machine or the operator's computer, a C++ compiler; not the Orin):
     python3 fired_points.py DEVICE_LOG --defect N        (N: 0 none, or 1 2 4 5 9 10 11)
     python3 fired_points.py DEVICE_LOG --reference DIR   (this tree changed, DIR unchanged; --defect 0)
+    python3 fired_points.py DEVICE_LOG --system turntable --reference DIR
 Prints one JSON line per firing, {"t_ms": T, "defect": "MN", "req_id": ID}; with --reference, one JSON
 line {"t_ms", "req_id", "changed", "reference"} for the first difference, or {"difference": null} when
 the change did not act on this log's inputs. Exits 0; 1, naming the first difference, when the harness
@@ -40,14 +45,15 @@ _FIRED = re.compile(r"^(\d+) LOG defect fired (M\d+) (\S+)$")
 
 
 def build(defect: int, out_dir: str | Path, cxx: str | None = None, harness: str | Path = HARNESS,
-          name: str | None = None) -> Path:
-    """The harness (this tree's, or ``harness``) with ``-DLIFT_DEFECT=defect -DLIFT_FIRED_LOG=1``."""
+          name: str | None = None, system: str = "lift") -> Path:
+    """The harness (this tree's, or ``harness``) with ``-DLIFT_DEFECT=defect -DLIFT_FIRED_LOG=1``; for
+    ``system="turntable"``, the turntable's (``-DHARNESS_TURNTABLE=1``; the lift's options do nothing)."""
     cxx = cxx or shutil.which("g++") or shutil.which("c++") or shutil.which("clang++")
     if cxx is None:
         raise RuntimeError("no C++ compiler")
     exe = Path(out_dir) / (name or f"harness-fired-{defect}")
-    subprocess.run([cxx, "-std=c++11", "-O1", f"-DLIFT_DEFECT={defect}", "-DLIFT_FIRED_LOG=1", "-o", str(exe),
-                    str(harness)], check=True)
+    subprocess.run([cxx, "-std=c++11", "-O1", f"-DLIFT_DEFECT={defect}", "-DLIFT_FIRED_LOG=1",
+                    f"-DHARNESS_TURNTABLE={int(system == 'turntable')}", "-o", str(exe), str(harness)], check=True)
     return exe
 
 
@@ -130,19 +136,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--reference", metavar="DIR",
                     help="an unchanged copy of examples/testbed-uno/firmware: report where this tree's "
                          "(changed) firmware first acts differently on the log's inputs")
+    ap.add_argument("--system", choices=["lift", "turntable"], default="lift",
+                    help="which firmware the log comes from (default lift); the turntable takes --reference only")
     ap.add_argument("--cxx", help="C++ compiler (default: g++, c++ or clang++)")
     args = ap.parse_args(argv)
+    if args.system == "turntable" and (args.defect is not None or args.reference is None):
+        ap.error("--system turntable: give --reference DIR (the turntable has no defect switch)")
     if args.defect is None and args.reference is None:
         ap.error("give --defect N, or --reference DIR")
     try:
         text = Path(args.device_log).read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as d:
-            changed = build(args.defect or 0, d, args.cxx)
+            changed = build(args.defect or 0, d, args.cxx, system=args.system)
             if args.reference:
                 ref_h = Path(args.reference) / "harness" / "harness.cpp"
                 if not ref_h.is_file():
                     raise OSError(f"--reference: no {ref_h}")
-                ref = build(0, d, args.cxx, ref_h, "harness-reference")
+                ref = build(0, d, args.cxx, ref_h, "harness-reference", args.system)
                 diff, problem = first_difference(text, changed, ref)
                 points = [diff if diff is not None else {"difference": None}]
             else:

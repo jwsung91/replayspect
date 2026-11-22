@@ -6,7 +6,8 @@
 // model (src/replayspect/sut/turntable.py). Wire format, device log lines, timer order and limits
 // (table, queue, line length, error lines) are those of the lift firmware (lift_device.h, see
 // examples/testbed-uno/README.md). The model defines no defects, so there is no defect switch, and
-// the build line is always "build defect=none".
+// the build line is always "build system=turntable.v0 defect=none". The system field lets the host
+// refuse a board that carries another system (a build line without it is the lift's).
 //
 // Wire format, one line per message:  NAME REQ_ID [key=value ...]
 // Device log lines (when enabled):    # MILLIS KIND NAME [REQ_ID] [key=value ...]
@@ -62,7 +63,7 @@ class Device {
     n_queue_ = 0;
     turning_ = false;
     out_.line(TURNTABLE_DEVICE_LOG ? "READY log=1" : "READY log=0");
-    out_.log(now, "build defect=none");
+    out_.log(now, "build system=turntable.v0 defect=none");
     if (TURNTABLE_DEVICE_LOG) out_.log(now, "state INITIAL from=- on=init");
   }
 
