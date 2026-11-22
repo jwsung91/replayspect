@@ -823,3 +823,13 @@ for the lift and the turntable in `docs/notes/generic-contracts/` (nothing under
 - **The word scan** of `contracts/` now reads every file in its folders too.
 - The existing contract files and the planner documents are unchanged; a session shows its protocol's own
   contract file, as before.
+- **After the #62 review:**
+  - `claim check` on a binding file records the rules file's path and sha256 too (JSON `candidates.rules`,
+    a `rules:` text line): the binding's hash alone does not fix the contracts judged.
+  - The equivalence test adds four later seeds where M9 breaks a generic rule (it breaks none on 0–99),
+    and asserts M9, M10 and M11 are each caught on some seed.
+  - The loader refuses a `{` or `}` left in an expanded contract's strings (a typo in `id` or `desc`).
+  - `rewind --contracts` has the same gap: a trace header records only the binding file's sha256, so "same
+    file as the header's" holds while the rules file changed. Reported, not fixed (backlog).
+  - `docs/backlog.md`: protocols with no acknowledgement or polls cannot be bound yet; the session option
+    for the generic set is not built, with its conditions.

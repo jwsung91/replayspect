@@ -18,7 +18,8 @@ rule; the judge sees only those contracts. The template form is described in
 | P1 | no stop of the action's effect after the state change that ends it | `P1` |
 
 The roles a binding declares: `requests`, `acknowledgement`, `final_success`, `final_failure`, `polls`
-(poll -> its reply), `effects`, `action` (`starts`, `ends`) and `rest_states`.
+(poll -> its reply), `effects`, `action` (`starts`, `ends`) and `rest_states`. No rule uses
+`action.starts` yet.
 
 These rules go beside a protocol's own contracts, not instead of them. A planning session still shows its
 protocol's contract file (`contracts/lift.v0.yaml`, `contracts/turntable.v0.yaml`); a binding file can be

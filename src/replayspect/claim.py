@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from replayspect.contract import ContractSet, judge_report, load_contracts
-from replayspect.contract.spec import Contract
+from replayspect.contract.spec import Contract, rules_file
 from replayspect.devicelog import Completeness, needs_complete, read_device_log
 from replayspect.rewind import IN_JUDGED_KEYS, IN_JUDGED_KEYS_IN_SLICE, IN_SLICE, contract_status, fmt_t, judge_setup
 from replayspect.trace import Event
@@ -221,7 +221,7 @@ def check_claims(candidates: Path, incidents: Sequence[tuple[Path, Path | None]]
     return {
         "tool": "replayspect claim check",
         "system": system.name,
-        "candidates": {"path": str(candidates), "sha256": file_sha256(candidates)},
+        "candidates": _candidates_ref(Path(candidates)),
         "complete": sorted(f"device {k}" for k in comp.device),
         "incidents": [{"path": i.name, "kind": i.kind, "sha256": i.sha256,
                        "model_result": ({"path": i.model["path"], "sha256": i.model["sha256"]}
@@ -235,6 +235,15 @@ def check_claims(candidates: Path, incidents: Sequence[tuple[Path, Path | None]]
         },
         "results": results,
     }
+
+
+def _candidates_ref(path: Path) -> dict[str, Any]:
+    """The candidate file, and for a binding file (contracts/generic/) the rules file it expands too."""
+    ref: dict[str, Any] = {"path": str(path), "sha256": file_sha256(path)}
+    rules = rules_file(path)
+    if rules is not None:
+        ref["rules"] = {"path": str(rules), "sha256": file_sha256(rules)}
+    return ref
 
 
 def _incident_row(c: Contract, cs: ContractSet, inp: Input) -> dict[str, Any]:
@@ -319,6 +328,8 @@ def report_lines(rep: dict[str, Any]) -> list[str]:
              + (f", seeds {seeds['first']}-{seeds['last']} of {seeds['system']}, implementation with no defect"
                 if seeds else "") + ")",
              f"candidates: {rep['candidates']['path']} sha256 {rep['candidates']['sha256']}"]
+    if "rules" in rep["candidates"]:
+        lines.append(f"rules: {rep['candidates']['rules']['path']} sha256 {rep['candidates']['rules']['sha256']}")
     if rep["complete"]:
         lines.append(f"device logs declared complete for: {', '.join(rep['complete'])}")
     for n, inc in enumerate(rep["incidents"], 1):

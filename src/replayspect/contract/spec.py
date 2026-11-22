@@ -51,7 +51,9 @@ Each rule of the rules file (``rule``, optional ``quote``, optional ``each``, ``
 into a contract of an existing kind with ``grade: generic`` and ``source: {rule, quote}``. In the
 contract's strings ``{role}`` becomes the role's names joined with ``|`` and ``{role.key}`` one entry of
 a mapping role; ``each: <role>`` (a list or mapping role) writes one contract per name, as ``{each}``
-(for a mapping, the key) and ``{each.value}``. The judge sees only the expanded contracts.
+(for a mapping, the key) and ``{each.value}``. A ``{`` or ``}`` left in any string after expansion is
+refused. The judge sees only the expanded contracts; :func:`rules_file` names a binding's rules file, so a
+report can record it beside the binding.
 """
 
 from __future__ import annotations
@@ -450,8 +452,21 @@ def _expand(rules: Any, roles: dict[str, Any]) -> list[dict[str, Any]]:
             source = {"rule": rule}
             if r.get("quote") is not None:
                 source["quote"] = r["quote"]
-            out.append({**{k: fill(v) for k, v in contract.items()}, "grade": "generic", "source": source})
+            filled = {k: fill(v) for k, v in contract.items()}
+            for k, v in filled.items():
+                if any("{" in x or "}" in x for x in (v if isinstance(v, list) else [v]) if isinstance(x, str)):
+                    raise ContractError(f"{rule}: {{ or }} left after expansion in {k}: {v!r}")
+            out.append({**filled, "grade": "generic", "source": source})
     return out
+
+
+def rules_file(path: Path) -> Path | None:
+    """The rules file a binding file names (module doc, "Roles"), or None for a plain contract file. Its
+    contents decide the expanded contracts as much as the binding's, so a report records both."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if isinstance(raw, Mapping) and "roles" in raw and isinstance(raw.get("rules"), str):
+        return Path(path).parent / raw["rules"]
+    return None
 
 
 def load_contracts(source: Path | str | Mapping[str, Any]) -> ContractSet:

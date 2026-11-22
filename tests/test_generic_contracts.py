@@ -8,13 +8,15 @@ not change.
 from pathlib import Path
 
 import pytest
+import yaml
 
-from replayspect.claim import Input, judge_one
+from replayspect.claim import Input, check_claims, judge_one, report_lines
 from replayspect.contract import ContractError, judge_report, load_contracts
 from replayspect.contract.checkers import first_violation_details
 from replayspect.runner import get_system
 from replayspect.sut.lift import MUTANTS
 from replayspect.trace import Event, Trace
+from replayspect.tracefile import file_sha256
 
 ROOT = Path(__file__).parent.parent
 GENERIC = ROOT / "contracts" / "generic"
@@ -109,6 +111,28 @@ def test_expansion_refuses_what_it_cannot_write(tmp_path, roles, rules, message)
         load_contracts(binding(roles, str(path)))
 
 
+@pytest.mark.parametrize("field, text", [("id", "G1.{Each}"), ("desc", "at most one {each per req_id"),
+                                         ("desc", "a stray } here")])
+def test_a_brace_left_after_expansion_is_refused(tmp_path, field, text):
+    rule = {"id": "G1.{each}", "desc": "x", "kind": "at_most_once", "per": "req_id",
+            "event": "device.effect({each})", field: text}
+    path = tmp_path / "r.yaml"
+    path.write_text(yaml.safe_dump({"rules": [{"rule": "G1", "each": "effects", "contract": rule}]}))
+    with pytest.raises(ContractError, match=r"G1: \{ or \} left after expansion"):
+        load_contracts(binding(ROLES, str(path)))
+
+
+def test_claim_check_on_a_binding_records_its_rules_file(tmp_path):
+    lift = get_system("lift.v0")
+    rep = check_claims(GENERIC / "lift.v0.yaml", [], normal=[], seeds=range(1), system=lift)
+    rules = GENERIC / "rules.yaml"
+    assert rep["candidates"]["rules"] == {"path": str(rules), "sha256": file_sha256(rules)}
+    assert f"rules: {rules} sha256 {file_sha256(rules)}" in report_lines(rep)
+    plain = check_claims(HAND / "lift.v0.yaml", [], normal=[], seeds=range(1), system=lift)
+    assert "rules" not in plain["candidates"]
+    assert not any(line.startswith("rules: ") for line in report_lines(plain))
+
+
 def test_a_binding_has_no_contracts_of_its_own():
     with pytest.raises(ContractError, match="roles and contracts"):
         load_contracts({**binding(ROLES, str(GENERIC / "rules.yaml")),
@@ -124,15 +148,19 @@ def firsts(cs, contracts, trace, end_us):
     return {v.contract: (v.seq, v.req_id) for v in first_violation_details(found)}, unjudged
 
 
+#: Seeds past 99 where a rarely caught mutant breaks a generic rule (of the 22 for M9 on seeds 0-999), so its
+#: comparison is not empty: on seeds 0-99 M9 breaks none.
+EXTRA_SEEDS = {"M9": (113, 120, 147, 214)}
 RUNS = [("lift.v0", ())] + [("lift.v0", (m,)) for m in sorted(MUTANTS)] + [("turntable.v0", ())]
 
 
 @pytest.mark.parametrize("name, mutants", RUNS, ids=lambda x: x if isinstance(x, str) else "+".join(x) or "-")
 def test_expanded_contracts_judge_like_the_hand_written_ones_on_seeds_0_99(name, mutants):
+    """Seeds 0-99, and for M9 a few later seeds where it is caught."""
     system, cs, want = get_system(name), generic(name), hand(name)
     hand_cs = load_contracts(HAND / f"{name}.yaml")
     caught = 0
-    for seed in range(100):
+    for seed in [*range(100), *EXTRA_SEEDS.get("".join(mutants), ())]:
         trace = system.run(seed, None, mutants, system.until_us)
         got = firsts(cs, cs.contracts, trace, system.until_us)
         exp = firsts(hand_cs, [want[i] for i in cs.ids()], trace, system.until_us)
@@ -144,6 +172,8 @@ def test_expanded_contracts_judge_like_the_hand_written_ones_on_seeds_0_99(name,
         assert caught == 0
     if mutants in (("M1",), ("M2",), ("M3",)):  # caught on most seeds: the comparison is not vacuous
         assert caught > 50, caught
+    if mutants in (("M9",), ("M10",), ("M11",)):  # caught on a few seeds only, but on some
+        assert caught >= 2, caught
 
 
 @pytest.mark.slow
