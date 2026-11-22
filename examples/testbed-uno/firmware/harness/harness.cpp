@@ -1,19 +1,25 @@
-// Native conformance harness for lift_device.h (no Arduino).
+// Native conformance harness for lift_device.h, or turntable_device.h with -DHARNESS_TURNTABLE=1 (no Arduino).
 // stdin: one input per line, "T_MS LINE" (times non-decreasing); a final line "END T_MS" runs timers until then.
 // "T_MS @pos UP DOWN" (each 0 or 1) is an end sensor sample for a -DLIFT_TRAVEL_SENSOR=1 build.
 // stdout: "T_MS OUT LINE" for protocol lines and "T_MS LOG BODY" for device log lines.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#if HARNESS_TURNTABLE
+#include "../turntable_uno/turntable_device.h"
+namespace sut = turntable;
+#else
 #include "../lift_uno/lift_device.h"
+namespace sut = lift;
+#endif
 
-struct Print : lift::Sink {
+struct Print : sut::Sink {
   uint32_t now = 0;
   void line(const char* text) override { std::printf("%u OUT %s\n", now, text); }
   void log(uint32_t t, const char* text) override { std::printf("%u LOG %s\n", t, text); }
 };
 
-static void run_until(lift::Device& d, Print& out, uint32_t t) {
+static void run_until(sut::Device& d, Print& out, uint32_t t) {
   uint32_t due;
   while (d.next_due(due) && (int32_t)(due - t) <= 0) {
     out.now = due;
@@ -24,7 +30,7 @@ static void run_until(lift::Device& d, Print& out, uint32_t t) {
 
 int main() {
   Print out;
-  lift::Device dev(out);
+  sut::Device dev(out);
   dev.begin(0);
   char buf[256];
   while (std::fgets(buf, sizeof buf, stdin)) {

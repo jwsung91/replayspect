@@ -7,6 +7,7 @@ ingests and reproduces. The work order is
 | Part | Runs on | Files |
 | --- | --- | --- |
 | Device: the `lift.v0` state machine, no defect unless built with one (stage 3) | Arduino Uno | `firmware/lift_uno/` (`lift_device.h` is plain C++; `lift_uno.ino` wraps serial I/O and `millis()`) |
+| Device: the `turntable.v0` state machine (firmware only, checked against the model; no client or hardware run yet) | Arduino Uno | `firmware/turntable_uno/` (`turntable_device.h`, `turntable_uno.ino`) |
 | Client: commands, retries, timeouts, polling, the log | Jetson Orin | `host/client.py` |
 | Link: passes lines through (stage 1) and records what it did | Jetson Orin | `host/fault_link.py` |
 | Rules to ingest the client log | development machine | `rules/testbed-client.yaml` |
@@ -367,6 +368,16 @@ assignment's hash until after the submission.
 **Result:** [docs/experiments/testbed-05.md](../../docs/experiments/testbed-05.md) (16 blind slots on
 mechanically mutated firmware, with the rev2 contracts). The builds, flashing and runs were on the Orin,
 with the scripts `blind_flash.sh` and `run_blind.sh` kept with the registration outside the repository.
+
+## Turntable firmware
+
+`firmware/turntable_uno/` is the `turntable.v0` device (docs/protocol-turntable.md) in the same
+shape as the lift: `turntable_device.h` is plain C++, `turntable_uno.ino` the same serial loop.
+Wire format, device log lines, timer order, limits and error lines are the lift's. The model has
+no defects, so there is no defect switch and the build line is always `build defect=none`.
+`tests/test_testbed_turntable.py` compiles the harness with `-DHARNESS_TURNTABLE=1` and compares
+replies, state changes and motor effects with the Python model. `host/client.py` and the ingest
+rules are still lift-only, so no hardware run has been made.
 
 ## Not yet
 
