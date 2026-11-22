@@ -67,7 +67,10 @@ Implemented:
   compile-time switch for the public device-side defects, checked against the
   model's mutants and run on hardware with three of them
   ([docs/experiments/testbed-03.md](docs/experiments/testbed-03.md)); turntable
-  firmware checked against the turntable model, not yet run on hardware
+  firmware checked against the turntable model and run on its own board with
+  the same client (24 development sessions with faults: no false mismatch, no
+  violation of the turntable's own or the generic contracts); each board named
+  by its `/dev/serial/by-id/` path, and a board carrying another system refused
 - Driven replay of a client-side log: `drive` replays the log as a script,
   simulates the device and needs no seed; `drive --reconstruct` searches for
   the fault plan; `drive --fit` reports every explanation with the fewest link
