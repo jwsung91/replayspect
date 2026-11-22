@@ -80,6 +80,9 @@ For each candidate:
 - **Every input is named with its sha256:** the candidate file, each incident, each model result and
   each normal file. For the normal files, it also gives the sha256 of the list itself: one line per file,
   `<sha256>  <path>` (two spaces), in the order read. Seeds are named by system and range.
+- **A binding file as the candidate file** (`contracts/generic/<protocol>.yaml`): the rules file it expands
+  decides the contracts as much as the binding does, so the report also names the rules file with its
+  sha256 (JSON `candidates.rules`, text line `rules: <path> sha256 <hex>`).
 
 ### "Exercised"
 

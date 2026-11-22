@@ -36,6 +36,24 @@ mapping of ``doc`` (the document), ``lines`` (its line numbers), ``quote``
 string. A ``generic`` contract (a rule that does not depend on the protocol,
 written for it) must have a source, and its source holds ``rule`` (the rule's
 id, such as ``G1``) and optionally ``quote`` (the rule in words), nothing else.
+
+**Roles** (the generic rules, ``contracts/generic/``): a file with ``roles`` instead of ``contracts``
+binds one protocol's names to roles and names a rules file (``rules``, relative to the binding file; to
+the current directory when the binding is given as text or a mapping)::
+
+    protocol: lift.v0
+    rules: rules.yaml
+    roles:
+      requests: [MOVE_UP, MOVE_DOWN]      # a name, a list of names or a mapping of name -> name
+      polls: {STATUS: STATUS_REPLY}
+
+Each rule of the rules file (``rule``, optional ``quote``, optional ``each``, ``contract``) is expanded
+into a contract of an existing kind with ``grade: generic`` and ``source: {rule, quote}``. In the
+contract's strings ``{role}`` becomes the role's names joined with ``|`` and ``{role.key}`` one entry of
+a mapping role; ``each: <role>`` (a list or mapping role) writes one contract per name, as ``{each}``
+(for a mapping, the key) and ``{each.value}``. A ``{`` or ``}`` left in any string after expansion is
+refused. The judge sees only the expanded contracts; :func:`rules_file` names a binding's rules file, so a
+report can record it beside the binding.
 """
 
 from __future__ import annotations
@@ -352,14 +370,115 @@ def _name(value: Any, where: str, allow_none: bool = False) -> str | None:
     return value
 
 
+_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+_SLOT = re.compile(r"\{([a-z_]+)(?:\.([a-z_]+))?\}")
+
+
+def _roles(raw: Any) -> dict[str, Any]:
+    """Check a roles section: each role a name, a non-empty list of names or a non-empty mapping of names."""
+    if not isinstance(raw, Mapping) or not raw:
+        raise ContractError("roles must be a non-empty mapping")
+
+    def name(v: Any, role: str) -> str:
+        if type(v) is not str or not _NAME.match(v):
+            raise ContractError(f"role {role}: {v!r} is not a name (letters, digits, _; quote yes/no/on/off)")
+        return v
+
+    out: dict[str, Any] = {}
+    for role, v in raw.items():
+        if isinstance(v, list) and v:
+            out[role] = [name(x, role) for x in v]
+        elif isinstance(v, Mapping) and v:
+            out[role] = {name(k, role): name(x, role) for k, x in v.items()}
+        elif isinstance(v, (list, Mapping)):
+            raise ContractError(f"role {role}: empty")
+        else:
+            out[role] = name(v, role)
+    return out
+
+
+def _expand(rules: Any, roles: dict[str, Any]) -> list[dict[str, Any]]:
+    """The raw contracts the rules give for these roles."""
+    items = rules.get("rules") if isinstance(rules, Mapping) else None
+    if not isinstance(items, list) or not items:
+        raise ContractError("a rules file needs a non-empty list of rules")
+    out = []
+    for r in items:
+        rule = r.get("rule") if isinstance(r, Mapping) else None
+        contract = r.get("contract") if isinstance(r, Mapping) else None
+        if type(rule) is not str or not rule or not isinstance(contract, Mapping):
+            raise ContractError(f"each rule needs a rule id and a contract, got {r!r}")
+        if "grade" in contract or "source" in contract:
+            raise ContractError(f"{rule}: a rule's contract sets no grade or source (the expansion does)")
+        each = r.get("each")
+        if each is None:
+            items_of: list[tuple[str | None, str | None]] = [(None, None)]
+        elif each not in roles:
+            raise ContractError(f"{rule}: no role {each!r}")
+        elif isinstance(roles[each], list):
+            items_of = [(x, None) for x in roles[each]]
+        elif isinstance(roles[each], dict):
+            items_of = list(roles[each].items())
+        else:
+            raise ContractError(f"{rule}: each needs a list or mapping role, {each!r} is one name")
+
+        for key, value in items_of:
+            def slot(m: re.Match, key=key, value=value) -> str:
+                role, sub = m.groups()
+                if role == "each":
+                    if key is None:
+                        raise ContractError(f"{rule}: {{each}} outside an each rule")
+                    if sub is None:
+                        return key
+                    if sub == "value" and value is not None:
+                        return value
+                    raise ContractError(f"{rule}: {m.group(0)} needs an each over a mapping role")
+                v = roles.get(role)
+                if v is None or (sub is not None and (not isinstance(v, dict) or sub not in v)):
+                    raise ContractError(f"{rule}: no role {role + ('.' + sub if sub else '')!r}")
+                if sub is not None:
+                    return v[sub]
+                if isinstance(v, dict):
+                    raise ContractError(f"{rule}: role {role} is a mapping; use {{{role}.<key>}}")
+                return "|".join(v) if isinstance(v, list) else v
+
+            def fill(x: Any) -> Any:
+                if isinstance(x, str):
+                    return _SLOT.sub(slot, x)
+                if isinstance(x, list):
+                    return [fill(y) for y in x]
+                return x
+
+            source = {"rule": rule}
+            if r.get("quote") is not None:
+                source["quote"] = r["quote"]
+            filled = {k: fill(v) for k, v in contract.items()}
+            for k, v in filled.items():
+                if any("{" in x or "}" in x for x in (v if isinstance(v, list) else [v]) if isinstance(x, str)):
+                    raise ContractError(f"{rule}: {{ or }} left after expansion in {k}: {v!r}")
+            out.append({**filled, "grade": "generic", "source": source})
+    return out
+
+
+def rules_file(path: Path) -> Path | None:
+    """The rules file a binding file names (module doc, "Roles"), or None for a plain contract file. Its
+    contents decide the expanded contracts as much as the binding's, so a report records both."""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    if isinstance(raw, Mapping) and "roles" in raw and isinstance(raw.get("rules"), str):
+        return Path(path).parent / raw["rules"]
+    return None
+
+
 def load_contracts(source: Path | str | Mapping[str, Any]) -> ContractSet:
     """Load a contract set.
 
     ``source`` is a :class:`~pathlib.Path` to a YAML file, a ``str`` of YAML
     text, or an already-parsed mapping.
     """
+    base = Path()
     if isinstance(source, Path):
         raw = yaml.safe_load(source.read_text(encoding="utf-8"))
+        base = source.parent
     elif isinstance(source, str):
         raw = yaml.safe_load(source)
     else:
@@ -376,7 +495,19 @@ def load_contracts(source: Path | str | Mapping[str, Any]) -> ContractSet:
             _name(t[1], f"transitions[{i}].on"),
             _name(t[2], f"transitions[{i}].to"),
         ))
-    items = raw.get("contracts")
+    if "roles" in raw:
+        if "contracts" in raw:
+            raise ContractError("a file has roles and contracts; a binding's contracts come from its rules file")
+        rules = raw.get("rules")
+        if type(rules) is not str or not rules:
+            raise ContractError("a binding needs rules: the path of its rules file")
+        try:
+            rules_raw = yaml.safe_load((base / rules).read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise ContractError(f"rules file {rules!r}: {exc.strerror or exc}") from None
+        items = _expand(rules_raw, _roles(raw["roles"]))
+    else:
+        items = raw.get("contracts")
     if not isinstance(items, list) or not items:
         raise ContractError("contracts must be a non-empty list")
     contracts = tuple(_contract(c) for c in items)

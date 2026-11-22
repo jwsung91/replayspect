@@ -101,6 +101,10 @@ Implemented:
   positive on real and simulated runs; the operator chose G1–G6b and P1 for a
   generic contract library
   ([docs/notes/generic-contracts.md](docs/notes/generic-contracts.md))
+- Generic contract library (`contracts/generic/`): the rules written once against
+  roles, a roles file per system, expanded by the loader into contracts of the
+  existing kinds; the judge is unchanged, and the expansion judges like the
+  hand-written instances on simulator seeds
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with
@@ -114,7 +118,6 @@ Not yet:
 - Reproducing a device-side log alone, or merging two logs with their clocks
 - Recorder for real code: a library that emits trace events from a running system
 - Symptom judge: matching a run against a stated symptom instead of a fixed check
-- The generic contract library itself: roles per system, expanded into contracts (`contracts/generic/`)
 - Provider interface: one LLM interface for MCP and API clients
 
 Experiments so far:
