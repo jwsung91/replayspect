@@ -33,7 +33,7 @@ judgments.
 
 **What it knows of this group's changes** is one sentence, written by the operator:
 
-> **[OPERATOR: one sentence, to be written here before approval.]**
+> mechanical mutants of the turntable firmware, made by rule.
 
 It does not know:
 - the rules or the target lines;
@@ -42,8 +42,8 @@ It does not know:
 - how many slots carry a change, or how many builds there are.
 
 The advisor session makes the rules, the candidates and the draw script. The advisor is also Claude, but it is
-not this session. Its script draws the slots with a recorded seed. The operator confirms the draw, then
-builds, flashes and runs. Nobody picks a change by hand.
+not this session. Its script draws the slots from a seed fixed by hashes ("The draw", below). The operator
+confirms the draw, then builds, flashes and runs. Nobody picks a change by hand, and nobody picks the seed.
 
 **What it has seen of earlier groups:**
 - **testbed-04, 05 and 06 results**, which are published, with each group's drawn changes
@@ -61,8 +61,9 @@ builds, flashes and runs. Nobody picks a change by hand.
   This session listed the Orin's home folder once (the names above), and opened nothing in them.
 - **Slot truth files,** before scoring.
 
-**The Orin:** the analyst places the testbed folder there (Order, step 3). After that it does not use the Orin
-until it has handed over the submission's hash. In WP6/7c stage 1 and in this draft's dry run it used the Orin
+**The Orin:** the analyst places the testbed folder there (Order, step 3). After it has checked the `MANIFEST`,
+the operator cuts its SSH access to the Orin, and restores it only after receiving the submission's hash
+(Order, step 6). In WP6/7c stage 1 and in this draft's dry run it used the Orin
 through SSH; both were before the draw, on folders of its own (`~/wp67c-stage1`, `~/wp67c-dryrun`).
 
 ## Setup
@@ -160,17 +161,32 @@ Each plan passed:
   `turntable_device.h` itself, compiled natively as in `fired_points.py --system turntable`; every `send`,
   `state` and `effect` line came out in the same millisecond.
 
+**The delays differ from testbed-06's actual pool.** The operator found testbed-06's analyst folder after
+these plans were made (Limits). Its plans use other values: a copy during the move 1 s after the first arrival
+(here 1.5 s), a copy after `DONE` 3.5 s after (here 4 s), a refused request repeated 500 ms after (here 1 s),
+and some targets differ. This pool is not changed to match: its values follow this registration's text.
+
 The pool maker is deterministic: run again, it writes the same files. The pool file (`blind-plans.json`: plan
 id, seed, kind, target, the command lost, what the link does) goes to the operator. Any plan may serve any
 build.
 
 ### The draw, on the operator's side
 
-This is done as in testbed-06. The advisor's script draws, with a recorded seed:
+This is done as in testbed-06. The advisor's script draws:
 - which builds carry a change, and which change;
 - slot → plan;
 - slot → build;
 - the run order.
+
+**The advisor's materials,** fixed before this registration was approved. The analyst sees only their sha256:
+- `rules.md`: `869581327607e3e3661965cdab54b6587296252d1239dd3c1af8707a5a48ee96`;
+- `candidates.tsv`: `8c67f609ed8c96180b92086feceadbd8fd96594b99b2c4a99f53986f4c67b2d8`;
+- `tools.sha256`: `703ba68992e80c0358a74b1b32c2c2eb98306e16e2fe37f388b43e39b2876589`.
+
+**The draw seed:**
+`sha256("<this document's sha256>:<candidates.tsv's sha256>:<blind-plans.json's sha256>")`, each hash as
+lowercase hex. `blind-plans.json` is `46058413900a052f46adac4448ab215f89b5058a355bc20895c43c83a80f1575`
+(Files). Every choice above comes from this seed, in the script's order. Nobody picks the seed.
 
 **The operator's folder.** The advisor makes it: `fw/bNN` for each build (a copy of
 `examples/testbed-uno/firmware`), `reference-firmware/` for scoring, and `blind_flash.sh`.
@@ -200,12 +216,16 @@ listed in the results. A build that resets during a session stays: its run is in
      `1356127`), `run_blind.sh` and the pool, with a `MANIFEST`. It writes `boards.env` there (the two
      by-id paths of WP6/7c stage 1).
    - It checks the `MANIFEST` there (`sha256sum -c MANIFEST`).
-   - From then on it does not use the Orin.
+   - The operator then cuts the analyst's SSH access to the Orin, and restores it after receiving the
+     submission's hash (step 6). From then on the analyst does not use the Orin.
    - `blind_flash.sh` goes into the operator's folder.
 4. **The final assignment hash.** The operator builds every `fw/bNN` with `bash blind_flash.sh build-all` and
    writes the hashes into the assignment file. The analyst receives the final file's sha256, before any
    session.
-5. **Running,** on the Orin, by the operator. For each slot, in the drawn order:
+5. **Running,** on the Orin, by the operator. The advisor makes the operator's folder; the step script in it
+   calls `blind_flash.sh`, `run_blind.sh` and `score.py` as they are, unchanged. A slot where `run_blind.sh`
+   exits 1 (an end line, but invalid) is not run again: the script goes on to the next slot. If it exits 4,
+   the script stops. For each slot, in the drawn order:
    - `bash blind_flash.sh flash bNN SHA`:
      - before the upload it checks the `.hex` against its hash, and that the port is `TURNTABLE_PORT` in
        `boards.env`, a by-id path that is present. It does not look at the firmware on the board;
@@ -225,7 +245,7 @@ listed in the results. A build that resets during a session stays: its run is in
 6. **The submission hash.**
    - The analyst runs `analyze.py` once, on all slots.
    - It writes each line's `description`.
-   - It gives the operator the file's sha256.
+   - It gives the operator the file's sha256. The operator then restores its SSH access to the Orin.
    - The tool's output before the descriptions is kept with its own hash (`analyze.py` prints it).
 7. **Scoring.** `score.py` runs only after the operator has the submission's hash. The scoring output and the
    assignment file go to the analyst only after that.
@@ -391,15 +411,18 @@ There is **no prediction** of how many slots differ, or of which contracts catch
   is flattered by its own development data. The operator's statement on the overlap is reported with the
   results.
 - **The advisor wrote the generic rule list and makes this group's changes.** It knows the tool and the rules
-  it is measuring. Against this: the draw is random among the candidates, and the advisor runs `replayspect`
-  on no candidate and no slot before the submission's hash is recorded.
+  it is measuring. Against this: the advisor sorted the candidates with its own closed-loop simulator (the
+  repository's host code driving the header compiled natively), and ran `replayspect` on no candidate; the
+  script draws with the seed above; and the advisor runs `replayspect` on no slot before the submission's hash
+  is recorded.
 - **The comparison's timing rules were set on lift logs.** The same-millisecond rule and the 2 ms window held
   on stage 1's 24 turntable logs (the window was never used), which is development data.
 - **The analyst chose the plan details:** the targets, the copy delays (1.5 s, 4 s, 20 ms, 6 s, 1 s), the
   disconnect's offset and length, the poll placements and their 100 ms margin, the seed rule, and the
   refusal kinds' carried-over recipes (above).
-- **The analyst wrote every script anew** (Files). testbed-06's scripts were not found; these follow its
-  registration's text, not its code. Where the text did not fix a detail, the analyst chose it.
+- **The analyst wrote every script anew** (Files). testbed-06's scripts were not available to the analyst when
+  this draft was written; the operator found them afterwards, and they were not used. These follow testbed-06's
+  registration's text, not its code, and the plan delays differ from its pool ("The plan pool"). Where the text did not fix a detail, the analyst chose it.
 - **The device log is the suspect's statement.** A change that acts only on logging, or makes the device do one
   thing and log another, is not seen (prediction 14).
 - **Contracts find only what a declared rule forbids** (predictions 6–10).
@@ -409,8 +432,10 @@ There is **no prediction** of how many slots differ, or of which contracts catch
   `fired_points.py`, and its slot is not scorable for S1 and S2.
 - **One board.** Every slot runs on `…B182`. A fault of that board, its USB link or its clock touches every
   slot alike.
-- **The blind's protection is a commitment.** The analyst could read the Orin. It undertakes not to after
-  placing the testbed folder, and the session transcript can be audited for it. The analyst knows each slot's
+- **The blind's protection.** From the `MANIFEST` check to the submission's hash, the operator cuts the
+  analyst's SSH access to the Orin (Order, steps 3 and 6). Before the cut and after the restore it rests on a
+  commitment, and the session transcript can be audited for it. The operator's folder and the truth files stay
+  on the operator's side. The analyst knows each slot's
   plan from the client log header; that says nothing about the build.
 - **Small numbers:** 24 slots. Rates are counts, not estimates with error bars.
 
@@ -460,7 +485,10 @@ the board through the operator's scripts instead (amendment F's item 5 asks for 
 - **The system:** the turntable, on its own board, instead of the lift. One board.
 - **Contracts:** three results per slot — the generic set, the turntable's own, their union — instead of rev3.
 - **The pool:** the twelve kinds carried over; the two refusal kinds lose an earlier command; seeds 3000–3047.
-- **Scripts:** all written anew (testbed-06's were not found). `run_blind.sh` writes a `.done` file;
+  The delays differ from testbed-06's actual pool (copy during the move 1 s → 1.5 s, copy after `DONE`
+  3.5 s → 4 s, refused repeat 500 ms → 1 s) and some targets differ; the pool was not changed ("The plan pool").
+- **Scripts:** all written anew (testbed-06's were not available when this draft was written; the operator found
+  them afterwards, and they were not used). `run_blind.sh` writes a `.done` file;
   `blind_flash.sh` checks the port against `boards.env` before the upload and the system and build after;
   `score.py` is new as a script; `analyze.py` runs two contract sets.
 - **The assignment file** has a machine-readable part for `score.py`.
@@ -471,7 +499,7 @@ the board through the operator's scripts instead (amendment F's item 5 asks for 
 
 Outside the repository, in `testbed-07/` beside the repository folder on the development machine. **All
 scripts were written anew for testbed-07,** from testbed-06's registration text; testbed-06's scripts were not
-found. The hashes below are the draft's; the final registration repeats them.
+available to the analyst then (the operator found them afterwards; they were not used). The hashes below are the draft's; the final registration repeats them.
 
 | File | sha256 |
 | --- | --- |
