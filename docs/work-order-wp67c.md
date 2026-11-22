@@ -156,6 +156,24 @@ unless marked otherwise.
     through the harness tests only and has never run on a board with a servo and sensors attached.
 15. **Stage 2:** testbed-07 runs on the turntable board alone. The draft registration says so.
 
+**F. After the review of #66** (2026-11-22).
+- **B4 settled:**
+  - The turntable's build line names `system=turntable.v0`; a line without the field is `lift.v0`.
+  - The client takes `--expect-system lift.v0|turntable.v0`.
+  - The lift's truth file and device log are pinned byte-for-byte by golden files written before
+    `fault_link.py` changed. The one stated exception is the new port line.
+  - The client no longer calls a private link method.
+  - A flash checks only the port against `boards.env` before the upload; it checks the boot lines
+    (system and build) only after it.
+  - The start order stays as it is.
+- **The two refusal kinds** (`refused-repeated`, `copy-refused-early`, losing the command two places
+  before the target) count as carried over, not as replacements. Stage 2's pool does the same, and
+  the draft registration states the difference.
+- **Seeds 7000–7099** are the development range; stage 2's pool does not use them.
+- `client.py` warns when `--port` is not a `/dev/serial/by-id/` path.
+- Scripts outside the repository skip the truth file's port record.
+- A reported test count says whether it includes the slow tests (`-m ""`).
+
 ## What may be claimed afterwards
 
 - The generic set's count on testbed-07's acting slots is a measurement, on one protocol of the lift's shape, with mechanical changes, on 24 slots. It is not evidence for a protocol of another shape.

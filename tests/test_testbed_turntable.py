@@ -114,7 +114,7 @@ def test_turntable_scripts_reach_every_reply_and_state(harness):
 def test_turntable_build_line_names_no_defect(harness):
     _, _, _, raw = firmware(harness, [(0, "STATUS s-0001"), (10, "END")])
     assert "0 OUT READY log=1" in raw.splitlines()
-    assert "0 LOG build defect=none" in raw.splitlines()
+    assert "0 LOG build system=turntable.v0 defect=none" in raw.splitlines()
 
 
 # -- the harness's device log read by `replayspect device` (WP6/7c stage 1) ------------------------

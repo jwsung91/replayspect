@@ -385,14 +385,28 @@ TURNTABLE_PORT=/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_<serial>-if00
 ```
 
 `client.py` records the path it was given, and what it resolves to, in the truth file's first line
-(`{"action": "port", ...}`). The past records above used `/dev/ttyACM0` with one board.
+(`{"action": "port", ...}`), and warns when the path is not a by-id one. The past records above used
+`/dev/ttyACM0` with one board.
+
+**The wrong board is refused.**
+- **A session:** `client.py --expect-system lift.v0|turntable.v0` (default `lift.v0`). When the
+  build line names another system, the client stops sending at once. The run is invalid
+  (`reasons=wrong_system`) and the exit status is 3.
+- **A flash:** before the upload, the script checks only that the port is that system's path in
+  `boards.env`. It does not look at the firmware on the board: on its first flash, the turntable
+  board does not carry the turntable firmware yet.
+- **After the upload:** `host/board_check.py --port PORT --expect-system SYSTEM` reads the boot
+  lines and checks the system and the build. Exit status 0 on a match, 3 when the line names
+  another system or build, 4 when no build line comes.
 
 ## Turntable firmware
 
 `firmware/turntable_uno/` is the `turntable.v0` device (docs/protocol-turntable.md) in the same
 shape as the lift: `turntable_device.h` is plain C++, `turntable_uno.ino` the same serial loop.
 Wire format, device log lines, timer order, limits and error lines are the lift's. The model has
-no defects, so there is no defect switch and the build line is always `build defect=none`.
+no defects, so there is no defect switch and the build line is always
+`build system=turntable.v0 defect=none`. The lift's build line has no `system=` field and is read as
+`lift.v0`; its output is unchanged.
 The turntable uses the timer build only: a turn lasts 3 s and lights the LED; no motor or sensor.
 
 - **Conformance:** `tests/test_testbed_turntable.py` compiles the harness with `-DHARNESS_TURNTABLE=1`
@@ -413,8 +427,9 @@ The turntable uses the timer build only: a turn lasts 3 s and lights the LED; no
 ```bash
 arduino-cli compile --fqbn arduino:avr:uno examples/testbed-uno/firmware/turntable_uno
 arduino-cli upload -p "$TURNTABLE_PORT" --fqbn arduino:avr:uno examples/testbed-uno/firmware/turntable_uno
+python3 host/board_check.py --port "$TURNTABLE_PORT" --expect-system turntable.v0
 python3 host/client.py --port "$TURNTABLE_PORT" --seed SEED --plan PLAN.json --expect-build none \
-  --sequence TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT \
+  --expect-system turntable.v0 --sequence TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT \
   --log client.log --device-log device.log --truth truth.jsonl
 ```
 
@@ -423,7 +438,8 @@ python3 host/client.py --port "$TURNTABLE_PORT" --seed SEED --plan PLAN.json --e
 About 24 sessions on the turntable board, testbed-06's twelve plan kinds carried over, two plans each,
 seeds 7000–7023 (the range 7000–7099 is kept for development; no blind pool takes it). The plans,
 the plan maker, the Orin run script and the checks live outside the repository
-(`testbed-turntable-dev/`: `make_plans.py`, `run_dev.sh`, `check_dev.py`, `dry_run.py`). Carried over:
+(`testbed-turntable-dev/`: `make_plans.py`, `flash.sh`, `run_dev.sh`, `check_dev.py`, `dry_run.py`).
+Carried over:
 
 - `refused-repeated` and `copy-refused-early` are adapted: in the turntable's order losing the command
   just before a target never makes it refused, so the command two before is lost

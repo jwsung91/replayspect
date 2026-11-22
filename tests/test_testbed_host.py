@@ -327,3 +327,55 @@ def test_the_truth_file_names_the_board_path():
     recs = truth_of(truth)
     assert recs[0]["action"] == "port" and recs[0]["path"] == "/dev/serial/by-id/usb-Arduino_Uno_X-if00"
     assert "port" not in [r["action"] for r in truth_of(run_client(run_s=3)[2])]
+
+
+# -- the board's system (WP6/7c stage 1, B4) --------------------------------------------------------
+
+GOLDEN_EXTRA = (b"# 0 build defect=none\n# 0 state DOWN from=- on=init\n# 0 config travel=timer\n"
+                b"# 12 recv MOVE_UP r-0001\n# 12 send ACK r-0001\n# 62 effect motor_start r-0001 dir=up\n"
+                b"# 70 defect fired M4 r-0001\n")
+
+
+def test_the_lift_truth_file_and_device_log_are_byte_for_byte_what_they_were_before_the_system_field():
+    # written by fault_link.py before it read the build line's system field (WP6/7c stage 1, B4)
+    _, dlog, truth, _ = run_client(plan=GOLDEN_PLAN, seed=7, extra=GOLDEN_EXTRA)
+    assert truth == (GOLDEN / "link-lift-faults.truth.jsonl").read_text()
+    assert dlog == (GOLDEN / "link-lift-faults.device.log").read_text()
+    # the one exception: with a board path, the truth file's first line is the port record
+    _, dlog, truth, _ = run_client(plan=GOLDEN_PLAN, seed=7, extra=GOLDEN_EXTRA, port_path="/dev/serial/by-id/x")
+    first, rest = truth.split("\n", 1)
+    assert '"action": "port"' in first and rest == (GOLDEN / "link-lift-faults.truth.jsonl").read_text()
+
+
+def test_the_build_line_names_the_system_and_no_field_means_the_lift():
+    from fault_link import build_fields
+    assert build_fields("# 0 build defect=none") == ("lift.v0", "none")
+    assert build_fields("# 0 build system=turntable.v0 defect=none") == ("turntable.v0", "none")
+    assert build_fields("# 0 build defect=M4") == ("lift.v0", "M4")
+
+
+def test_the_client_refuses_a_board_that_carries_another_system():
+    ready = b"READY log=1\n# 0 build system=turntable.v0 defect=none"
+    log, _, _, valid = run_client(run_s=20, ready=ready, device=TurntableDevice)  # a lift session, default
+    assert not valid and log.splitlines()[-1].endswith("valid=no reasons=wrong_system")
+    assert sum(" TX " in x for x in log.splitlines()) <= 1  # it stopped at once
+    log, _, _, valid = run_client(run_s=20, ready=ready, device=TurntableDevice, sequence=TURNTABLE_SEQUENCE,
+                                  expect_system="turntable.v0")
+    assert valid
+    log, _, _, valid = run_client(run_s=5, extra=b"# 0 build defect=none\n", expect_system="turntable.v0")
+    assert not valid and "reasons=wrong_system" in log
+
+
+def test_the_client_warns_on_a_port_that_is_not_a_by_id_path():
+    assert tb_client.port_warning("/dev/serial/by-id/usb-Arduino-if00") is None
+    assert "by-id" in tb_client.port_warning("/dev/ttyACM0")
+
+
+def test_board_check_reads_the_boot_lines_after_an_upload():
+    import board_check as bc
+    turn = ["READY log=1", "# 0 build system=turntable.v0 defect=none", "# 0 state INITIAL from=- on=init"]
+    assert bc.check(turn, "turntable.v0", "none") == (0, "turntable.v0 defect=none")
+    assert bc.check(turn, "lift.v0", "none")[0] == 3
+    assert bc.check(["READY log=1", "# 0 build defect=M4"], "lift.v0", "none")[0] == 3
+    assert bc.check(["READY log=1", "# 0 build defect=none"], "lift.v0", "none")[0] == 0
+    assert bc.check(["\x00garbage", "READY log=0"], "lift.v0", "none")[0] == 4

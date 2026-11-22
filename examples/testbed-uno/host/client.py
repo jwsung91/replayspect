@@ -19,7 +19,9 @@ A run is invalid when the device writes any ``# ... error`` line, or when ``READ
 (the board reset). The last log line says which.
 
 Usage (on the Orin):  python3 client.py --port /dev/serial/by-id/<the board> --log client.log --device-log device.log
-The port is named by its /dev/serial/by-id/ path, which stays with the board; the truth file records it.
+The port is named by its /dev/serial/by-id/ path, which stays with the board; the truth file records it,
+and another path gets a warning. --expect-system (default lift.v0): a board whose build line names
+another system is refused at once (the run is invalid, reasons=wrong_system, exit status 3).
 Needs pyserial (``pip install pyserial``) for a real port; the rest is the standard library.
 """
 
@@ -62,12 +64,15 @@ class Clock:
 
 class Client:
     def __init__(self, link: FaultLink, clock: Clock, log, seed: int = 0, commands: int = 6, run_s: int = 90,
-                 expect_build: str | None = None, sequence=LIFT_SEQUENCE, port_path: str | None = None):
+                 expect_build: str | None = None, sequence=LIFT_SEQUENCE, port_path: str | None = None,
+                 expect_system: str = "lift.v0"):
         if not sequence:
             raise ValueError("an empty command sequence")
         self.link, self.clock, self.log = link, clock, log
         self.sequence = tuple(sequence)
         self.expect_build = expect_build
+        self.expect_system = expect_system
+        self.wrong_system = False
         self.rng = random.Random(seed)
         self.seed, self.commands, self.run_us = seed, commands, run_s * 1_000_000
         self.counters = {"r": 0, "s": 0}
@@ -84,7 +89,7 @@ class Client:
         self.up = True
         link.on_change = self.link_change
         if port_path is not None:
-            link._record({"action": "port", "path": port_path, "resolved": os.path.realpath(port_path)})
+            link.record({"action": "port", "path": port_path, "resolved": os.path.realpath(port_path)})
 
     # -- log ----------------------------------------------------------------------------------
 
@@ -118,7 +123,7 @@ class Client:
         self.at(now + POLL_US, "poll")
 
     def done(self, now: int) -> bool:
-        return self.started_at is not None and now - self.started_at >= self.run_us
+        return self.wrong_system or (self.started_at is not None and now - self.started_at >= self.run_us)
 
     def finish(self, now: int) -> bool:
         """Write the closing line; returns whether the run is valid."""
@@ -127,6 +132,8 @@ class Client:
             reasons.append(f"device_errors={len(self.link.errors)}")
         if self.resets:
             reasons.append(f"resets={self.resets}")
+        if self.wrong_system:
+            reasons.append("wrong_system")
         if self.expect_build is not None and self.link.build != self.expect_build:
             # never names either build: the client log must not carry the answer
             reasons.append("wrong_build" if self.link.build is not None else "no_build_line")
@@ -135,6 +142,8 @@ class Client:
 
     def step(self, now: int) -> None:
         """Run the timers due by ``now``, then handle the lines received."""
+        if self.wrong_system:
+            return
         while True:
             due = [t for t in self.timers if t[0] <= now]
             if not due:
@@ -148,6 +157,8 @@ class Client:
                     self.start(now, line)  # anything before READY is boot noise
             else:
                 self.receive(line, now)
+        if self.link.system is not None and self.link.system != self.expect_system:
+            self.wrong_system = True  # another system's board: send nothing more
 
     def fire(self, kind: str, req_id: str | None, now: int, due: int | None = None) -> None:
         """``now``: when it actually runs (sends and timeouts count from it); ``due``: when it was due
@@ -208,6 +219,12 @@ class Client:
             self.send(self.cmd, self.current, now)
 
 
+def port_warning(port: str) -> str | None:
+    if port.startswith("/dev/serial/by-id/"):
+        return None
+    return f"warning: --port {port} is not a /dev/serial/by-id/ path; its number can follow the plug order"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="WP5c testbed client: drive the Uno lift over serial and log it.")
     ap.add_argument("--port", required=True, help="serial port, by its /dev/serial/by-id/ path")
@@ -219,6 +236,9 @@ def main(argv=None) -> int:
     ap.add_argument("--plan", default="none", help="link fault plan, a JSON file (default none: pass through)")
     ap.add_argument("--run-seconds", type=int, default=90)
     ap.add_argument("--commands", type=int, default=6)
+    ap.add_argument("--expect-system", default="lift.v0", choices=["lift.v0", "turntable.v0"],
+                    help="the system the board's build line must name (no system field: lift.v0); another "
+                         "one stops the run at once: invalid (wrong_system), exit status 3")
     ap.add_argument("--sequence", default=",".join(LIFT_SEQUENCE), metavar="CMD,CMD,...",
                     help="the commands, issued in this order and repeated (default the lift's MOVE_UP,MOVE_DOWN)")
     ap.add_argument("--expect-build", metavar="DEFECT",
@@ -226,6 +246,8 @@ def main(argv=None) -> int:
                          "in the truth file must say defect=DEFECT; otherwise the run is invalid (wrong_build or "
                          "no_build_line, never naming a build) and the exit status is 3")
     args = ap.parse_args(argv)
+    if port_warning(args.port):
+        print(port_warning(args.port), file=sys.stderr)
     import serial  # pyserial
 
     with open(args.log, "x") as log, open(args.device_log, "x") as dlog, \
@@ -234,9 +256,9 @@ def main(argv=None) -> int:
         clock = Clock()
         link = FaultLink(port, clock, truth, dlog, Plan.load(args.plan))
         client = Client(link, clock, log, args.seed, args.commands, args.run_seconds, args.expect_build,
-                        [c for c in args.sequence.split(",") if c], args.port)
+                        [c for c in args.sequence.split(",") if c], args.port, args.expect_system)
         deadline = time.monotonic() + 10
-        while client.started_at is None:
+        while client.started_at is None and not client.wrong_system:
             if time.monotonic() > deadline:
                 print("no READY from the board within 10 s")
                 return 2
@@ -251,6 +273,9 @@ def main(argv=None) -> int:
         valid = client.finish(clock.now_us())
         port.close()
     print(f"run {'valid' if valid else 'INVALID'}: {args.log}, {args.device_log}")
+    if client.wrong_system:
+        print(f"the board's build line does not name {args.expect_system}: wrong board")
+        return 3
     if args.expect_build is not None and link.build != args.expect_build:
         print("the build record does not match --expect-build: wrong build on the board")
         return 3

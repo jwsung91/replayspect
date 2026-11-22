@@ -35,6 +35,14 @@ def _key(direction: str, line: str, counts: dict) -> tuple[str, str, str | None,
     return direction, msg, rid, k
 
 
+def build_fields(line: str) -> tuple[str, str]:
+    """``(system, defect)`` of a build line ("# 0 build system=turntable.v0 defect=none"); a line with no
+    ``system=`` field is the lift's (its firmware never names one)."""
+    words = line.split()
+    field = lambda k, default: next((w.split("=", 1)[1] for w in words if w.startswith(k + "=")), default)  # noqa: E731
+    return field("system", "lift.v0"), field("defect", "")
+
+
 class Plan:
     def __init__(self, d: dict | None = None):
         d = d or {}
@@ -72,6 +80,7 @@ class FaultLink:
         self.plan_id = self.plan.id
         self.errors: list[str] = []
         self.build: str | None = None  # the build line's defect field, filed in the truth file
+        self.system: str | None = None  # the build line's system field (lift.v0 when it has none)
         self.on_change = None  # callback(up: bool, now_us: int), set by the client
         self._buf = b""
         self._counts: dict = {}
@@ -97,13 +106,13 @@ class FaultLink:
             if self._down_since is None and start <= now < end:
                 self._down_since = start
                 self._epoch += 1
-                self._record({"t_us": start, "action": "disconnect", "duration_us": end - start})
+                self.record({"t_us": start, "action": "disconnect", "duration_us": end - start})
                 if self.on_change:
                     self.on_change(False, start)
             if self._down_since == start and now >= end:
                 self._down_since = None
                 self._windows.remove((start, end))
-                self._record({"t_us": end, "action": "reconnect"})
+                self.record({"t_us": end, "action": "reconnect"})
                 if self.on_change:
                     self.on_change(True, end)
         self._windows = [w for w in self._windows if w[1] > now or self._down_since == w[0]]
@@ -121,13 +130,13 @@ class FaultLink:
             self._anchor(key, now)
         base = {"t_us": now, "dir": key[0], "msg": key[1], "req_id": key[2], "k": key[3]}
         if self.down():
-            self._record({**base, "action": "lost_in_disconnect"})
+            self.record({**base, "action": "lost_in_disconnect"})
             return
         f = self.plan.faults.get(key)
         if f is None:
             self._hold(queue, now, line, key, "pass", base)
         elif f.get("drop"):
-            self._record({**base, "action": "drop"})
+            self.record({**base, "action": "drop"})
         elif f.get("delay_ms") is not None:
             self._hold(queue, now + int(f["delay_ms"] * 1000), line, key, "delay", {**base, "delay_ms": f["delay_ms"]})
         else:
@@ -145,9 +154,9 @@ class FaultLink:
             queue.remove(item)
             due, _, line, key, what, epoch, rec = item
             if self.down() or epoch != self._epoch:
-                self._record({**rec, "action": "lost_in_disconnect", "t_out_us": due})
+                self.record({**rec, "action": "lost_in_disconnect", "t_out_us": due})
                 continue
-            self._record({**rec, "action": what, "t_out_us": due})
+            self.record({**rec, "action": what, "t_out_us": due})
             out.append(line)
         return out
 
@@ -195,17 +204,18 @@ class FaultLink:
         # ("# 0 build defect=M4") and, from an older build, "# T defect fired M4 r-0004".
         if len(parts) >= 3 and (parts[2].startswith("build") or parts[2:4] == ["defect", "fired"]):
             if parts[2].startswith("build"):
-                self.build = next((w.split("=", 1)[1] for w in parts[2:] if w.startswith("defect=")), "")
+                self.system, self.build = build_fields(line)
             rec = {"action": "build" if parts[2].startswith("build") else "defect_fired",
                    "t_us": self.clock.now_us(), "device_ms": int(parts[1]) if parts[1].isdigit() else None,
                    "line": line[1:].strip()}
-            self._record(rec)
+            self.record(rec)
             return
         if self.device_log is not None:
             self.device_log.write(f"{self.clock.stamp()} {line}\n")
         if len(parts) >= 3 and parts[2] == "error":
             self.errors.append(line)
 
-    def _record(self, rec: dict) -> None:
+    def record(self, rec: dict) -> None:
+        """One JSON line in the truth file (also for the client's own records, such as the port)."""
         if self.truth is not None:
             self.truth.write(json.dumps(rec, sort_keys=True) + "\n")
