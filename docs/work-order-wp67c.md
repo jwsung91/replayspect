@@ -109,6 +109,53 @@ No contract, rule or binding is changed in this order, whatever the result. A sl
 
 Stop and report.
 
+## Amendments after stage 0
+
+2026-11-22, from the advisor after the stage 0 PRs (#63, #64, #65) were merged. They apply to stage 1
+unless marked otherwise.
+
+**A. Fix main first.**
+1. `harness.cpp` did not compile with `-DHARNESS_TURNTABLE=1`: #63's `dev.on_position` does not exist on
+   the turntable `Device`, so the six tests in `tests/test_testbed_turntable.py` errored. The `@pos`
+   input is compiled in the lift build only, and the full suite is run again on main. This fix is the
+   first commit of the stage 1 branch, on its own.
+2. From now on, when more than one PR is opened from the same main, the second is rebased onto main
+   and the full suite run again before it is merged.
+
+**B. Boards.**
+3. Two Unos are connected to the Orin, one for the lift and one for the turntable only. Which is which
+   is fixed by its `/dev/serial/by-id/` path; scripts and documents do not use `/dev/ttyACM0`.
+4. A session or a flash refuses a board that does not carry the expected system. Today the two
+   firmwares' boot lines are the same. The method is reported and confirmed before it is implemented
+   (for example, the system name added to the turntable's build line and checked by the client). The
+   lift firmware's output does not change. Other items go on while this waits.
+5. The run's records (the truth file and the like) name the board's by-id path.
+6. The turntable uses the timer build only. Servo and sensor parts are not present and are outside
+   this order.
+
+**C. Host and tools.**
+7. No new client: `client.py` takes a command list. With the default (the lift) its client log is
+   byte-for-byte what it was, fixed by a test. A reason to change `fault_link.py` is reported first.
+8. The turntable gets its own ingest rules file (`system: turntable.v0`). The existing rules file does
+   not change.
+9. `fired_points.py` needs only the `--reference` comparison for the turntable header. The turntable has
+   no defect switch.
+10. A test that `replayspect device --system turntable.v0` reads a harness-made turntable device log: the
+    model conforms, neither contract set is violated, and whether each generic contract was exercised.
+
+**D. Runs on the boards.**
+11. After `client.py` is changed, one no-defect session on the lift board, and `replayspect device`
+    conforms (a development check).
+12. On the turntable board, the development corpus of about 24 sessions as above. A single false
+    mismatch or false violation stops the stage; the log and the line are reported. No comparison rule,
+    contract or model is changed to pass.
+
+**E. Documents.**
+13. A to E are written here, as this section.
+14. The "Travel sensor build" section of `examples/testbed-uno/README.md` says that build has been
+    through the harness tests only and has never run on a board with a servo and sensors attached.
+15. **Stage 2:** testbed-07 runs on the turntable board alone. The draft registration says so.
+
 ## What may be claimed afterwards
 
 - The generic set's count on testbed-07's acting slots is a measurement, on one protocol of the lift's shape, with mechanical changes, on 24 slots. It is not evidence for a protocol of another shape.

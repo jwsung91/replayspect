@@ -124,6 +124,9 @@ The native harness takes a sensor sample as `T_MS @pos UP DOWN` (each 0 or 1). T
 test checks the run of samples, a bounce, the wrong sensor, a move that never ends, and that the
 3 s timer is off.
 
+**This build has been through the harness tests only.** It has never run on a board with a servo
+and sensors attached; the calibration values above are untried.
+
 ## A run is invalid when
 
 - the device wrote any `# ... error` line, or
@@ -140,7 +143,7 @@ arduino-cli core update-index
 arduino-cli core install arduino:avr
 # device log on (the default)
 arduino-cli compile --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno
-arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno
+arduino-cli upload -p "$LIFT_PORT" --fqbn arduino:avr:uno examples/testbed-uno/firmware/lift_uno
 ```
 
 For the run with the device log off, compile with
@@ -151,10 +154,10 @@ On the Orin (copy `examples/testbed-uno/host/` there; `pip install pyserial`):
 
 ```bash
 # run 1: firmware with the device log OFF
-python3 host/client.py --port /dev/ttyACM0 --seed 0 \
+python3 host/client.py --port "$LIFT_PORT" --seed 0 \
   --log logoff-client.log --device-log logoff-device.log --truth logoff-truth.log
 # reflash with the device log ON, then run 2 with the same seed
-python3 host/client.py --port /dev/ttyACM0 --seed 0 \
+python3 host/client.py --port "$LIFT_PORT" --seed 0 \
   --log logon-client.log --device-log logon-device.log --truth logon-truth.log
 ```
 
@@ -321,7 +324,7 @@ cp -r firmware reference-firmware            # an unchanged copy, kept as it is
 arduino-cli compile --fqbn arduino:avr:uno --output-dir build-blind \
   --build-property "compiler.cpp.extra_flags=-DLIFT_DEFECT=0" firmware/lift_uno
 #   note "Sketch uses ..." and "Global variables use ...": keep RAM at about 1,000 B or less
-arduino-cli board list                       # the Uno's port: /dev/ttyACM0, /dev/cu.usbmodem..., COM3
+ls -l /dev/serial/by-id/                     # each board's fixed path (see "Two boards" below)
 arduino-cli upload -p PORT --fqbn arduino:avr:uno --input-dir build-blind firmware/lift_uno
 arduino-cli monitor -p PORT -c baudrate=115200
 #   expect "READY log=1", "# 0 build defect=none", "# 0 state DOWN from=- on=init"; close the monitor
@@ -338,7 +341,7 @@ sha256sum firmware/lift_uno/lift_device.h build-blind/lift_uno.ino.hex   # keep 
 `none`:
 
 ```bash
-python3 host/client.py --port /dev/ttyACM0 --seed SEED --plan PLAN.json --expect-build none \
+python3 host/client.py --port "$LIFT_PORT" --seed SEED --plan PLAN.json --expect-build none \
   --log blind/LABEL-client.log --device-log blind/LABEL-device.log --truth blind/LABEL-truth.log
 ```
 
@@ -369,16 +372,69 @@ assignment's hash until after the submission.
 mechanically mutated firmware, with the rev2 contracts). The builds, flashing and runs were on the Orin,
 with the scripts `blind_flash.sh` and `run_blind.sh` kept with the registration outside the repository.
 
+## Two boards
+
+Two Unos are plugged into the Orin: one runs the lift, one the turntable. Each is named by its
+`/dev/serial/by-id/` path, which stays with the board whichever USB port it is in; `/dev/ttyACM0`
+is not used in scripts or commands, since its number follows the order the boards were plugged in.
+On the Orin, a file `boards.env` (outside the repository) fixes them:
+
+```bash
+LIFT_PORT=/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_<serial>-if00
+TURNTABLE_PORT=/dev/serial/by-id/usb-Arduino__www.arduino.cc__0043_<serial>-if00
+```
+
+`client.py` records the path it was given, and what it resolves to, in the truth file's first line
+(`{"action": "port", ...}`). The past records above used `/dev/ttyACM0` with one board.
+
 ## Turntable firmware
 
 `firmware/turntable_uno/` is the `turntable.v0` device (docs/protocol-turntable.md) in the same
 shape as the lift: `turntable_device.h` is plain C++, `turntable_uno.ino` the same serial loop.
 Wire format, device log lines, timer order, limits and error lines are the lift's. The model has
 no defects, so there is no defect switch and the build line is always `build defect=none`.
-`tests/test_testbed_turntable.py` compiles the harness with `-DHARNESS_TURNTABLE=1` and compares
-replies, state changes and motor effects with the Python model. `host/client.py` and the ingest
-rules are still lift-only, so no hardware run has been made.
+The turntable uses the timer build only: a turn lasts 3 s and lights the LED; no motor or sensor.
 
+- **Conformance:** `tests/test_testbed_turntable.py` compiles the harness with `-DHARNESS_TURNTABLE=1`
+  and compares replies, state changes and motor effects with the Python model.
+- **Host:** the lift's `host/client.py` with the turntable's commands
+  (`--sequence TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT`); `host/fault_link.py`
+  unchanged. Without `--sequence` the client log is byte-for-byte the lift's from before
+  (`tests/test_testbed_host.py`, two golden files).
+- **Ingest rules:** `rules/testbed-client-turntable.yaml` (`system: turntable.v0`), the lift's file
+  with the turntable's system and name.
+- **Device log:** `replayspect device --system turntable.v0` reads the harness's turntable logs: the
+  correct model conforms, neither `contracts/turntable.v0.yaml` nor `contracts/generic/turntable.v0.yaml`
+  is violated, and over the test scripts every generic contract and C1, C3, C5, C7, C8 are exercised
+  (C2, C4, C6 are the client's).
+- **Scoring:** `harness/fired_points.py DEVICE_LOG --system turntable --reference DIR` (no defect switch,
+  so `--reference` only).
+
+```bash
+arduino-cli compile --fqbn arduino:avr:uno examples/testbed-uno/firmware/turntable_uno
+arduino-cli upload -p "$TURNTABLE_PORT" --fqbn arduino:avr:uno examples/testbed-uno/firmware/turntable_uno
+python3 host/client.py --port "$TURNTABLE_PORT" --seed SEED --plan PLAN.json --expect-build none \
+  --sequence TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT \
+  --log client.log --device-log device.log --truth truth.jsonl
+```
+
+### WP6/7c stage 1: development sessions on the unchanged firmware
+
+About 24 sessions on the turntable board, testbed-06's twelve plan kinds carried over, two plans each,
+seeds 7000–7023 (the range 7000–7099 is kept for development; no blind pool takes it). The plans,
+the plan maker, the Orin run script and the checks live outside the repository
+(`testbed-turntable-dev/`: `make_plans.py`, `run_dev.sh`, `check_dev.py`, `dry_run.py`). Carried over:
+
+- `refused-repeated` and `copy-refused-early` are adapted: in the turntable's order losing the command
+  just before a target never makes it refused, so the command two before is lost
+  (r-0001 for r-0003, r-0003 for r-0005);
+- `copy-status` has one plan for each of two placements (both during a turn; standing, then during a turn).
+
+**Result:** not run yet. Every plan passed in the simulator (development only: run valid, every fault
+applied, timing condition held, and the native header's log checked as below), which is not a result on
+the board.
+
+## Not yet
 ## Not yet
 
 - **Two sources:** the client log and the device log together, with the clock between them estimated.
