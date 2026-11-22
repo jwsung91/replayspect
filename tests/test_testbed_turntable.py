@@ -6,12 +6,14 @@ As for the lift (test_testbed_conformance.py): the header is compiled natively w
 avoid an input arriving in the same millisecond as a timer.
 """
 
+import json
 import shutil
 import subprocess
 
 import pytest
 from test_testbed_conformance import FW, _Channel
 
+from replayspect.__main__ import main
 from replayspect.sim.link import Message
 from replayspect.sim.scheduler import Scheduler
 from replayspect.sut.turntable import SEQUENCE, TurntableDevice
@@ -113,3 +115,87 @@ def test_turntable_build_line_names_no_defect(harness):
     _, _, _, raw = firmware(harness, [(0, "STATUS s-0001"), (10, "END")])
     assert "0 OUT READY log=1" in raw.splitlines()
     assert "0 LOG build defect=none" in raw.splitlines()
+
+
+# -- the harness's device log read by `replayspect device` (WP6/7c stage 1) ------------------------
+
+ROOT = FW.parents[2]
+STAMP = "2026-11-22T10:00:00.000000+09:00"
+
+
+def device_log(raw: str) -> str:
+    """The harness's LOG lines in the device log's form (the link writes '<stamp> # <ms> <body>'); the
+    build line goes to the truth file, as on the board."""
+    return "".join(f"{STAMP} # {t} {body}\n" for t, kind, body in (r.split(" ", 2) for r in raw.splitlines())
+                   if kind == "LOG" and not body.startswith("build"))
+
+
+def device_check(tmp_path, harness, name, contracts=None):
+    dev = tmp_path / f"{name}.log"
+    dev.write_text(device_log(firmware(harness, SCRIPTS[name])[3]))
+    out = tmp_path / f"{name}-{bool(contracts)}-{len(list(tmp_path.iterdir()))}.json"
+    args = ["device", str(dev), "--system", "turntable.v0", "--complete", "device:recv,send,state,effect",
+            "--out", str(out)]
+    code = main(args + (["--contracts", str(contracts)] if contracts else []))
+    return code, json.loads(out.read_text())
+
+
+@pytest.mark.parametrize("name", sorted(SCRIPTS))
+def test_device_reads_the_harness_log_and_the_model_conforms(tmp_path, harness, name):
+    for contracts in (None, ROOT / "contracts" / "turntable.v0.yaml", ROOT / "contracts" / "generic" / "turntable.v0.yaml"):
+        code, rep = device_check(tmp_path, harness, name, contracts)
+        assert code == 0 and rep["conforming"] == ["correct"]
+        if contracts:
+            k = rep["contracts"]
+            assert k["violated"] == [] and k["not_judged"] == [], (contracts.name, k)
+
+
+def test_which_contracts_the_harness_logs_exercise(tmp_path, harness):
+    """Recorded, not a goal: the union over the scripts of the contracts each set exercised. C2, C4 and C6
+    are the client's, never exercised on a device log alone."""
+    seen = {}
+    for path in (ROOT / "contracts" / "turntable.v0.yaml", ROOT / "contracts" / "generic" / "turntable.v0.yaml"):
+        ok, idle = set(), set()
+        for name in SCRIPTS:
+            k = device_check(tmp_path, harness, name, path)[1]["contracts"]
+            ok |= set(k["ok"])
+            idle |= set(k["not_exercised"])
+        seen[path.parent.name] = (sorted(ok), sorted(idle - ok))
+    assert seen == {
+        "contracts": (["C1", "C3", "C5", "C7", "C8"], ["C2", "C4", "C6"]),
+        "generic": (["G1.motor_start", "G1.motor_stop", "G2.ack", "G2.final", "G2.poll.STATUS", "G3", "G4", "G5",
+                     "G6", "G6b", "P1"], []),
+    }, seen
+
+
+def test_fired_points_compares_a_changed_turntable_header_with_an_unchanged_one(tmp_path):
+    # As the lift's operator workflow (test_testbed_conformance.py), on turntable_device.h: a turn runs
+    # 60 ms after its ACK, not 50. The turntable has no defect switch, so only --reference is offered.
+    import sys
+    changed_dir, ref_dir = tmp_path / "changed", tmp_path / "reference"
+    shutil.copytree(FW, changed_dir)
+    shutil.copytree(FW, ref_dir)
+    h = changed_dir / "turntable_uno" / "turntable_device.h"
+    src = h.read_text()
+    assert "const uint32_t PROC_MS = 50;" in src
+    h.write_text(src.replace("const uint32_t PROC_MS = 50;", "const uint32_t PROC_MS = 60;"))
+    exe = tmp_path / "board"
+    subprocess.run([CXX, "-std=c++11", "-O1", "-DHARNESS_TURNTABLE=1", "-o", str(exe),
+                    str(changed_dir / "harness" / "harness.cpp")], check=True)
+    tool = [sys.executable, str(changed_dir / "harness" / "fired_points.py")]
+    log = tmp_path / "device.log"
+    log.write_text(device_log(firmware(exe, SCRIPTS["right_then_back"])[3]))
+    out = subprocess.run(tool + [str(log), "--system", "turntable", "--reference", str(ref_dir)],
+                         capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == {"t_ms": 50, "req_id": "r-0001",
+                                      "changed": "60 LOG effect motor_start r-0001 dir=right",
+                                      "reference": "50 LOG effect motor_start r-0001 dir=right"}
+    quiet = tmp_path / "quiet.log"
+    quiet.write_text(device_log(firmware(exe, [(0, "STATUS s-0001"), (100, "END")])[3]))
+    out = subprocess.run(tool + [str(quiet), "--system", "turntable", "--reference", str(ref_dir)],
+                         capture_output=True, text=True)
+    assert out.returncode == 0 and json.loads(out.stdout) == {"difference": None}
+    # the lift's harness does not reproduce a turntable log; --defect has no meaning here
+    assert subprocess.run(tool + [str(log), "--reference", str(ref_dir)], capture_output=True).returncode == 1
+    assert subprocess.run(tool + [str(log), "--system", "turntable", "--defect", "0"], capture_output=True).returncode == 2

@@ -1,7 +1,8 @@
-"""The testbed client (WP5c): the robot's main controller, driving the Uno lift over serial.
+"""The testbed client (WP5c): the robot's main controller, driving the Uno lift (or turntable) over serial.
 
-Behaviour is the client of docs/protocol-lift.md:
-* 6 move commands, alternating MOVE_UP / MOVE_DOWN from MOVE_UP, ids r-0001...; at most one open;
+Behaviour is the client of docs/protocol-lift.md (docs/protocol-turntable.md with --sequence):
+* 6 commands, ids r-0001...; at most one open. They cycle through --sequence: by default MOVE_UP,
+  MOVE_DOWN (the lift); for the turntable TURN_LEFT,TURN_RIGHT,TURN_RIGHT,TURN_LEFT,TURN_LEFT,TURN_RIGHT;
   a think time of 1 to 3 s (seeded) after each command closes;
 * no ACK within 2 s: resend with the same id, at most twice, then close as failed (ack_timeout);
 * no DONE or ERROR within 15 s of the first send: close as failed (done_timeout);
@@ -9,7 +10,7 @@ Behaviour is the client of docs/protocol-lift.md:
 * after a reconnect, resend the open command; STATUS every second (s-0001...), replies not acted on.
 
 The log (one line per send, receive, result, link change) is what ``ingest`` reads with
-``rules/testbed-client.yaml``. Timestamps are the wall clock read once at start plus the monotonic
+``rules/testbed-client.yaml`` (the turntable's: ``rules/testbed-client-turntable.yaml``). Timestamps are the wall clock read once at start plus the monotonic
 time since, written in microseconds, so a clock correction during a run cannot make the log jump.
 The resolution is µs; the accuracy is coarser (USB serial delivers bytes in bursts, and the loop
 polls every half millisecond or so).
@@ -17,13 +18,15 @@ polls every half millisecond or so).
 A run is invalid when the device writes any ``# ... error`` line, or when ``READY`` comes again
 (the board reset). The last log line says which.
 
-Usage (on the Orin):  python3 client.py --port /dev/ttyACM0 --log client.log --device-log device.log
+Usage (on the Orin):  python3 client.py --port /dev/serial/by-id/<the board> --log client.log --device-log device.log
+The port is named by its /dev/serial/by-id/ path, which stays with the board; the truth file records it.
 Needs pyserial (``pip install pyserial``) for a real port; the rest is the standard library.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import sys
 import time
@@ -38,6 +41,7 @@ MAX_RETRIES = 2
 DONE_TIMEOUT_US = 15_000_000
 POLL_US = 1_000_000
 THINK_MS = (1_000, 3_000)
+LIFT_SEQUENCE = ("MOVE_UP", "MOVE_DOWN")
 
 
 class Clock:
@@ -58,14 +62,16 @@ class Clock:
 
 class Client:
     def __init__(self, link: FaultLink, clock: Clock, log, seed: int = 0, commands: int = 6, run_s: int = 90,
-                 expect_build: str | None = None):
+                 expect_build: str | None = None, sequence=LIFT_SEQUENCE, port_path: str | None = None):
+        if not sequence:
+            raise ValueError("an empty command sequence")
         self.link, self.clock, self.log = link, clock, log
+        self.sequence = tuple(sequence)
         self.expect_build = expect_build
         self.rng = random.Random(seed)
         self.seed, self.commands, self.run_us = seed, commands, run_s * 1_000_000
         self.counters = {"r": 0, "s": 0}
         self.issued = 0
-        self.want = "MOVE_UP"
         self.current: str | None = None
         self.cmd: str | None = None
         self.acked = False
@@ -77,6 +83,8 @@ class Client:
         self.resets = 0
         self.up = True
         link.on_change = self.link_change
+        if port_path is not None:
+            link._record({"action": "port", "path": port_path, "resolved": os.path.realpath(port_path)})
 
     # -- log ----------------------------------------------------------------------------------
 
@@ -147,9 +155,8 @@ class Client:
         if kind == "issue":
             if self.issued >= self.commands:
                 return
+            self.cmd, self.current = self.sequence[self.issued % len(self.sequence)], self.new_id("r")
             self.issued += 1
-            self.cmd, self.current = self.want, self.new_id("r")
-            self.want = "MOVE_DOWN" if self.want == "MOVE_UP" else "MOVE_UP"
             self.acked, self.retries = False, 0
             self.send(self.cmd, self.current, now)
             self.at(now + ACK_TIMEOUT_US, "ack_timeout", self.current)
@@ -203,7 +210,7 @@ class Client:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="WP5c testbed client: drive the Uno lift over serial and log it.")
-    ap.add_argument("--port", required=True, help="serial port, e.g. /dev/ttyACM0")
+    ap.add_argument("--port", required=True, help="serial port, by its /dev/serial/by-id/ path")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--log", required=True, help="client log (new file)")
     ap.add_argument("--device-log", required=True, help="device log, the board's '#' lines (new file)")
@@ -212,6 +219,8 @@ def main(argv=None) -> int:
     ap.add_argument("--plan", default="none", help="link fault plan, a JSON file (default none: pass through)")
     ap.add_argument("--run-seconds", type=int, default=90)
     ap.add_argument("--commands", type=int, default=6)
+    ap.add_argument("--sequence", default=",".join(LIFT_SEQUENCE), metavar="CMD,CMD,...",
+                    help="the commands, issued in this order and repeated (default the lift's MOVE_UP,MOVE_DOWN)")
     ap.add_argument("--expect-build", metavar="DEFECT",
                     help="the build the board must carry ('none', or e.g. 'M4'): the build line the link files "
                          "in the truth file must say defect=DEFECT; otherwise the run is invalid (wrong_build or "
@@ -224,7 +233,8 @@ def main(argv=None) -> int:
         port = serial.Serial(args.port, args.baud, timeout=0)  # opening resets the Uno
         clock = Clock()
         link = FaultLink(port, clock, truth, dlog, Plan.load(args.plan))
-        client = Client(link, clock, log, args.seed, args.commands, args.run_seconds, args.expect_build)
+        client = Client(link, clock, log, args.seed, args.commands, args.run_seconds, args.expect_build,
+                        [c for c in args.sequence.split(",") if c], args.port)
         deadline = time.monotonic() + 10
         while client.started_at is None:
             if time.monotonic() > deadline:

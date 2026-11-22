@@ -17,6 +17,8 @@ from replayspect.ingest import ingest_text, read_rules
 from replayspect.sim.link import Message
 from replayspect.sim.scheduler import Scheduler
 from replayspect.sut.lift import LiftDevice
+from replayspect.sut.turntable import SEQUENCE as TURNTABLE_SEQUENCE
+from replayspect.sut.turntable import TurntableDevice
 from replayspect.trace import Trace
 
 TB = Path(__file__).parent.parent / "examples" / "testbed-uno"
@@ -39,7 +41,7 @@ class FakeTime:
 class FakePort:
     """The lift model behind a link with a fixed delay each way, in milliseconds."""
 
-    def __init__(self, clock, delay_ms=3, extra=b"", ready=b"READY log=1"):
+    def __init__(self, clock, delay_ms=3, extra=b"", ready=b"READY log=1", device=LiftDevice):
         self.clock, self.delay = clock, delay_ms
         self.sched = Scheduler(0)
         self.trace = Trace(lambda: self.sched.now_us)
@@ -55,7 +57,7 @@ class FakePort:
                 fields = "".join(f" {k}={v}" for k, v in sorted(msg.fields.items()))
                 port.pending.append((port.sched.now_us // 1000 + port.delay, f"{msg.name} {msg.req_id}{fields}\n".encode()))
 
-        LiftDevice(self.sched, self.trace, Ch(), frozenset())
+        device(self.sched, self.trace, Ch(), frozenset())
 
     def _advance(self):
         now = self.clock.now_us() // 1000
@@ -81,13 +83,14 @@ class FakePort:
             self.sched.at_us((now + self.delay) * 1000, lambda n=name, r=rid: self.on_message(Message(n, r, {})))
 
 
-def run_client(run_s=90, extra=b"", seed=0, plan=None, ready=b"READY log=1", expect_build=None):
+def run_client(run_s=90, extra=b"", seed=0, plan=None, ready=b"READY log=1", expect_build=None,
+               device=LiftDevice, **client_kw):
     ft = FakeTime()
     clock = tb_client.Clock(WALL, ft)
-    port = FakePort(clock, extra=extra, ready=ready)
+    port = FakePort(clock, extra=extra, ready=ready, device=device)
     log, dlog, truth = io.StringIO(), io.StringIO(), io.StringIO()
     link = FaultLink(port, clock, truth, dlog, Plan(plan))
-    c = tb_client.Client(link, clock, log, seed=seed, run_s=run_s, expect_build=expect_build)
+    c = tb_client.Client(link, clock, log, seed=seed, run_s=run_s, expect_build=expect_build, **client_kw)
     while c.started_at is None:
         c.step(clock.now_us())
         ft.t += 0.001
@@ -288,3 +291,39 @@ def test_the_client_checks_the_build_record_without_naming_it():
     assert not valid and log.splitlines()[-1].endswith("valid=no reasons=no_build_line")
     log, _, _, valid = run_client(run_s=3, extra=b"# 0 build defect=M4\n")  # no expectation: not checked
     assert valid
+
+
+# -- the command list (WP6/7c stage 1) -----------------------------------------------------------
+
+GOLDEN = Path(__file__).parent / "data" / "testbed"
+GOLDEN_PLAN = {"id": "g", "faults": [
+    {"dir": "c2s", "msg": "MOVE_UP", "req_id": "r-0001", "k": 0, "drop": True},
+    {"dir": "s2c", "msg": "ACK", "req_id": "r-0002", "k": 0, "delay_ms": 2500},
+    {"dir": "s2c", "msg": "DONE", "req_id": "r-0003", "k": 0, "dup_extra_ms": 500}],
+    "disconnects": [{"after": "c2s MOVE_UP r-0005 0", "offset_ms": 100, "duration_ms": 1500}]}
+
+
+def test_the_lift_client_log_is_byte_for_byte_what_it_was_before_the_command_list():
+    # the two files were written by the client before it took a command list (WP6/7c stage 1)
+    assert run_client()[0] == (GOLDEN / "client-lift-clean.log").read_text()
+    assert run_client(plan=GOLDEN_PLAN, seed=7)[0] == (GOLDEN / "client-lift-faults.log").read_text()
+
+
+def test_the_client_drives_the_turntable_with_its_command_list():
+    log, _, _, valid = run_client(device=TurntableDevice, sequence=TURNTABLE_SEQUENCE)
+    sent = [x.split()[2] for x in log.splitlines() if " TX " in x and "STATUS" not in x]
+    assert valid and sent == list(TURNTABLE_SEQUENCE)
+    assert log.count(" RX DONE ") == 6 and " RX ERROR " not in log
+    rules = read_rules(TB / "rules" / "testbed-client-turntable.yaml")
+    trace = ingest_text(log.encode(), rules)
+    assert not trace.unmatched and trace.header.system == "turntable.v0"
+    assert [e.name for e in trace.events if e.kind == "handle"] == ["DONE"] * 6
+    with pytest.raises(ValueError):
+        tb_client.Client(None, None, None, sequence=())
+
+
+def test_the_truth_file_names_the_board_path():
+    _, _, truth, _ = run_client(run_s=3, port_path="/dev/serial/by-id/usb-Arduino_Uno_X-if00")
+    recs = truth_of(truth)
+    assert recs[0]["action"] == "port" and recs[0]["path"] == "/dev/serial/by-id/usb-Arduino_Uno_X-if00"
+    assert "port" not in [r["action"] for r in truth_of(run_client(run_s=3)[2])]
