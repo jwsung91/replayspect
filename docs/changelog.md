@@ -864,3 +864,19 @@ real logs before anything is changed (`docs/work-order-wp67c.md`, with "Amendmen
     `contracts/turntable.v0.yaml` nor the generic binding is violated; every generic contract is
     exercised; each plan's timing condition held.
   - This is development data. The operator decided the testbed is fit for a blind group (testbed-07).
+
+## WP6/7c stage 3: testbed-07, the generic set's first measurement
+
+24 blind slots on the turntable board, with mechanical mutants of `turntable_device.h` that the analyst did not
+know (`docs/experiments/testbed-07.md`; registration `testbed-07-preregistration.md`, sha256 `3e9c1f21…`).
+
+- **Device model:** 17 acting slots, all `differs`; the first mismatch on the changed request in 16 of 17 (S17:
+  the right millisecond, another request's poll reply); no false mismatch on 7 quiet slots.
+- **Contracts, of 17:** the generic set 8, the turntable's own (C1–C8) 6, both 10; no false violation in any
+  set. The generic set added S05, S06, S07 and S24, all by rules that do not repeat a turntable contract; C3
+  added S12 and S19.
+- **Missed by both:** timing (S03, S04, S17) and a missing execution (S23), as predicted; the refusal reason
+  (S09), the start-side effect (S15) and the start-side order (S20), not predicted. These three are backlog
+  candidates; no contract, rule or binding changed.
+- **Departures:** the analyst's Orin access was not cut; the step script was started twice (S01 ran once, valid).
+- A measurement on one protocol of the lift's shape, with mechanical changes, on 17 acting slots.

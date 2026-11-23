@@ -89,7 +89,10 @@ Implemented:
   analyst did not know ([docs/experiments/testbed-04.md](docs/experiments/testbed-04.md)),
   then on 16 blind slots of mechanically mutated firmware, with the rev2 contracts
   ([docs/experiments/testbed-05.md](docs/experiments/testbed-05.md)), and on 24
-  more with the rev3 contracts ([docs/experiments/testbed-06.md](docs/experiments/testbed-06.md))
+  more with the rev3 contracts ([docs/experiments/testbed-06.md](docs/experiments/testbed-06.md));
+  and on 24 blind slots of mutated turntable firmware, its first blind group on a
+  second system, with the generic set and the turntable's own contracts
+  ([docs/experiments/testbed-07.md](docs/experiments/testbed-07.md))
 - Claims: `claim check` judges candidate contracts (with `grade` and `source`)
   on incidents and on a normal corpus (trace files, device logs, simulator seeds
   with no defect), and says per candidate passes, fails or untested, with the
