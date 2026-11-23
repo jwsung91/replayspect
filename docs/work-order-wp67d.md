@@ -4,7 +4,7 @@
 
 This is an addition to `docs/work-order-v3.md`, after `docs/work-order-wp67c.md`. All of their principles and constraints apply. It has two parts, in this order: part A closes what testbed-07 showed (stages 0a and 0b); part B builds the last piece of WP6/7 and runs it once (stages 1 to 3).
 
-**This order was written from `main` at `9c87f4e`.** Where it conflicts with what the code does, say so in the report of the stage concerned, before any work on it.
+**This order was written from `main` at `9c87f4e`.** Where it conflicts with what the code does, say so in the report of the stage concerned, before any work on it. It was amended once before stage 0a, after the first reading (#69): the candidates' names, two cases of stage 0a, the real logs, a turntable incident in stage 1's tests, and `check_cause`'s budget.
 
 ## Why
 
@@ -23,7 +23,7 @@ This is an addition to `docs/work-order-v3.md`, after `docs/work-order-wp67c.md`
 - `shrink.py`: removal of plan items while one target contract is still violated.
 - `claim.py`: `claim check` on traces and device logs, with a normal corpus of files and simulator seeds.
 - `contracts/generic/`: G1, G2 (three contracts), G3, G4, G5, G6, G6b, P1, and the two bindings. `contracts/turntable.v0.yaml` and the lift files. **All of them stay as they are until a stage below says otherwise.**
-- Real device logs on the development machine. All of testbed-07 is development data from now on: its 24 slots, and the 24 turntable sessions of WP6/7c stage 1.
+- **Real device logs.** All of testbed-07 is development data from now on: its 24 slots, and the 24 turntable sessions of WP6/7c stage 1. These are on the development machine. The lift's logs (testbed-01 to 06, the defect runs, the 218 no-defect logs) are not there today; the operator provides them (see "The real logs" below).
 
 ## Stage 0a — the first mismatch inside one millisecond
 
@@ -31,6 +31,8 @@ Make the device comparison report S17's first mismatch on the request the log sh
 
 - **What happens today** (`devicelog.conform`): the earliest unmatched model event and the earliest unmatched device event are taken by time. When the two are at the same time and on different requests, the model's side is reported and the device's is dropped. In S17 both were at 3000 ms: the device's `motor_stop r-0001`, first in the log, and the model's `STATUS_REPLY s-0003`.
 - **The rule to reach:** inside one millisecond, the first mismatch is decided by the order of the log's lines, not by which side an event is on. A model event with no logged line in that millisecond has no place in that order; say in the PR where the rule puts it and why.
+- **Only an exact tie changes.** Two candidates at different times, also inside the 2 ms window, are decided by time as today.
+- **An order difference and an unmatched event at the same time:** on the same request, the unmatched event is reported, as today. On different requests, the order of the log's lines decides, as for any other tie.
 - **Nothing else changes.** Verdicts (`conforms`, `differs`) and the count of unmatched events stay the same on every log.
 - **Tests first,** on simulator-made device logs:
   - S17's shape (an early output of one request, and in the same millisecond a changed poll reply of another);
@@ -51,12 +53,13 @@ Run the candidate loop of WP6/7b stage 3 once more. No new code, no new kind.
 
 | Candidate | In words | Kind |
 | --- | --- | --- |
-| S1 | the effect that ends the action only after the effect that starts it, per request id | `only_after` |
-| S2 | no effect that starts the action after the state change that starts it, per request id | `never_after` |
-| S3 | the state change that starts the action only after the effect that starts it, per request id | `only_after` |
+| P2 | the effect that ends the action only after the effect that starts it, per request id | `only_after` |
+| P3 | no effect that starts the action after the state change that starts it, per request id | `never_after` |
+| P4 | the state change that starts the action only after the effect that starts it, per request id | `only_after` |
 
-- S1 and S2 are the backlog's two examples. S3 is one rule for the same ground: it would speak at the start of the action, where S1 can only speak when the action ends, 3 s later.
-- **S2 and S3 need a role the bindings do not have:** the states of an action in progress (`TURNING_TO_*`; `MOVING_UP`, `MOVING_DOWN`). Name it in the note. Do not add it to a binding in this stage.
+- The names follow P1, the proposal of the first note. S1 and S2 are taken: they are the scoring's names.
+- P2 and P3 are the backlog's two examples. P4 is one rule for the same ground: it would speak at the start of the action, where P2 can only speak when the action ends, 3 s later.
+- **P3 and P4 need a role the bindings do not have:** the states of an action in progress (`TURNING_TO_*`; `MOVING_UP`, `MOVING_DOWN`). Name it in the note. Do not add it to a binding in this stage.
 - **The refusal reason (S09) stays a recorded gap.** Do not build an expression for it.
 
 **Checks,** with `claim check`:
@@ -75,7 +78,7 @@ Run the candidate loop of WP6/7b stage 3 once more. No new code, no new kind.
 **Report in an operator note,** `docs/notes/generic-contracts-rev2.md`, in the form of `docs/notes/generic-contracts.md`:
 
 - each candidate: its two instances, the checks' output, and a recommendation (keep, drop, or covered by another candidate);
-- whether the protocol documents state the order S2 and S3 rely on. Quote the lines. Whether a sentence states an order is the operator's reading;
+- whether the protocol documents state the order P3 and P4 rely on. Quote the lines. Whether a sentence states an order is the operator's reading;
 - **how the generic set changes when a rule is added.** `rules.yaml` has no revision today, and reports name it by sha256. Give the choices (a new rules file beside the old one, or the old one changed in place) and what each does to the reproduction of testbed-07's numbers. Recommend one.
 
 **The operator confirms or drops each candidate and decides the form.** After that only, in its own PR: the rules, the role in both bindings, the tests of WP6/7b stage 4 (the rules already there expand to the same contracts as before; no false positive on seeds 0–999 of both systems), `contracts/generic/README.md`, the changelog, `CLAUDE.md`, the README status and the backlog row.
@@ -111,7 +114,7 @@ A symptom says what was seen, in a form the engine can judge. It replaces "the s
   - `run_plan` tells the planner both results: the contracts its run violated, and the symptom match (n of m, the first item not matched). The planner is shown the symptom file beside the sentence.
 - **For an incident without one, nothing changes:** the same verdicts, the same `describe` text and digest, and a session log written before this stage verifies as before. Tests hold each of these.
 
-**Tests first:** the loader's refusals; order, times and absence, each alone and together; a case where the earliest candidate is the wrong assignment; one simulator incident per published lift mutant with a hand-written symptom (the hidden run matches it, the correct implementation does not); one incident that violates no contract (a variant kept under `tests/`), where `check_cause` now tells a necessary entry from a superfluous one.
+**Tests first:** the loader's refusals; order, times and absence, each alone and together; a case where the earliest candidate is the wrong assignment; one simulator incident per published lift mutant with a hand-written symptom (the hidden run matches it, the correct implementation does not); one incident that violates no contract (a variant kept under `tests/`), where `check_cause` now tells a necessary entry from a superfluous one. **Make that one a turntable incident,** and run it through a bridge session and through the reader as well: no test has a turntable incident today, and stage 3 must not be the first use.
 
 Documents: `docs/symptom.md`, `docs/trace-schema.md` (where it names the symptom judge), `docs/design-v0.md`, the changelog, `CLAUDE.md`, the README status.
 
@@ -135,7 +138,7 @@ The answer to "which defect" becomes a claim with a candidate contract. Both che
   - an entry is **necessary** when the symptom no longer matches without it.
   - This check reports. It gives no verdict: an entry's removal can move the failure to another request, and then the symptom stops matching while a right candidate is still violated.
   - For an incident without a symptom file, "matches the symptom" reads "violates one of the incident's contracts", as today.
-- **Neither check uses the planner's budget.** Claims are limited instead: `max_claims`, default 3. The session ends at the first claim that passes check 1, or when the claims are used up.
+- **Neither check uses the planner's budget.** Claims are limited instead: `max_claims`, default 3. The session ends at the first claim that passes check 1, or when the claims are used up. `check_cause` stays a call the planner chooses, and still uses one run of the budget.
 - **What the planner is told:** the verdict of check 1 with its reasons, and the table of check 2. About the hidden run it is told one status word and nothing else: no time, no request, no event. Its own runs are reported in full. The session log holds everything.
 - **A candidate that cannot be loaded:** say in the PR whether it uses a claim, and hold it with a test.
 - **A session not configured for claims is unchanged:** the same tools, the same `describe` text and digest.
@@ -184,6 +187,14 @@ One incident, one planner session. This is a check that the path holds together.
 **If no claim passes,** that is the result. A candidate written afterwards by the operator or the advisor is reported as that, and not as the loop's.
 
 Stop and report.
+
+## The real logs
+
+- **The operator provides the lift's real logs,** or says that they are lost. Do not search the Orin for them.
+- **A corpus is named by its list sha256** wherever an earlier note recorded one (the 218 no-defect logs: `docs/notes/contract-candidates-rev4.md`, `docs/notes/generic-contracts.md`). Check a provided corpus against it and report the result.
+- **Work may start without them.** Tests are made from simulator logs, and the checks run on what is there.
+- **A check on a corpus that is not there is reported as not run,** by name, in the PR body and in the note. It is never left out silently and never replaced by another corpus under the same name.
+- **The operator decides** whether a PR whose check is incomplete waits for the logs or goes on without them.
 
 ## What may be claimed afterwards
 
