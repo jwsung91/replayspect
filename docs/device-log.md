@@ -72,8 +72,8 @@ then compared with the log.
     "conforms".
 - **The end of the log:** what the model does after the log ends, minus `--late`, is not compared.
 - **The result** for each model is "conforms", "not checked" (with the reason), or the first
-  mismatch, the earlier of an unmatched event and an order difference (an unmatched event at the same
-  time). The JSON's `kind` says which (`event` or `order`):
+  mismatch, the earlier of an unmatched event and an order difference. The JSON's `kind` says which
+  (`event` or `order`):
   - the time and the request;
   - what the model does there and what the device did (either may be nothing);
   - the model's state just before;
@@ -81,6 +81,22 @@ then compared with the log.
 
   With the correct model, this says where the device first left the model. No defect model is
   needed.
+- **Candidates at exactly the same time** (WP6/7d stage 0a):
+  - **On different requests, the order of the log's lines decides,** not which side an event is on.
+    The first mismatch is on the request the log shows first.
+  - **A model event has no line.** It stands right after the last line, in that millisecond, of a
+    receive fed to the model or a matched output that came before it in the model's run: where the
+    device would have written it. With none before it, it stands at the start of the millisecond: a timer
+    runs before the inputs of its millisecond, as in the firmware. A missing poll reply, for example,
+    stands right after the poll's `recv` line.
+  - **On the same request,** a model event and a logged one are shown together, and an unmatched event is
+    reported before an order difference, as before.
+  - **Only an exact tie** is decided this way. Candidates at different times, even inside the `--late`
+    window, are decided by time: the earlier one is reported.
+  - Before this rule, an exact tie on different requests went to the model's event.
+    testbed-07 S17 ends a turn early, and in that millisecond answers a poll of another request with the
+    new state. The device's `motor_stop r-0001` is first in the log, but the model's `STATUS_REPLY s-0003`
+    was reported ([testbed-07](experiments/testbed-07.md)).
 - **When the first mismatch comes after the defect's branch:** the first mismatch is the first place
   the outputs differ. A repeated request that a defect takes as new is answered `ACK` either way, so
   the difference shows when the request executes, 50 ms later.
@@ -157,6 +173,7 @@ Without a device log, nothing changes. `drive` and `drive --fit` are untouched.
 | M1 against M2 | not separated: both conform in all 7 M2 runs (no repeat after `DONE` happened). M9 conforms too in 2 |
 | Count check against the truth files (losses, losses in disconnects, extra copies) | 95 of 95 (testbed-03), 39 of 39 (testbed-01), 47 of 48 (testbed-02; R03 below) |
 | Per-request order (WP6/7b stage 1), every model on every log, against `order="ignore"` | no mismatch on the 218 no-defect logs (the 213 of the rev3 note and testbed-06's five unchanged slots); S15 and S19 now differ, on r-0001 at 3054 and 3055 ms, the first line out of place being `DONE`; no other verdict or first mismatch changed (testbed-03 and 04 defect runs, 27 each; the blind slots of testbed-04, 05 and 06) |
+| Same-time candidates by line order (WP6/7d stage 0a), the correct model, against the rule before it | run on testbed-07's 24 blind slots, WP6/7c stage 1's 24 turntable sessions and its lift session, and testbed-07's 3 dry-run logs: S17's first mismatch is now `motor_stop r-0001` at 3000 ms (was `STATUS_REPLY s-0003`); no other first mismatch, verdict or count changed. **Not run** (the logs are not on the development machine): the lift's 218 no-defect logs, testbed-03 and 04 defect runs, the blind slots of testbed-04, 05 and 06 |
 | Native firmware (`tests/test_testbed_conformance.py`) | every script conforms with no defect; with each defect switch, the correct model's first mismatch is on the request where the defect fired, at the same time or 50 ms later (M1, M2 and M9 on a repeat while queued), and the defect's own model conforms |
 
 ## Limits
