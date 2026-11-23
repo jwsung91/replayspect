@@ -163,3 +163,40 @@ def test_an_order_difference_and_an_unmatched_event_on_the_same_request_report_t
     lines = lines[:i + 3] + [f"{t} send ACK {rid}"] + lines[i + 3:]
     c = first(lines)
     assert (c.first["kind"], c.first["req_id"], c.first["device"]["event"]) == ("event", rid, f"send ACK {rid}")
+
+
+# The last input: the last receive line before the place of the first mismatch in the log (the same place
+# as in the tie rule), not every receive up to its time.
+
+def last_input(c):
+    return c.first["last_input"]["event"] if c.first["last_input"] else None
+
+
+def test_s17_shape_the_last_input_is_not_the_poll_after_the_early_output():
+    lines, rid, sid, p = early_arrival(sim_lines(), before_poll=True)
+    c = first(lines)
+    assert c.first["device"]["event"] == f"effect motor_stop {rid}"
+    assert last_input(c) is not None and last_input(c) != f"recv STATUS {sid}"
+    before = [x for x in lines[:lines.index(f"{p} effect motor_stop {rid}")] if x.split()[1] == "recv"]
+    assert last_input(c) == " ".join(before[-1].split()[1:])
+
+
+def test_with_the_poll_first_in_the_log_the_last_input_is_the_poll():
+    lines, rid, sid, p = early_arrival(sim_lines(), before_poll=False)
+    assert last_input(first(lines)) == f"recv STATUS {sid}"
+
+
+def test_a_model_event_at_the_start_of_its_millisecond_has_no_input_of_that_millisecond():
+    """The arrival's motor stop is gone, and a poll is answered in that millisecond after the arrival's lines.
+    The model's motor stop comes from the timer, before the poll is fed: it stands at the start of the
+    millisecond, so the poll is not its last input."""
+    lines = sim_lines()
+    i = next(j for j, x in enumerate(lines) if x.split()[1:3] == ["effect", "motor_stop"])
+    rid, t = lines[i].split()[3], ms(lines[i])
+    target = lines[i + 1].split()[2]
+    lines = lines[:i] + lines[i + 1:i + 3] + [f"{t} recv STATUS s-9998", f"{t} send STATUS_REPLY s-9998 state={target}"] \
+        + lines[i + 3:]
+    c = first(lines)
+    assert c.first["model"]["event"] == f"effect motor_stop {rid}" and c.first["device"] is None
+    before = [x for x in lines[:i] if x.split()[1] == "recv"]
+    assert last_input(c) == " ".join(before[-1].split()[1:])

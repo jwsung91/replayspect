@@ -77,7 +77,10 @@ then compared with the log.
   - the time and the request;
   - what the model does there and what the device did (either may be nothing);
   - the model's state just before;
-  - the last input the device received.
+  - the last input the device received: the last `recv` line before the first mismatch's place in
+    the log. The place is the one the tie rule below uses: a logged event's own line, an order
+    difference's line, or where a model event stands. A `recv` later in the same millisecond is not the
+    last input. Before WP6/7d stage 0a it was the last `recv` up to the first mismatch's time.
 
   With the correct model, this says where the device first left the model. No defect model is
   needed.
@@ -173,7 +176,8 @@ Without a device log, nothing changes. `drive` and `drive --fit` are untouched.
 | M1 against M2 | not separated: both conform in all 7 M2 runs (no repeat after `DONE` happened). M9 conforms too in 2 |
 | Count check against the truth files (losses, losses in disconnects, extra copies) | 95 of 95 (testbed-03), 39 of 39 (testbed-01), 47 of 48 (testbed-02; R03 below) |
 | Per-request order (WP6/7b stage 1), every model on every log, against `order="ignore"` | no mismatch on the 218 no-defect logs (the 213 of the rev3 note and testbed-06's five unchanged slots); S15 and S19 now differ, on r-0001 at 3054 and 3055 ms, the first line out of place being `DONE`; no other verdict or first mismatch changed (testbed-03 and 04 defect runs, 27 each; the blind slots of testbed-04, 05 and 06) |
-| Same-time candidates by line order (WP6/7d stage 0a), the correct model, against the rule before it | run on testbed-07's 24 blind slots, WP6/7c stage 1's 24 turntable sessions and its lift session, and testbed-07's 3 dry-run logs: S17's first mismatch is now `motor_stop r-0001` at 3000 ms (was `STATUS_REPLY s-0003`); no other first mismatch, verdict or count changed. **Not run** (the logs are not on the development machine): the lift's 218 no-defect logs, testbed-03 and 04 defect runs, the blind slots of testbed-04, 05 and 06 |
+| Same-time candidates by line order (WP6/7d stage 0a), the correct model, against the rule before it | run on testbed-07's 24 blind slots, WP6/7c stage 1's 24 turntable sessions and its lift session, testbed-07's 3 dry-run logs, and testbed-06's 24 blind slots (list sha256 `756a1c2d…`, as recorded) and 8 dry-run logs: S17's first mismatch is now `motor_stop r-0001` at 3000 ms (was `STATUS_REPLY s-0003`); no other first mismatch, verdict or count changed. **Not run** (the logs are not on the development machine): the lift's 218 no-defect logs, except testbed-06's five unchanged slots, which are among the 24 above; testbed-03 and 04 defect runs; the blind slots of testbed-04 and 05 |
+| The last input at the first mismatch's place in the log (WP6/7d stage 0a), the correct model, against the last `recv` up to its time | on the same 84 logs: only testbed-07 S17 changes, its last input now `recv STATUS s-0002` at 2002 ms (was `recv STATUS s-0003` at 3000 ms, after the device's `motor_stop r-0001` in the log); no verdict, count, or first mismatch's request or event changed. Not run: as in the row above |
 | Native firmware (`tests/test_testbed_conformance.py`) | every script conforms with no defect; with each defect switch, the correct model's first mismatch is on the request where the defect fired, at the same time or 50 ms later (M1, M2 and M9 on a repeat while queued), and the defect's own model conforms |
 
 ## Limits

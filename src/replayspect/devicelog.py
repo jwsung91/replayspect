@@ -34,7 +34,7 @@ compared with what the device logged. No link is involved: no delay, loss or dup
 - The result is "conforms", or the **first mismatch** (an unmatched event or an order difference,
   whichever is earlier; ``kind`` says which): the time, what the model does and what the
   device did there (either may be nothing), the model's state just before and the last input the
-  device received. **At exactly the same time,** on different requests, the order of the log's lines
+  device received (the last ``recv`` line before the first mismatch's place in the log, below). **At exactly the same time,** on different requests, the order of the log's lines
   decides, not the side: a model event has no line, and stands right after the last line, in that
   millisecond, of a receive fed or a matched output that came before it in the model's run (with none,
   at the start of the millisecond: a timer runs before the inputs). On the same request a model event and
@@ -297,14 +297,16 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
     def place(e: Event) -> float:
         """Where a model event with no line stands among the log's lines of its millisecond: right after the
         last line, in that millisecond, of a receive fed or a matched output that came before it in the
-        model's run; with none, at the start of the millisecond."""
+        model's run; with none, at the start of the millisecond (before its first line)."""
         ti = at_trace[unmatched_mi[id(e)]]
         anchors = [seq for n, seq in fed if n <= ti and log.events[seq].t_us == e.t_us]
         anchors += [device[di].seq for mi, di in pairs if at_trace[mi] < ti and device[di].t_us == e.t_us]
-        return max(anchors) + 0.5 if anchors else -1.0
+        if anchors:
+            return max(anchors) + 0.5
+        return next((x.seq for x in log.events if x.t_us >= e.t_us), len(log.events)) - 0.5
 
     first = None
-    first_at = 0.0  # the first mismatch's place among the log's lines, used only on an exact tie
+    first_at = 0.0  # the first mismatch's place among the log's lines: the tie rule and the last input
     if unmatched_model or unmatched_dev:
         m0 = min(unmatched_model, key=lambda e: e.t_us, default=None)
         d0 = min(unmatched_dev, key=lambda e: e.t_us, default=None)
@@ -325,17 +327,17 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
     if disorders:
         o = disorders[0][1]
         if first is None or o["t_us"] < first["t_us"]:
-            first = o
+            first_at, first = disorders[0]
         else:
             # at the same time: on the same request the unmatched event is reported; on another, line order
             tied = [(a, d) for a, d in disorders if d["t_us"] == first["t_us"] and d["req_id"] != first["req_id"]
                     and a < first_at]
             if tied:
-                first = min(tied, key=lambda x: x[0])[1]
+                first_at, first = min(tied, key=lambda x: x[0])
     if first is not None:
         t = first["t_us"]
         states = [e for e in model if e.kind == "state" and e.t_us < t]
-        inputs = [e for e in log.events if e.kind == "recv" and e.t_us <= t]
+        inputs = [e for e in log.events if e.kind == "recv" and e.seq < first_at]
         first["model_state"] = states[-1].name if states else None
         first["last_input"] = _item(inputs[-1] if inputs else None, OBSERVED_DEVICE)
     return Conformance(name, "conforms" if first is None else "differs", len(device), len(matched_dev),
