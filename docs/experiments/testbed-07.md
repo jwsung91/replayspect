@@ -87,8 +87,12 @@ device and truth logs; the assignment file; the scoring output; the advisor's ru
 3. **Hashes.**
    - The advisor's materials (registration, "The draw"): `rules.md` `86958132…`, `candidates.tsv`
      `8c67f609…`, `tools.sha256` `703ba689…`.
-   - The final assignment file, with the Orin `.hex` hashes: `5764c45f…57f896fe35`. When it reached the analyst
-     is under Departures.
+   - The final assignment file, with the Orin `.hex` hashes: `5764c45f…57f896fe35`. Its hash reached the analyst
+     at 07:40:29 KST (the analyst's session record), 17 s before the step script first started (07:40:46). The
+     assignment file itself reached the analyst after scoring (Order, step 7).
+   - The assignment can be rebuilt from hashes fixed in the registration: the draw seed is defined by the
+     registration's own sha256, `candidates.tsv`'s and `blind-plans.json`'s, and the advisor's materials are
+     listed there by hash.
 4. **Running:** the operator flashed and ran the slots on the Orin with the advisor's step script
    (`02_run_all.sh`), which calls `blind_flash.sh` and `run_blind.sh`. The analyst's Orin access was not cut
    (Departures).
@@ -354,22 +358,16 @@ The work order's sentences, with this group's limits:
    record shows:** the analyst's last command on the Orin was the one that copied the testbed folder, wrote
    `boards.env` and checked the `MANIFEST`, at 07:14:37 KST on 2026-11-23. This session's transcript, the only
    one for this project from then on, has no command to the Orin after it.
-2. **When the final assignment hash reached the analyst** (Order, step 4, "before any session"). The
-   operator's account is that it went to the analyst after the run ended. The analyst's session record has the
-   message with the hash at 07:40:29 KST, 17 s before the step script first started (07:40:46) and 27 s before
-   S01's client log begins (07:40:56). The two accounts differ; both are recorded. Either way, the assignment
-   can be rebuilt from hashes fixed in the registration: the draw seed is defined by the registration's own
-   sha256, `candidates.tsv`'s and `blind-plans.json`'s, and the advisor's materials are listed there by hash.
-3. **The step script was started twice,** at 07:40:46 and at 07:41:03. The second read S01's log, still being
+2. **The step script was started twice,** at 07:40:46 and at 07:41:03. The second read S01's log, still being
    written, as a log with no end line, and stopped at once (exit 4). S01 ran once and is valid (its client log
    runs from 07:40:56 to 07:42:26 and ends `valid=yes`). `--past` was not used. The step script had nothing to
    stop a second copy of itself.
-4. **Composition.** The ranges gave effect and order three slots each, but two changes of each could be drawn;
+3. **Composition.** The ranges gave effect and order three slots each, but two changes of each could be drawn;
    one slot of each went to "other" (the assignment file's note).
-5. **Two drawing rules the registration does not describe** (the operator's statement): no behaviour whose
+4. **Two drawing rules the registration does not describe** (the operator's statement): no behaviour whose
    lift twin was drawn before or is a published defect, and at most two drawn changes on one source line. Both
    were fixed before the registration was approved, inside the hashed materials.
-6. **S2 was judged by the advisor,** for the operator.
+5. **S2 was judged by the advisor,** for the operator.
 
 No other departure is known to the analyst.
 

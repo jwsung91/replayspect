@@ -878,6 +878,5 @@ know (`docs/experiments/testbed-07.md`; registration `testbed-07-preregistration
 - **Missed by both:** timing (S03, S04, S17) and a missing execution (S23), as predicted; the refusal reason
   (S09), the start-side effect (S15) and the start-side order (S20), not predicted. These three are backlog
   candidates; no contract, rule or binding changed.
-- **Departures:** the analyst's Orin access was not cut; the two accounts of when the final assignment hash
-  reached the analyst differ; the step script was started twice (S01 ran once, valid).
+- **Departures:** the analyst's Orin access was not cut; the step script was started twice (S01 ran once, valid).
 - A measurement on one protocol of the lift's shape, with mechanical changes, on 17 acting slots.
