@@ -922,7 +922,7 @@ no change under `contracts/`.
 - **Recommendation:** keep P4; P2 and P3 covered by it on these checks; a new rules file beside the old one
   (with rev2 bindings) so testbed-07's registered hashes stay true. The operator decides.
 
-## WP6/7d after stage 0b: the generic rules, revision 2
+## WP6/7d after stage 0b: the generic rules, revision 2 (#72)
 
 The operator confirmed P4 and dropped P2 and P3 (`docs/notes/generic-contracts-rev2.md`). Revision 2 of the
 generic set sits beside the first (form A); the first's three files stay byte for byte.
