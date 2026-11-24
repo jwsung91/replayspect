@@ -1,0 +1,14 @@
+# Candidate P3 (not in rules.yaml): no effect that starts the action after the state change that starts it, per request id.
+protocol: lift.v0
+
+contracts:
+  - id: P3
+    desc: no motor_start for a req_id after its state became MOVING_UP or MOVING_DOWN
+    kind: never_after
+    per: req_id
+    event: device.effect(motor_start)
+    after: device.state(MOVING_UP|MOVING_DOWN)
+    grade: generic
+    source:
+      rule: P3
+      quote: "no effect that starts the action after the state change that starts it, per request id"

@@ -1,0 +1,14 @@
+# Candidate P2 (not in rules.yaml): the effect that ends the action only after the effect that starts it, per request id.
+protocol: lift.v0
+
+contracts:
+  - id: P2
+    desc: motor_stop for a req_id only after its motor_start
+    kind: only_after
+    per: req_id
+    event: device.effect(motor_stop)
+    after: device.effect(motor_start)
+    grade: generic
+    source:
+      rule: P2
+      quote: "the effect that ends the action only after the effect that starts it, per request id"
