@@ -880,3 +880,27 @@ know (`docs/experiments/testbed-07.md`; registration `testbed-07-preregistration
   candidates; no contract, rule or binding changed.
 - **Departures:** the analyst's Orin access was not cut; the step script was started twice (S01 ran once, valid).
 - A measurement on one protocol of the lift's shape, with mechanical changes, on 17 acting slots.
+
+## WP6/7d stage 0a: the first mismatch inside one millisecond (#70)
+
+The device comparison now reports a first mismatch on the request the log shows first when two candidates
+are at exactly the same time on different requests (`docs/work-order-wp67d.md`).
+
+- **Before,** an exact tie between an unmatched model event and an unmatched logged event of another request
+  went to the model's side. testbed-07 S17 was reported on the poll reply `s-0003`, though the device's
+  early `motor_stop r-0001` is first in the log.
+- **Now** the order of the log's lines decides. A model event has no line: it stands right after the last
+  line, in that millisecond, of a receive fed or a matched output that came before it in the model's run (with
+  none, at the start of the millisecond). An order difference at the same time as an unmatched event follows
+  the same rule on different requests; on the same request the unmatched event is still reported.
+- **Unchanged:** candidates at different times, even inside the 2 ms window; every verdict; the count of
+  unmatched events.
+- **The last input** is now the last `recv` line before the first mismatch's place in the log, the same place
+  the tie rule uses, not the last `recv` up to its time. In S17 the poll `recv STATUS s-0003` came after the
+  device's `motor_stop r-0001` in the log and was reported as its last input; now it is `recv STATUS s-0002`.
+- **Development check:** on testbed-07's 24 blind slots, WP6/7c stage 1's 25 sessions, testbed-07's 3 dry-run
+  logs, and testbed-06's 24 blind slots (list sha256 as recorded) and 8 dry-run logs, only S17 changes: its first
+  mismatch (now `motor_stop r-0001` at 3000 ms) and its last input. The lift's 218 no-defect logs (except
+  testbed-06's five unchanged slots), testbed-03 and 04 defect runs and the blind slots of testbed-04 and 05 were
+  not run: they are not on the development machine.
+- The backlog row for S17 is removed.

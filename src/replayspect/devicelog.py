@@ -34,7 +34,12 @@ compared with what the device logged. No link is involved: no delay, loss or dup
 - The result is "conforms", or the **first mismatch** (an unmatched event or an order difference,
   whichever is earlier; ``kind`` says which): the time, what the model does and what the
   device did there (either may be nothing), the model's state just before and the last input the
-  device received. With the correct model this says where the device first left the model, without
+  device received (the last ``recv`` line before the first mismatch's place in the log, below). **At exactly the same time,** on different requests, the order of the log's lines
+  decides, not the side: a model event has no line, and stands right after the last line, in that
+  millisecond, of a receive fed or a matched output that came before it in the model's run (with none,
+  at the start of the millisecond: a timer runs before the inputs). On the same request a model event and
+  a logged one are shown together, and an unmatched event is reported before an order difference.
+  Candidates at different times, even inside the window, are decided by time. With the correct model this says where the device first left the model, without
   any defect model. It is the first place the outputs differ, which can come after the defect's own
   branch: a repeated request a defect takes as new is answered ``ACK`` either way, and the difference
   shows when it executes (50 ms later in the lift).
@@ -205,6 +210,12 @@ ORDER = ("per-request", "ignore")
 def run_model(system, log: DeviceLog, mutants: Sequence[str] = (), until_us: int | None = None,
               same_ms: str = "timers-first") -> list[Event]:
     """The device model fed the device's receives at the device's times: its events, in time order."""
+    return _run_model(system, log, mutants, until_us, same_ms)[0]
+
+
+def _run_model(system, log: DeviceLog, mutants: Sequence[str], until_us: int | None,
+               same_ms: str) -> tuple[list[Event], list[tuple[int, int]]]:
+    """:func:`run_model`, and for each receive fed: (how many model events came before it, its log line)."""
     if same_ms not in SAME_MS:
         raise ValueError(f"same_ms: one of {', '.join(SAME_MS)}")
     if system.device is None:
@@ -213,19 +224,25 @@ def run_model(system, log: DeviceLog, mutants: Sequence[str] = (), until_us: int
     trace = Trace(lambda: sched.now_us)
     feed = _Feed(sched, trace)
     system.device(sched, trace, feed, tuple(sorted(mutants)))
+    fed: list[tuple[int, int]] = []
+
+    def deliver(m: Message, seq: int) -> None:
+        fed.append((len(trace.events), seq))
+        feed.on_message(m)
+
     for e in log.events:
         if e.kind == "recv":
             msg = Message(e.name, e.req_id, {k: v for k, v in e.data.items() if v is not None})
             if same_ms == "input-first":
-                sched.at_us(e.t_us, lambda m=msg: feed.on_message(m), f"device-log:recv:{e.req_id}")
+                sched.at_us(e.t_us, lambda m=msg, q=e.seq: deliver(m, q), f"device-log:recv:{e.req_id}")
                 continue
             # the firmware runs the timers due in a millisecond first, then the input: the input is
             # queued again at its own time when that time comes, after every timer already due then
-            sched.at_us(e.t_us, lambda m=msg, t=e.t_us: sched.at_us(t, lambda: feed.on_message(m),
-                                                                    f"device-log:recv:{m.req_id}"),
+            sched.at_us(e.t_us, lambda m=msg, t=e.t_us, q=e.seq: sched.at_us(t, lambda: deliver(m, q),
+                                                                             f"device-log:recv:{m.req_id}"),
                         f"device-log:recv:{e.req_id}")
     sched.run_until_us(log.end_us + LATE_US if until_us is None else until_us)
-    return list(trace.events)
+    return list(trace.events), fed
 
 
 def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = LATE_US,
@@ -251,8 +268,9 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
     if not absence and not device:
         return Conformance(name, "not checked", 0, 0, 0, None, None, absence,
                            "no send, state or effect line, and none declared complete: nothing to compare")
-    model = [e for e in run_model(system, log, mutants, same_ms=same_ms)
-             if e.actor == "device" and e.kind in outputs]
+    events, fed = _run_model(system, log, mutants, None, same_ms)
+    at_trace = [ti for ti, e in enumerate(events) if e.actor == "device" and e.kind in outputs]
+    model = [events[ti] for ti in at_trace]
     end = log.end_us
     free: dict[tuple, list[int]] = {}
     for i, e in enumerate(device):
@@ -260,6 +278,7 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
     matched_dev: set[int] = set()
     pairs: list[tuple[int, int]] = []  # (model index, device index) of each match
     unmatched_model: list[Event] = []
+    unmatched_mi: dict[int, int] = {}  # id of an unmatched model event -> its model index
     lates: list[int] = []
     for mi, e in enumerate(model):
         cands = [i for i in free.get(_sig(e), []) if i not in matched_dev
@@ -271,9 +290,23 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
             lates.append(device[i].t_us - e.t_us)
         elif e.t_us <= end - late_us and e.kind in absence:
             unmatched_model.append(e)
+            unmatched_mi[id(e)] = mi
     unmatched_dev = [device[i] for i in range(len(device)) if i not in matched_dev]
     disorders = _order_differences(model, device, pairs) if order == "per-request" else []
+
+    def place(e: Event) -> float:
+        """Where a model event with no line stands among the log's lines of its millisecond: right after the
+        last line, in that millisecond, of a receive fed or a matched output that came before it in the
+        model's run; with none, at the start of the millisecond (before its first line)."""
+        ti = at_trace[unmatched_mi[id(e)]]
+        anchors = [seq for n, seq in fed if n <= ti and log.events[seq].t_us == e.t_us]
+        anchors += [device[di].seq for mi, di in pairs if at_trace[mi] < ti and device[di].t_us == e.t_us]
+        if anchors:
+            return max(anchors) + 0.5
+        return next((x.seq for x in log.events if x.t_us >= e.t_us), len(log.events)) - 0.5
+
     first = None
+    first_at = 0.0  # the first mismatch's place among the log's lines: the tie rule and the last input
     if unmatched_model or unmatched_dev:
         m0 = min(unmatched_model, key=lambda e: e.t_us, default=None)
         d0 = min(unmatched_dev, key=lambda e: e.t_us, default=None)
@@ -282,19 +315,29 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
         at_d = d0 if d0 is not None and d0.t_us <= t + late_us else None
         # the counterpart on the other side, if it is about the same request and near in time
         if at_m is not None and at_d is not None and at_m.req_id != at_d.req_id:
-            if at_m.t_us <= at_d.t_us:
+            # an exact tie: the log's line order decides (module doc); otherwise the earlier one
+            if place(at_m) < at_d.seq if at_m.t_us == at_d.t_us else at_m.t_us < at_d.t_us:
                 at_d = None
             else:
                 at_m = None
         req = (at_m or at_d).req_id
         first = {"kind": "event", "t_us": t, "req_id": req, "model": _item(at_m, RECONSTRUCTED),
                  "device": _item(at_d, OBSERVED_DEVICE)}
-    if disorders and (first is None or disorders[0]["t_us"] < first["t_us"]):
-        first = disorders[0]  # at the same time an unmatched event is reported, as before this rule
+        first_at = min(([at_d.seq] if at_d is not None else []) + ([place(at_m)] if at_m is not None else []))
+    if disorders:
+        o = disorders[0][1]
+        if first is None or o["t_us"] < first["t_us"]:
+            first_at, first = disorders[0]
+        else:
+            # at the same time: on the same request the unmatched event is reported; on another, line order
+            tied = [(a, d) for a, d in disorders if d["t_us"] == first["t_us"] and d["req_id"] != first["req_id"]
+                    and a < first_at]
+            if tied:
+                first_at, first = min(tied, key=lambda x: x[0])
     if first is not None:
         t = first["t_us"]
         states = [e for e in model if e.kind == "state" and e.t_us < t]
-        inputs = [e for e in log.events if e.kind == "recv" and e.t_us <= t]
+        inputs = [e for e in log.events if e.kind == "recv" and e.seq < first_at]
         first["model_state"] = states[-1].name if states else None
         first["last_input"] = _item(inputs[-1] if inputs else None, OBSERVED_DEVICE)
     return Conformance(name, "conforms" if first is None else "differs", len(device), len(matched_dev),
@@ -303,10 +346,10 @@ def conform(system, log: DeviceLog, mutants: Sequence[str] = (), late_us: int = 
 
 
 def _order_differences(model: list[Event], device: list[Event],
-                       pairs: list[tuple[int, int]]) -> list[dict[str, Any]]:
+                       pairs: list[tuple[int, int]]) -> list[tuple[int, dict[str, Any]]]:
     """The matched logged events of each request id against the model's order (module doc).
 
-    One item per request id whose order differs, earliest first. Its time is that of the first logged
+    One item per request id whose order differs, earliest first, with the place of its line in the log. Its time is that of the first logged
     line out of place; it gives the model's event at that position and both orders, from the first
     position that differs to the last. Events with no request id are not compared, and neither is the
     order across request ids."""
@@ -328,8 +371,8 @@ def _order_differences(model: list[Event], device: list[Event],
                 "model": _item(model[ps[k][0]], RECONSTRUCTED), "device": _item(d, OBSERVED_DEVICE),
                 "model_order": [_item(model[mi], RECONSTRUCTED) for mi, _ in ps[k:last + 1]],
                 "device_order": [_item(device[di], OBSERVED_DEVICE) for di in in_log[k:last + 1]]}
-        found.append(((d.t_us, in_log[k]), item))
-    return [item for _, item in sorted(found, key=lambda x: x[0])]
+        found.append(((d.t_us, in_log[k]), d.seq, item))
+    return [(seq, item) for _, seq, item in sorted(found, key=lambda x: x[0])]
 
 
 # -- the count check ----------------------------------------------------------------------------
