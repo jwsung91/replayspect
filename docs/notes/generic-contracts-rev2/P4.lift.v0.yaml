@@ -1,0 +1,14 @@
+# Candidate P4 (not in rules.yaml): the state change that starts the action only after the effect that starts it, per request id.
+protocol: lift.v0
+
+contracts:
+  - id: P4
+    desc: the state becomes MOVING_UP or MOVING_DOWN for a req_id only after its motor_start
+    kind: only_after
+    per: req_id
+    event: device.state(MOVING_UP|MOVING_DOWN)
+    after: device.effect(motor_start)
+    grade: generic
+    source:
+      rule: P4
+      quote: "the state change that starts the action only after the effect that starts it, per request id"

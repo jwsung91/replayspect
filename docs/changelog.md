@@ -904,3 +904,20 @@ are at exactly the same time on different requests (`docs/work-order-wp67d.md`).
   testbed-06's five unchanged slots), testbed-03 and 04 defect runs and the blind slots of testbed-04 and 05 were
   not run: they are not on the development machine.
 - The backlog row for S17 is removed.
+
+## WP6/7d stage 0b: the start side of an action, candidates P2–P4
+
+An operator note, `docs/notes/generic-contracts-rev2.md`, with the candidates written by hand for the
+turntable and the lift under `docs/notes/generic-contracts-rev2/` (`docs/work-order-wp67d.md`). No code,
+no change under `contracts/`.
+
+- **P2** (`motor_stop` only after `motor_start`), **P3** (no `motor_start` after the in-progress state) and
+  **P4** (the in-progress state only after `motor_start`), per request id. P3 and P4 need a role the
+  bindings lack, proposed as `progress_states`; not added.
+- **Incidents:** P4 catches testbed-07 S15 and S20 at the truth's request and millisecond; P2 catches S15
+  3,000 ms later, P3 catches S20.
+- **No false positive** on seeds 0–999 of both systems, the turntable's 24 stage 1 sessions and testbed-07's
+  5 unchanged slots, and apart on S11 and S22. **Not run:** the lift's 218 real no-defect logs, and the
+  acting slots of testbed-04 and 05.
+- **Recommendation:** keep P4; P2 and P3 covered by it on these checks; a new rules file beside the old one
+  (with rev2 bindings) so testbed-07's registered hashes stay true. The operator decides.

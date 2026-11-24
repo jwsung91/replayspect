@@ -1,0 +1,14 @@
+# Candidate P3 (not in rules.yaml): no effect that starts the action after the state change that starts it, per request id.
+protocol: turntable.v0
+
+contracts:
+  - id: P3
+    desc: no motor_start for a req_id after its state became TURNING_TO_LEFT, TURNING_TO_RIGHT or TURNING_TO_INITIAL
+    kind: never_after
+    per: req_id
+    event: device.effect(motor_start)
+    after: device.state(TURNING_TO_LEFT|TURNING_TO_RIGHT|TURNING_TO_INITIAL)
+    grade: generic
+    source:
+      rule: P3
+      quote: "no effect that starts the action after the state change that starts it, per request id"
