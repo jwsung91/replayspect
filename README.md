@@ -111,7 +111,10 @@ Implemented:
 - Generic contract library (`contracts/generic/`): the rules written once against
   roles, a roles file per system, expanded by the loader into contracts of the
   existing kinds; the judge is unchanged, and the expansion judges like the
-  hand-written instances on simulator seeds
+  hand-written instances on simulator seeds. Revision 2 (`rules.rev2.yaml`, rev2
+  bindings) adds P4, the start of the action ("the in-progress state only after the
+  motor start"), beside the first set, which testbed-07 measured and which stays
+  as it was
 - Rule-based reconstructor: reads a one-sided log and searches for a fault plan
   that reproduces it, with no model (`incident baseline --strategy reconstruct`)
 - Experiment harness: planning sessions and bridge sessions over MCP, with

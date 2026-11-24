@@ -1,0 +1,13 @@
+# The lift's roles for the generic rules in rules.rev2.yaml, revision 2 (loading this file expands them).
+protocol: lift.v0
+rules: rules.rev2.yaml
+roles:
+  requests: [MOVE_UP, MOVE_DOWN]
+  acknowledgement: ACK
+  final_success: DONE
+  final_failure: ERROR
+  polls: {STATUS: STATUS_REPLY}       # poll -> its reply
+  effects: [motor_start, motor_stop]
+  action: {starts: motor_start, ends: motor_stop}
+  rest_states: [UP, DOWN]
+  progress_states: [MOVING_UP, MOVING_DOWN]
