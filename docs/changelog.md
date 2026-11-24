@@ -905,7 +905,7 @@ are at exactly the same time on different requests (`docs/work-order-wp67d.md`).
   not run: they are not on the development machine.
 - The backlog row for S17 is removed.
 
-## WP6/7d stage 0b: the start side of an action, candidates P2–P4
+## WP6/7d stage 0b: the start side of an action, candidates P2–P4 (#71)
 
 An operator note, `docs/notes/generic-contracts-rev2.md`, with the candidates written by hand for the
 turntable and the lift under `docs/notes/generic-contracts-rev2/` (`docs/work-order-wp67d.md`). No code,
