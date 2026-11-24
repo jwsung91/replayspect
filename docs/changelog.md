@@ -938,3 +938,18 @@ generic set sits beside the first (form A); the first's three files stay byte fo
   stage 0b's hand-written candidate; P4's orders on a hand trace; no false positive on seeds 0–999 of both
   systems (slow).
 - **P4 is unmeasured** until a new blind group. It was not run on the lift's real no-defect logs (backlog).
+
+## WP6/7d: the stage 0a and 0b checks on the lift's real logs
+
+The checks #70, #71 and #72 left as "not run" were run on the operator's machine, which holds the lift's logs. Only
+documents changed.
+
+- **The 218 no-defect logs** match their recorded list sha256 (`2e155b05…2d38`). testbed-04's defect runs were split by its
+  truth files, the same as the run list of `docs/experiments/testbed-04.md` on all 83 runs.
+- **Stage 0a** (`61257aa` against `388554d`, the correct model): the 218, testbed-03 and 04 defect runs (27 each) and the
+  blind slots of testbed-04 (8) and 05 (16). On these 296 logs, no first mismatch, last input, verdict or count changed
+  (`docs/device-log.md`, the two stage 0a rows).
+- **Stage 0b** (the rev2 lift binding): P4 has 0 violations on the 218 and is exercised in 218 of 218. The other 11 contracts
+  give the first note's counts. On the 16 acting slots of testbed-04 and 05, P4 catches none (`ok` on all). A dated section
+  of `docs/notes/generic-contracts-rev2.md` records this; the decision record above it is unchanged.
+- The backlog row "P4 on the lift's real no-defect logs" is removed.

@@ -229,3 +229,60 @@ hashes.
 **The operator confirms or drops each candidate and decides the form.** After that, in its own PR: the rules,
 the role in both bindings, the stage 4 tests, `contracts/generic/README.md`, the changelog, `CLAUDE.md`, the
 README status and the backlog row.
+
+## Added 2026-11-25: the lift's real logs, run afterwards
+
+The decision above is unchanged. This section fills the checks the note left as "not run". The lift's logs were found
+on the operator's machine, outside the repository. They were run at `main` `388554d` (after #72), with no code
+change. The scripts are outside the repository (`run_0b.sh`, `dev_0b.py`).
+
+- **The corpus is the recorded one.** `LC_ALL=C sha256sum normal/* | sha256sum` gives
+  `2e155b05…2d38`, the value of `docs/notes/contract-candidates-rev4.md`. `claim check` reports the same value as
+  `files_sha256`. Its testbed-03 and 04 files are each testbed's no-defect runs: testbed-03's by the device log's
+  build line (68), testbed-04's by its truth files (56). testbed-04's split is the same as the run list of
+  `docs/experiments/testbed-04.md` on all 83 runs.
+
+### No false positive: the 218 real no-defect logs
+
+`claim check contracts/generic/lift.v0.rev2.yaml --normal normal --complete device:recv,send,state,effect`
+(binding sha256 `6811ca4d…af79`, rules `rules.rev2.yaml` `722bf314…d898`):
+
+| Contract | Result on the 218 |
+| --- | --- |
+| **P4** | **passes: 0 violations, exercised in 218 of 218** |
+| G1–G6b and P1 (11) | pass: 0 violations; exercised in 218 of 218, G5 in 8 of 218 |
+
+- The 11 rules of the first set give the counts of `docs/notes/generic-contracts.md` on the same corpus.
+- No input was not judged.
+- The table of "No false positive" above now reads, for the lift's 218: P4 0 violations, exercised 218. P2 and P3 were
+  dropped before this run and were not run.
+
+### What P4 catches on testbed-04 and testbed-05 (development check)
+
+**Which slots acted.** For testbed-04, the blind table of `docs/experiments/testbed-04.md` gives B01, B03, B05 and B06.
+Its blind slots have no truth file on the machine. For testbed-05, the per-slot table of `docs/experiments/testbed-05.md`
+(its "Truth" column) gives 12 slots, and the scoring's assignment (`testbed-05/scoring/assignment.final.txt`) agrees.
+Those 12 are S02–S04, S06, S07, S09–S13, S15 and S16. testbed-05's truth files hold only the link's actions and `build
+defect=none`, so they cannot tell which slots acted.
+
+"Generic" is the first set (`contracts/generic/lift.v0.yaml`); "own" is `contracts/lift.v0.rev3.yaml`. Each column
+lists the contracts violated anywhere on the slot.
+
+| Slot | P4 | Generic | Own (rev3) |
+| --- | --- | --- | --- |
+| testbed-04 B01, B06 | ok | G6, G6b | C10 |
+| testbed-04 B03, B05 | ok | none | C9 |
+| testbed-05 S02 | ok | G2.ack, G5 | C12, C14 |
+| testbed-05 S03, S06, S10, S16 | ok | G5 | C14 |
+| testbed-05 S04 | ok | none | none |
+| testbed-05 S07 | ok | none | C3 |
+| testbed-05 S09 | ok | G6, G6b | C10 |
+| testbed-05 S11, S15 | ok | G2.final, G3 | C7, C8 |
+| testbed-05 S12 | ok | G2.ack | C12 |
+| testbed-05 S13 | ok | G3 | C8, C11 |
+
+- **P4 catches none of the 16 acting slots.** It is `ok` on all 16, with no `not exercised`. None of these changes touches
+  the start of a move. P4's catches stay those of the note: testbed-07 S15 and S20, and testbed-06 S23.
+- The generic and own columns are the same as the per-slot lists of `docs/notes/generic-contracts.md`.
+- With these runs, the backlog row "P4 on the lift's real no-defect logs before the rev2 set is registered for a blind
+  group" is closed. P4 is still unmeasured until a new blind group.
