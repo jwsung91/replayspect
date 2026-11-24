@@ -939,7 +939,7 @@ generic set sits beside the first (form A); the first's three files stay byte fo
   systems (slow).
 - **P4 is unmeasured** until a new blind group. It was not run on the lift's real no-defect logs (backlog).
 
-## WP6/7d: the stage 0a and 0b checks on the lift's real logs
+## WP6/7d: the stage 0a and 0b checks on the lift's real logs (#73)
 
 The checks #70, #71 and #72 left as "not run" were run on the operator's machine, which holds the lift's logs. Only
 documents changed.
