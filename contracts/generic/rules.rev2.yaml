@@ -1,0 +1,116 @@
+# Generic rules, revision 2 (the rules of rules.yaml and P4): written once, against roles, for any protocol with requests, replies and effects.
+# A protocol binds the roles in its own file in this folder (lift.v0.rev2.yaml, turntable.v0.rev2.yaml); loading that
+# file expands each rule into contracts of the existing kinds, with grade: generic and a source naming the
+# rule. In a contract below, {role} is the role's names joined with |, {role.key} one entry of a mapping
+# role, and a rule with "each: <role>" writes one contract per name of that role ({each}; for a mapping
+# role {each} is the key and {each.value} its value).
+rules:
+  - rule: G1
+    quote: "at most one effect of each name per request id"
+    each: effects
+    contract:
+      id: "G1.{each}"
+      desc: "at most one {each} per req_id"
+      kind: at_most_once
+      per: req_id
+      event: "device.effect({each})"
+
+  - rule: G2
+    quote: "per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests"
+    contract:
+      id: G2.ack
+      desc: "no more {acknowledgement} for a req_id than requests received with it"
+      kind: count_le
+      per: req_id
+      event: "device.send({acknowledgement})"
+      bound: "device.recv({requests})"
+
+  - rule: G2
+    quote: "per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests"
+    contract:
+      id: G2.final
+      desc: "no more {final_success} or {final_failure} for a req_id than requests received with it"
+      kind: count_le
+      per: req_id
+      event: "device.send({final_success}|{final_failure})"
+      bound: "device.recv({requests})"
+
+  - rule: G2
+    quote: "per request id and reply role (acknowledgement, final answer, poll reply), the device sends no more replies than it received requests"
+    each: polls
+    contract:
+      id: "G2.poll.{each}"
+      desc: "no more {each.value} for a poll id than {each} polls received with it"
+      kind: count_le
+      per: req_id
+      event: "device.send({each.value})"
+      bound: "device.recv({each})"
+
+  - rule: G3
+    quote: "the two final answers exclude each other, per request id"
+    contract:
+      id: G3
+      desc: "never both {final_success} and {final_failure} for one req_id"
+      kind: mutually_exclusive
+      per: req_id
+      events: ["device.send({final_success})", "device.send({final_failure})"]
+
+  - rule: G4
+    quote: "the device sends nothing for a request id it has not received"
+    contract:
+      id: G4
+      desc: "the device sends for an id only after it received that id"
+      kind: only_after
+      per: req_id
+      event: device.send
+      after: device.recv
+
+  - rule: G5
+    quote: "no acknowledgement for a request id after its final answer"
+    contract:
+      id: G5
+      desc: "no {acknowledgement} for a req_id after its {final_success} or {final_failure}"
+      kind: never_after
+      per: req_id
+      event: "device.send({acknowledgement})"
+      after: "device.send({final_success}|{final_failure})"
+
+  - rule: G6
+    quote: "the final answer of success only after the effect that ends the action"
+    contract:
+      id: G6
+      desc: "{final_success} for a req_id only after its {action.ends}"
+      kind: only_after
+      per: req_id
+      event: "device.send({final_success})"
+      after: "device.effect({action.ends})"
+
+  - rule: G6b
+    quote: "the final answer of success only after the state change that ends the action"
+    contract:
+      id: G6b
+      desc: "{final_success} for a req_id only after the state became one of {rest_states} for it"
+      kind: only_after
+      per: req_id
+      event: "device.send({final_success})"
+      after: "device.state({rest_states})"
+
+  - rule: P1
+    quote: "no stop of the action's effect after the state change that ends it"
+    contract:
+      id: P1
+      desc: "no {action.ends} for a req_id after its state became one of {rest_states}"
+      kind: never_after
+      per: req_id
+      event: "device.effect({action.ends})"
+      after: "device.state({rest_states})"
+
+  - rule: P4
+    quote: "the state change that starts the action only after the effect that starts it, per request id"
+    contract:
+      id: P4
+      desc: "the state becomes one of {progress_states} for a req_id only after its {action.starts}"
+      kind: only_after
+      per: req_id
+      event: "device.state({progress_states})"
+      after: "device.effect({action.starts})"

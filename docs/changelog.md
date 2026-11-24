@@ -921,3 +921,20 @@ no change under `contracts/`.
   acting slots of testbed-04 and 05.
 - **Recommendation:** keep P4; P2 and P3 covered by it on these checks; a new rules file beside the old one
   (with rev2 bindings) so testbed-07's registered hashes stay true. The operator decides.
+
+## WP6/7d after stage 0b: the generic rules, revision 2 (#72)
+
+The operator confirmed P4 and dropped P2 and P3 (`docs/notes/generic-contracts-rev2.md`). Revision 2 of the
+generic set sits beside the first (form A); the first's three files stay byte for byte.
+
+- **`contracts/generic/rules.rev2.yaml`:** the rules of `rules.yaml`, unchanged, and P4 ("the state change that
+  starts the action only after the effect that starts it, per request id": `only_after`, the state in
+  `progress_states` after `action.starts`).
+- **`lift.v0.rev2.yaml`, `turntable.v0.rev2.yaml`:** the bindings of the first set, naming `rules.rev2.yaml`, with
+  the new role `progress_states` (`MOVING_UP`, `MOVING_DOWN`; `TURNING_TO_LEFT`, `TURNING_TO_RIGHT`,
+  `TURNING_TO_INITIAL`).
+- **Tests** (`tests/test_generic_rules_rev2.py`): the three first files' sha256 equal the registered values
+  (the lift binding's, as written in #62); under rev2 the first rules expand to the same contracts and P4 is
+  stage 0b's hand-written candidate; P4's orders on a hand trace; no false positive on seeds 0–999 of both
+  systems (slow).
+- **P4 is unmeasured** until a new blind group. It was not run on the lift's real no-defect logs (backlog).
