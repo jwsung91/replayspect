@@ -2,8 +2,26 @@
 
 2026-11-25. WP6/7d stage 0b (`docs/work-order-wp67d.md`).
 
-**For the operator's decision:** confirm or drop each candidate, and choose how the generic set changes
-(below). Nothing is written under `contracts/` in this PR, and no binding has the new role.
+**The operator's decision** (2026-11-25, after the #71 review):
+- **P4 is confirmed. P2 and P3 are dropped:** every slot either caught in these checks, P4 caught too. The
+  six candidate files stay here as the record.
+- **The form is A:** a new `contracts/generic/rules.rev2.yaml` and two rev2 bindings. The three present files
+  (`rules.yaml`, `lift.v0.yaml`, `turntable.v0.yaml`) stay byte for byte as they are.
+- **The documents:** turntable lines 57–61 and lift lines 44–46 are read as stating the order "motor start →
+  in-progress state", as the end-side sentence was read for A1 and C10. P4's grade stays `generic`. The
+  limit below stays: the documents do not describe the device log, and the order inside one millisecond is
+  the firmware's.
+- **The lift's 218 real logs stay "not run",** and the work goes on. A backlog row: before the rev2 set is
+  registered for a blind group, P4 is run on the lift's real no-defect logs (the 218 if found, otherwise
+  logs newly collected on the board).
+- **Next, in its own PR after this one is merged:** `rules.rev2.yaml` (the present rules and P4),
+  `progress_states` in the two rev2 bindings, the tests (the three present files' hashes equal the
+  registered ones; the present rules expand to the same contracts under rev2; no false positive on seeds
+  0–999 of both systems), `contracts/generic/README.md`, the changelog, `CLAUDE.md`, the README status and
+  the backlog.
+
+Nothing is written under `contracts/` in this PR, and no binding has the new role. The record below was
+written for that decision.
 
 **Every count on a blind slot below is a development check, not a measurement.** The candidates were written
 after testbed-07's slots were known (S15 and S20 are where they come from), and after testbed-06's.
